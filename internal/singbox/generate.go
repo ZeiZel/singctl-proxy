@@ -43,13 +43,40 @@ var tunAddress = []string{"198.18.0.1/30", "fdfe:dcba:9876::1/126"}
 
 func ptrLog() *Log { return &Log{Level: "info", Timestamp: true} }
 
-// GenerateProxyConfig builds the persistent PROXY instance (socks 1080 + http
-// 2080). physIface is non-empty ONLY in VPN mode (decision D3): then
-// bind_interface/default_interface pin egress to the physical NIC so it escapes
-// our own TUN. In proxy-only mode physIface == "" and those fields are omitted,
-// so traffic follows the default route (through Cisco if active — D4: bypass is
-// impossible). The PROXY instance never contains a tun inbound.
+// Ports are the local listen ports of the persistent proxy. The zero value
+// means "defaults" (socks 1080, http 2080) — normalize with withDefaults.
+type Ports struct {
+	Socks int
+	HTTP  int
+}
+
+// DefaultPorts mirrors the historical fixed ports.
+func DefaultPorts() Ports { return Ports{Socks: socksPort, HTTP: httpPort} }
+
+func (p Ports) withDefaults() Ports {
+	if p.Socks == 0 {
+		p.Socks = socksPort
+	}
+	if p.HTTP == 0 {
+		p.HTTP = httpPort
+	}
+	return p
+}
+
+// GenerateProxyConfig builds the persistent PROXY instance on the default
+// ports (socks 1080 + http 2080). See GenerateProxyConfigPorts.
 func GenerateProxyConfig(p vless.ServerProfile, physIface string) (Config, error) {
+	return GenerateProxyConfigPorts(p, physIface, DefaultPorts())
+}
+
+// GenerateProxyConfigPorts builds the persistent PROXY instance. physIface is
+// non-empty ONLY in VPN mode (decision D3): then bind_interface/
+// default_interface pin egress to the physical NIC so it escapes our own TUN.
+// In proxy-only mode physIface == "" and those fields are omitted, so traffic
+// follows the default route (through Cisco if active — D4: bypass is
+// impossible). The PROXY instance never contains a tun inbound.
+func GenerateProxyConfigPorts(p vless.ServerProfile, physIface string, ports Ports) (Config, error) {
+	ports = ports.withDefaults()
 	var tlsCfg *TLS
 	if p.Security == vless.SecurityTLS || p.Security == vless.SecurityReality {
 		tlsCfg = &TLS{Enabled: true, ServerName: p.TLS.ServerName, Insecure: p.TLS.Insecure}
@@ -106,8 +133,8 @@ func GenerateProxyConfig(p vless.ServerProfile, physIface string) (Config, error
 			Strategy: "ipv4_only",
 		},
 		Inbounds: []any{
-			SocksInbound{Type: "socks", Tag: socksTag, Listen: listenAddr, ListenPort: socksPort},
-			HTTPInbound{Type: "http", Tag: httpTag, Listen: listenAddr, ListenPort: httpPort},
+			SocksInbound{Type: "socks", Tag: socksTag, Listen: listenAddr, ListenPort: ports.Socks},
+			HTTPInbound{Type: "http", Tag: httpTag, Listen: listenAddr, ListenPort: ports.HTTP},
 		},
 		Outbounds: []any{
 			vlessOut,
@@ -146,6 +173,13 @@ func GenerateProxyConfig(p vless.ServerProfile, physIface string) (Config, error
 //   - If the server host is a literal IP, a belt-and-suspenders ip_cidr→direct
 //     rule prevents any loop even if the proxy's bind were ineffective (R1).
 func GenerateForwarderConfig(p vless.ServerProfile) (Config, error) {
+	return GenerateForwarderConfigPorts(p, DefaultPorts())
+}
+
+// GenerateForwarderConfigPorts is GenerateForwarderConfig with a custom proxy
+// socks port (the forwarder must dial wherever the proxy actually listens).
+func GenerateForwarderConfigPorts(p vless.ServerProfile, ports Ports) (Config, error) {
+	ports = ports.withDefaults()
 	rules := []RouteRule{
 		{Action: "sniff", Timeout: "3s"},
 		{Inbound: []string{tunTag}, Protocol: "dns", Action: "hijack-dns"},
@@ -179,7 +213,7 @@ func GenerateForwarderConfig(p vless.ServerProfile) (Config, error) {
 			},
 		},
 		Outbounds: []any{
-			SocksOutbound{Type: "socks", Tag: socksOutTag, Server: listenAddr, ServerPort: socksPort},
+			SocksOutbound{Type: "socks", Tag: socksOutTag, Server: listenAddr, ServerPort: ports.Socks},
 			DirectOutbound{Type: "direct", Tag: directTag},
 		},
 		Route: &Route{

@@ -61,6 +61,7 @@ func execAllowed(rel string) bool {
 	base := filepath.Base(rel)
 	return strings.HasSuffix(base, "_real.go") ||
 		strings.HasSuffix(base, "_darwin.go") ||
+		strings.HasSuffix(base, "_other.go") || // portable (!darwin) OS adapters
 		strings.Contains(rel, filepath.FromSlash("internal/platform/"))
 }
 
@@ -91,7 +92,7 @@ func TestNoForbiddenImports(t *testing.T) {
 			case path == "os/exec":
 				if !execAllowed(rel) {
 					t.Errorf("%s imports os/exec but is not an approved OS adapter "+
-						"(allowed: *_real.go, *_darwin.go, internal/platform/...)", rel)
+						"(allowed: *_real.go, *_darwin.go, *_other.go, internal/platform/...)", rel)
 				}
 			case strings.HasPrefix(path, "github.com/sagernet/sing-box"):
 				if !singboxAllowed(rel) {

@@ -43,6 +43,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case linkLoadedMsg:
 		m.loaded = true
+		if link := strings.TrimSpace(m.input.Value()); link != "" {
+			m.currentLink = link
+		}
 		m.screen = ScreenDashboard
 		m.mode = RunOff
 		m.busy = false
@@ -206,7 +209,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.applyMode(RunOff)
 		case key.Matches(msg, m.keys.Edit):
 			// Change link: clear the field and return to input (cancellable with esc).
+			// The current link stays visible as the placeholder so the user sees
+			// what they are replacing.
 			m.input.SetValue("")
+			if m.currentLink != "" {
+				m.input.Placeholder = m.currentLink
+			}
 			m.input.Focus()
 			m.screen = ScreenLink
 			m.errText = ""

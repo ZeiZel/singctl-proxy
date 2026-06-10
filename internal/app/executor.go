@@ -14,6 +14,7 @@ import (
 	"singctl/internal/monitor"
 	"singctl/internal/policy"
 	"singctl/internal/runtime"
+	"singctl/internal/singbox"
 	"singctl/internal/types"
 	"singctl/internal/ui"
 	"singctl/internal/vless"
@@ -31,10 +32,22 @@ type Executor struct {
 	mgr     *runtime.Manager
 	save    func(string) error
 	logPath string
+	ports   singbox.Ports
 }
 
 // SetLogPath redirects sing-box logs to a file (keeps them out of the TUI).
 func (e *Executor) SetLogPath(path string) { e.logPath = path }
+
+// SetSocksPort overrides the proxy's local socks port (the http port follows
+// at port+1). 0 keeps the defaults (socks 1080, http 2080). Takes effect on
+// the next LoadLink.
+func (e *Executor) SetSocksPort(port int) {
+	if port == 0 {
+		e.ports = singbox.Ports{}
+		return
+	}
+	e.ports = singbox.Ports{Socks: port, HTTP: port + 1}
+}
 
 func NewExecutor(f core.Factory, p runtime.InterfaceProber, r runtime.RouteController, notes chan tea.Msg) *Executor {
 	return &Executor{factory: f, prober: p, routes: r, notes: notes}
@@ -57,7 +70,7 @@ func (e *Executor) LoadLink(ctx context.Context, link string) error {
 	if old := e.manager(); old != nil {
 		_ = old.Shutdown(ctx)
 	}
-	builder := runtime.ProfileConfigBuilder{Profile: profile, LogPath: e.logPath}
+	builder := runtime.ProfileConfigBuilder{Profile: profile, LogPath: e.logPath, Ports: e.ports}
 	mgr := runtime.NewManager(e.factory, builder, e.prober, e.routes)
 	e.mu.Lock()
 	e.mgr = mgr

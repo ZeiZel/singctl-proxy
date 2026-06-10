@@ -6,15 +6,21 @@ package main
 
 import (
 	"context"
+	_ "embed"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	goruntime "runtime"
+	"strings"
 	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/joho/godotenv"
 
 	"singctl/internal/app"
 	"singctl/internal/core"
@@ -29,8 +35,19 @@ import (
 
 const pollInterval = 2 * time.Second
 
+// version is stamped by the Makefile via -ldflags "-X main.version=...".
+var version = "dev"
+
+//go:embed singctl.1
+var manPage string
+
 // requireRoot enforces that we run under sudo (TUN/auto_route need privileges).
-func requireRoot(euid int) error {
+// On Windows there is no euid (os.Geteuid returns -1); elevation is checked by
+// the OS itself when the TUN device is created, so the check is skipped.
+func requireRoot(goos string, euid int) error {
+	if goos == "windows" {
+		return nil
+	}
 	if euid != 0 {
 		return fmt.Errorf("singctl must run as root — re-run with: sudo singctl")
 	}
@@ -38,7 +55,41 @@ func requireRoot(euid int) error {
 }
 
 func main() {
-	if err := requireRoot(os.Geteuid()); err != nil {
+	opts, err := parseOptions(os.Args[1:], os.Stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		os.Exit(0)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
+	// Informational flags work without root.
+	switch {
+	case opts.version:
+		fmt.Println("singctl", version)
+		return
+	case opts.man:
+		fmt.Print(manPage)
+		return
+	}
+
+	// .env (explicit path, or ./.env if present) feeds SINGCTL_KEY/SINGCTL_PORT;
+	// real environment variables win, flags win over both.
+	if opts.envFile != "" {
+		if err := godotenv.Load(opts.envFile); err != nil {
+			fmt.Fprintln(os.Stderr, "error: load env file:", err)
+			os.Exit(1)
+		}
+	} else {
+		_ = godotenv.Load() // best-effort ./.env
+	}
+	if err := opts.applyEnv(os.Getenv); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
+	if err := requireRoot(goruntime.GOOS, os.Geteuid()); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -53,10 +104,12 @@ func main() {
 
 	notes := make(chan tea.Msg, 32)
 	executor := app.NewExecutor(core.NewFactory(), prober, routes, notes)
+	executor.SetSocksPort(opts.port)
 
 	// Persist the profile + log file under the real user's home (chowned back),
-	// and remember the last link.
-	var initialLink, logPath string
+	// and remember the last link. In headless --logs mode the log path stays
+	// empty so sing-box writes to the console instead of the file.
+	var savedLink, logPath string
 	if ru, err := platform.ResolveUser(os.Getenv, user.Lookup); err == nil {
 		configDir := filepath.Join(ru.HomeDir, ".config", "singctl")
 		_ = os.MkdirAll(configDir, 0o755)
@@ -64,11 +117,21 @@ func main() {
 		logPath = filepath.Join(configDir, "singbox.log")
 
 		store := profile.NewStore(profile.OSFS{}, ru.HomeDir, ru.Uid, ru.Gid)
-		executor.SetSaver(store.Save)
-		executor.SetLogPath(logPath)
-		if l, err := store.Load(); err == nil {
-			initialLink = l
+		if !opts.noSave {
+			executor.SetSaver(store.Save)
 		}
+		if l, err := store.Load(); err == nil {
+			savedLink = l
+		}
+	}
+	if !(opts.headless && opts.logs) {
+		executor.SetLogPath(logPath)
+	}
+
+	// flag/env key overrides the saved profile.
+	initialLink := strings.TrimSpace(opts.key)
+	if initialLink == "" {
+		initialLink = savedLink
 	}
 
 	// Monitor: event-driven (PF_ROUTE) + 2s polling fallback, debounce 2.
@@ -83,12 +146,29 @@ func main() {
 	go mon.Run(ctx, ticker.C, events)
 	go executor.Loop(ctx, monOut)
 
+	if opts.headless {
+		if err := runHeadless(ctx, executor, notes, initialLink, opts); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	model := ui.New(executor, notes).WithLogPath(logPath)
 	if initialLink != "" {
 		// Remember the link: load it (no mode started — user picks PROXY/VPN) and
 		// skip the input screen.
 		if err := executor.LoadLink(ctx, initialLink); err == nil {
-			model = model.WithLoadedProfile()
+			model = model.WithLoadedProfile().WithCurrentLink(initialLink)
+			switch {
+			case opts.proxy:
+				model = model.WithAutoMode(ui.RunProxy)
+			case opts.vpn:
+				model = model.WithAutoMode(ui.RunVPN)
+			}
+			if opts.logs {
+				model = model.WithLogsOpen()
+			}
 		}
 	}
 	// WithAltScreen clears the terminal (alternate buffer) so earlier commands
@@ -106,4 +186,47 @@ func main() {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = executor.Shutdown(shutCtx)
+}
+
+// runHeadless drives the executor without a TUI: load the link, enable the
+// requested mode (proxy unless --vpn), print status notes to stdout and run
+// until SIGINT/SIGTERM. The notes channel must be drained here — the executor
+// blocks pushing into it otherwise.
+func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan tea.Msg, link string, opts *options) error {
+	if link == "" {
+		return fmt.Errorf("headless mode needs a key: pass --key, set %s (or .env), or save a profile first", envKey)
+	}
+	if err := executor.LoadLink(ctx, link); err != nil {
+		return fmt.Errorf("load key: %w", err)
+	}
+
+	mode := "PROXY"
+	enable := executor.EnableProxy
+	if opts.vpn {
+		mode, enable = "VPN", executor.EnableVPN
+	}
+	if err := enable(ctx); err != nil {
+		return fmt.Errorf("enable %s: %w", strings.ToLower(mode), err)
+	}
+	socks := opts.port
+	if socks == 0 {
+		socks = 1080
+	}
+	fmt.Printf("singctl %s: %s mode up — socks 127.0.0.1:%d, http 127.0.0.1:%d (ctrl+c to stop)\n",
+		version, mode, socks, socks+1)
+
+	// Drain executor/monitor notes; surface mode changes and notices.
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("singctl: shutting down")
+			shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return executor.Shutdown(shutCtx)
+		case msg := <-notes:
+			if st, ok := msg.(ui.StatusMsg); ok && st.Note != "" {
+				fmt.Printf("singctl: [%s] %s\n", st.Mode, st.Note)
+			}
+		}
+	}
 }

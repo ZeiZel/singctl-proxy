@@ -7,14 +7,16 @@ import (
 
 // ProfileConfigBuilder builds the two sing-box configs from one parsed VLESS
 // profile. It implements ConfigBuilder. LogPath, if set, redirects sing-box logs
-// to a file so they don't corrupt the TUI.
+// to a file so they don't corrupt the TUI. Ports overrides the local listen
+// ports; its zero value means the defaults (socks 1080, http 2080).
 type ProfileConfigBuilder struct {
 	Profile vless.ServerProfile
 	LogPath string
+	Ports   singbox.Ports
 }
 
 func (b ProfileConfigBuilder) ProxyConfig(physIface string) ([]byte, error) {
-	cfg, err := singbox.GenerateProxyConfig(b.Profile, physIface)
+	cfg, err := singbox.GenerateProxyConfigPorts(b.Profile, physIface, b.Ports)
 	if err != nil {
 		return nil, err
 	}
@@ -23,7 +25,7 @@ func (b ProfileConfigBuilder) ProxyConfig(physIface string) ([]byte, error) {
 }
 
 func (b ProfileConfigBuilder) ForwarderConfig() ([]byte, error) {
-	cfg, err := singbox.GenerateForwarderConfig(b.Profile)
+	cfg, err := singbox.GenerateForwarderConfigPorts(b.Profile, b.Ports)
 	if err != nil {
 		return nil, err
 	}

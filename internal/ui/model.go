@@ -31,10 +31,12 @@ type Model struct {
 	modal    string
 	status   string
 	errText  string
-	loaded   bool // a profile (link) has been loaded
-	showLogs bool
-	logs     string
-	logPath  string
+	loaded      bool // a profile (link) has been loaded
+	showLogs    bool
+	logs        string
+	logPath     string
+	currentLink string  // the loaded link, shown as the placeholder when editing
+	autoMode    RunMode // mode to enable right after start (RunOff = none)
 
 	// presentation
 	theme     Theme
@@ -132,8 +134,43 @@ func (m Model) WithLogPath(p string) Model {
 	return m
 }
 
+// WithCurrentLink remembers the loaded link so the edit screen can show it as
+// the input placeholder.
+func (m Model) WithCurrentLink(link string) Model {
+	m.currentLink = link
+	return m
+}
+
+// WithAutoMode enables the given mode immediately after start (the --proxy /
+// --vpn flags). It requires a loaded profile; RunOff is a no-op.
+func (m Model) WithAutoMode(mode RunMode) Model {
+	m.autoMode = mode
+	if mode != RunOff {
+		m.busy = true
+		m.segCursor = int(mode)
+		m.status = "запуск " + mode.String() + "…"
+	}
+	return m
+}
+
+// WithLogsOpen starts with the logs view shown (the --logs flag).
+func (m Model) WithLogsOpen() Model {
+	m.showLogs = true
+	return m
+}
+
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(textinput.Blink, m.spin.Tick, listen(m.notes))
+	cmds := []tea.Cmd{textinput.Blink, m.spin.Tick, listen(m.notes)}
+	switch m.autoMode {
+	case RunProxy:
+		cmds = append(cmds, enableProxyCmd(m.backend))
+	case RunVPN:
+		cmds = append(cmds, enableVPNCmd(m.backend))
+	}
+	if m.showLogs {
+		cmds = append(cmds, readLogsCmd(m.logPath), logsTick())
+	}
+	return tea.Batch(cmds...)
 }
 
 // --- test/inspection accessors ---
