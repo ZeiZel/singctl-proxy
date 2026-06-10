@@ -1,0 +1,151 @@
+package ui
+
+import (
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+
+	"singctl/internal/policy"
+)
+
+// Screen is the current UI screen.
+type Screen int
+
+const (
+	ScreenLink Screen = iota
+	ScreenDashboard
+)
+
+// Model is the Bubble Tea model. All fields are unexported; tests in this
+// package set them directly (white-box) and feed messages to Update.
+type Model struct {
+	screen   Screen
+	mode     RunMode // user-chosen running state (OFF until they pick)
+	cisco    bool
+	phys     string
+	width    int
+	height   int
+	input    textinput.Model
+	modal    string
+	status   string
+	errText  string
+	loaded   bool // a profile (link) has been loaded
+	showLogs bool
+	logs     string
+	logPath  string
+
+	// presentation
+	theme     Theme
+	caps      Caps
+	glyphs    Glyphs
+	styles    Styles
+	keys      keyMap
+	help      help.Model
+	spin      spinner.Model
+	busy      bool // an enable/stop command is in flight (drives the spinner)
+	vp        viewport.Model
+	vpReady   bool
+	segCursor int // keyboard cursor on the OFF|PROXY|VPN selector (0..2)
+
+	backend Backend
+	decide  func(policy.DecideInput) policy.DecisionResult
+	notes   <-chan tea.Msg
+}
+
+// New builds the initial model on the link-input screen. notes is the channel of
+// async messages (NetStateMsg/StatusMsg) from the executor; it may be nil.
+func New(backend Backend, notes <-chan tea.Msg) Model {
+	caps := DetectCaps()
+	return newWithCaps(backend, notes, caps)
+}
+
+// newWithCaps is the shared constructor; tests call it with deterministic caps.
+func newWithCaps(backend Backend, notes <-chan tea.Msg, caps Caps) Model {
+	th := DefaultTheme()
+	gl := PickGlyphs(caps.Unicode)
+	styles := NewStyles(caps, th, gl)
+
+	ti := textinput.New()
+	ti.Placeholder = "vless://..."
+	ti.Prompt = gl.Prompt
+	ti.PromptStyle = caps.R.NewStyle().Foreground(th.Accent)
+	ti.PlaceholderStyle = caps.R.NewStyle().Foreground(th.Subtle)
+	ti.Cursor.Style = caps.R.NewStyle().Foreground(th.Accent)
+	ti.Focus()
+	ti.Width = 48
+
+	keyStyle := caps.R.NewStyle().Foreground(th.Accent)
+	descStyle := caps.R.NewStyle().Foreground(th.Muted)
+	sepStyle := caps.R.NewStyle().Foreground(th.Subtle)
+	hp := help.New()
+	hp.Styles.ShortKey = keyStyle
+	hp.Styles.FullKey = keyStyle
+	hp.Styles.ShortDesc = descStyle
+	hp.Styles.FullDesc = descStyle
+	hp.Styles.ShortSeparator = sepStyle
+	hp.Styles.FullSeparator = sepStyle
+	hp.Styles.Ellipsis = sepStyle
+	hp.ShortSeparator = "  " + gl.Sep + "  "
+	hp.Ellipsis = gl.Ellipsis
+
+	sp := spinner.New()
+	sp.Spinner = spinner.MiniDot // braille dots
+	if !caps.Unicode {
+		sp.Spinner = spinner.Line // ascii-safe |/-\ fallback
+	}
+	sp.Style = caps.R.NewStyle().Foreground(th.Accent)
+
+	return Model{
+		screen:  ScreenLink,
+		mode:    RunOff,
+		input:   ti,
+		theme:   th,
+		caps:    caps,
+		glyphs:  gl,
+		styles:  styles,
+		keys:    defaultKeys(gl),
+		help:    hp,
+		spin:    sp,
+		backend: backend,
+		decide:  policy.Decide,
+		notes:   notes,
+	}
+}
+
+// WithLoadedProfile starts directly on the dashboard (mode OFF) — used when a
+// saved link was loaded at startup, so the input screen is skipped.
+func (m Model) WithLoadedProfile() Model {
+	m.loaded = true
+	m.screen = ScreenDashboard
+	m.input.Blur()
+	if m.status == "" {
+		m.status = "ссылка загружена — выберите режим"
+	}
+	return m
+}
+
+// WithLogPath points the logs view at the sing-box log file.
+func (m Model) WithLogPath(p string) Model {
+	m.logPath = p
+	return m
+}
+
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(textinput.Blink, m.spin.Tick, listen(m.notes))
+}
+
+// --- test/inspection accessors ---
+
+func (m Model) Screen() Screen    { return m.screen }
+func (m Model) Mode() RunMode     { return m.mode }
+func (m Model) ModalShown() bool  { return m.modal != "" }
+func (m Model) CiscoActive() bool { return m.cisco }
+func (m Model) Status() string    { return m.status }
+func (m Model) ErrText() string   { return m.errText }
+func (m Model) ShowingLogs() bool { return m.showLogs }
+func (m Model) Logs() string      { return m.logs }
+func (m Model) LinkValue() string { return m.input.Value() }
+func (m Model) Busy() bool        { return m.busy }
+func (m Model) SegCursor() int    { return m.segCursor }
