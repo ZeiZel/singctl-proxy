@@ -18,6 +18,7 @@ var (
 	ErrUnsupportedTransport  = errors.New("unsupported transport type")
 	ErrUnsupportedSecurity   = errors.New("unsupported security type")
 	ErrUnsupportedEncryption = errors.New("unsupported encryption (only 'none' is supported)")
+	ErrNoLinks               = errors.New("no vless link provided")
 )
 
 // ParseError annotates a sentinel error with the offending field/value.
