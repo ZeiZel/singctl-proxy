@@ -39,6 +39,16 @@ func TestView_NeverExceedsWidth(t *testing.T) {
 		{"dashboard-vpn", func(m Model) Model { m.mode = RunVPN; return m }},
 		{"dashboard-cisco", func(m Model) Model { m.cisco = true; m.phys = "en0"; return m }},
 		{"dashboard-busy", func(m Model) Model { m.busy = true; m.status = "запуск PROXY…"; return m }},
+		{"dashboard-conns", func(m Model) Model {
+			m.mode = RunProxy
+			for i := 0; i < 12; i++ {
+				m.conns = append(m.conns, ConnRow{Process: "codex", Source: "127.0.0.1:54321",
+					Dest: "api.openai.com:443", Network: "tcp", Chain: "proxy-0"})
+			}
+			m.latency = []LatencyRow{{Tag: "proxy-0", Delay: 42, Selected: true}, {Tag: "proxy-1", Delay: 88}}
+			m.latencySel = "proxy-0"
+			return m
+		}},
 		{"dashboard-err", func(m Model) Model {
 			m.errText = "не удалось разобрать ссылку: неизвестный протокол в очень длинном сообщении"
 			return m

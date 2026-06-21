@@ -100,7 +100,11 @@ func (m Model) dashboardView() string {
 		cw := pw - 4
 		status := s.panel("СТАТУС", m.statusBody(cw), pw, false, true)
 		mode := s.panel("РЕЖИМ", m.modeBody(sel, cw, true), pw, false, true)
-		body = lipgloss.JoinHorizontal(lipgloss.Top, status, "  ", mode)
+		top := lipgloss.JoinHorizontal(lipgloss.Top, status, "  ", mode)
+		// A wide СОЕДИНЕНИЯ panel spans the same total width as the two top panels.
+		fpw := min(m.width, panelMax+sideMax)
+		conns := s.panel("СОЕДИНЕНИЯ", m.dashConnsBody(fpw-4), fpw, false, true)
+		body = lipgloss.JoinVertical(lipgloss.Left, top, "", conns)
 	default:
 		bordered := !compact && lay != layoutNarrow
 		var pw, cw int
@@ -114,12 +118,37 @@ func (m Model) dashboardView() string {
 		status := s.panel("СТАТУС", m.statusBody(cw), pw, false, bordered)
 		mode := s.panel("РЕЖИМ", m.modeBody(sel, cw, !compact), pw, false, bordered)
 		if compact {
-			body = lipgloss.JoinVertical(lipgloss.Left, status, mode)
+			// Tight height: collapse connections to one line so the footer survives.
+			body = lipgloss.JoinVertical(lipgloss.Left, status, mode,
+				s.clampLine(m.dashConnsSummary(), max(m.width, 1)))
 		} else {
-			body = lipgloss.JoinVertical(lipgloss.Left, status, "", mode)
+			conns := s.panel("СОЕДИНЕНИЯ", m.dashConnsBody(cw), pw, false, bordered)
+			body = lipgloss.JoinVertical(lipgloss.Left, status, "", mode, "", conns)
 		}
 	}
 	return m.frame(header, body, footer)
+}
+
+// dashConnsBody is the body of the always-on dashboard СОЕДИНЕНИЯ panel: the
+// per-server latency list (when present) above a capped live-connection list.
+func (m Model) dashConnsBody(cw int) string {
+	w := max(cw, 1)
+	var parts []string
+	if lat := m.latencyBody(w); lat != "" {
+		parts = append(parts, lat, m.styles.rule(w))
+	}
+	parts = append(parts, m.connsBody(w, dashConnRows))
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// dashConnsSummary is the one-line connections fallback for very short terminals.
+func (m Model) dashConnsSummary() string {
+	s := m.styles
+	line := fmt.Sprintf("%d соединений", len(m.conns))
+	if sum := m.latencySummary(); sum != "" {
+		line += " " + s.gl.Sep + " " + sum
+	}
+	return s.Subtle.Render(line)
 }
 
 // modeBody assembles the РЕЖИМ panel: the selector, an optional navigation hint,

@@ -23,6 +23,8 @@ const (
 	wideMin     = 100 // [wideMin, ∞) → wide; between → medium
 	panelMax    = 72  // a single bordered panel never grows past this
 	sideMax     = 52  // each side-by-side panel never grows past this
+
+	dashConnRows = 6 // max live-connection rows shown in the dashboard panel
 )
 
 func layoutFor(w, h int) layout {
