@@ -74,6 +74,23 @@ interception; on other platforms it injects proxy environment variables
 (HTTP_PROXY/HTTPS_PROXY/ALL_PROXY) into the child, which only covers env-aware
 applications.
 .TP
+.BI \-\-restart\-pid " pid"
+Recover a running process's command line, terminate it, and relaunch it routed
+through the proxy. Best-effort (argv via ps); the only way to proxy an
+already-running process on macOS. Repeatable.
+.TP
+.B \-\-attach
+Attach to an already-running singctl instance (started, e.g., with
+.B \-\-headless
+in another tab) and live-tail its log. Ctrl+C detaches without stopping it.
+Runs without root.
+.TP
+.B \-\-stop
+Tell the running instance to shut down. Runs without root.
+.TP
+.B \-\-status
+Print the running instance's status (PID, mode, start time). Runs without root.
+.TP
 .BI \-\-env\-file " path"
 Load environment variables from this file (default: ./.env if present).
 .TP

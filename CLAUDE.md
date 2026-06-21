@@ -115,7 +115,12 @@ internal/policy        pure Cisco-coexistence decision engine (no I/O)
 internal/profile       persist the key(s) under the real user's ~/.config/singctl
 internal/clashapi      sing-box Clash API client + connection poller (observability)
 internal/procproxy     per-process routing (Linux cgroup/nftables) + env-launch
-                       fallback (other OSes)
+                       fallback (other OSes); also PID restart-in-proxy
+internal/proclist      enumerate processes with sockets (pid/port/name) for the
+                       per-process picker (lsof on macOS, /proc on Linux)
+internal/control       instance advertisement (instance.json) + Unix control
+                       socket; lets a second invocation attach to logs and
+                       stop/status a running instance
 ```
 
 ### Two sing-box instances
@@ -155,6 +160,20 @@ internal/procproxy     per-process routing (Linux cgroup/nftables) + env-launch
 - **Per-process proxying by PID.** On Linux, route an already-running PID's
   traffic through the proxy via cgroup v2 + nftables fwmark (no env needed). On
   other OSes, `--launch -- <cmd>` spawns a child with proxy env injected.
+- **Process picker.** The TUI process action (`x`) lists processes that have
+  network sockets (pid / local ports / program name) so the target is easy to
+  find; type to filter, ↑/↓ to choose, Enter to route, `^R` to restart.
+- **Restart a PID in proxy mode.** `--restart-pid` / the picker's `^R` recover a
+  process's argv (via `ps`), terminate it, and relaunch it routed through the
+  proxy — the only way to proxy an already-running process on macOS (best-effort).
+- **Attach / control a running instance.** A running instance advertises itself
+  (`~/.config/singctl/instance.json`) and serves a Unix control socket, so a
+  second invocation can `--attach` (live-tail its logs), `--status`, or `--stop`
+  it — start it `--headless` in one tab and control it from another. These
+  control commands run without root.
+- **Masked keys + add a second key.** The connection-strings screen shows loaded
+  keys masked (bullets + the `#name` label only) with a field to add another key
+  (joins the failover group live); the raw key is never echoed.
 
 ## Conventions & Patterns
 
