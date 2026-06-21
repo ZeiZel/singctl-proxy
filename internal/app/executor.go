@@ -17,6 +17,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"singctl/internal/clashapi"
+	"singctl/internal/clashui"
 	"singctl/internal/core"
 	"singctl/internal/daemon"
 	"singctl/internal/monitor"
@@ -261,42 +262,15 @@ func (e *Executor) startPoller() {
 // sends it non-blocking (a dropped update is harmless — the next tick replaces
 // it, and we must never wedge the poller on a quit UI).
 func (e *Executor) pushConnections(conns []clashapi.Connection) {
-	rows := make([]ui.ConnRow, 0, len(conns))
-	for _, c := range conns {
-		rows = append(rows, ui.ConnRow{
-			Process: c.Metadata.Process,
-			Source:  c.Metadata.Source(),
-			Dest:    c.Metadata.Dest(),
-			Network: c.Metadata.Network,
-			Chain:   strings.Join(c.Chains, "→"),
-		})
-	}
-	e.pushNonBlocking(ui.ConnectionsMsg{Rows: rows})
+	e.pushNonBlocking(ui.ConnectionsMsg{Rows: clashui.ConnRows(conns)})
 }
 
 // pushProxies extracts the failover group's per-server latency and selection
-// from the Clash API /proxies map and pushes it to the UI. The group is named
-// "proxy" (singbox.proxyTag); with a single server "proxy" is the server itself.
+// from the Clash API /proxies map and pushes it to the UI.
 func (e *Executor) pushProxies(proxies map[string]clashapi.ProxyState) {
-	group, ok := proxies["proxy"]
-	if !ok {
-		return
+	if msg, ok := clashui.LatencyMsg(proxies); ok {
+		e.pushNonBlocking(msg)
 	}
-	var msg ui.LatencyMsg
-	if len(group.All) > 0 { // urltest group (multi-server)
-		msg.Selected = group.Now
-		for _, tag := range group.All {
-			msg.Rows = append(msg.Rows, ui.LatencyRow{
-				Tag:      tag,
-				Delay:    proxies[tag].LastDelay(),
-				Selected: tag == group.Now,
-			})
-		}
-	} else { // single server
-		msg.Selected = "proxy"
-		msg.Rows = []ui.LatencyRow{{Tag: "proxy", Delay: group.LastDelay(), Selected: true}}
-	}
-	e.pushNonBlocking(msg)
 }
 
 // pushNonBlocking sends a message to the UI notes channel without blocking; if
