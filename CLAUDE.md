@@ -128,6 +128,12 @@ internal/control       instance advertisement (instance.json) + Unix control
 internal/daemon        re-exec the binary detached (setsid) for --daemon / the
                        in-UI daemonize action; BuildArgs is pure, exec is in the
                        daemon_other.go adapter (arch-guard compliant)
+internal/clashui       converts clashapi types → ui display types (ConnRows /
+                       LatencyMsg); shared by the local Executor and the remote
+                       backend (keeps ui decoupled from clashapi)
+internal/remote        ui.Backend that drives an already-running instance over
+                       its control socket (mode/settings/keys) + local
+                       procproxy/proclist + a poller on the daemon's Clash API
 ```
 
 ### Two sing-box instances
@@ -205,6 +211,17 @@ internal/daemon        re-exec the binary detached (setsid) for --daemon / the
   on/off + address, urltest url/interval/tolerance and save-profile, then
   [Применить] reloads the core (ApplySettings) preserving the mode; [Запустить в
   фоне] daemonizes.
+- **Attach to a running instance (single source of truth).** A second invocation
+  detects the live instance (instance.json + IsAlive) and, instead of starting its
+  own cores (which would crash on `bind: address already in use`), drives the
+  running one over the control socket — no root needed. The TUI attaches (badge
+  `↔ attached PID N`, real mode) and changes mode/settings/keys live; `q` detaches
+  (proxy keeps running), Настройки → «Остановить демон» fully stops it. A headless
+  second launch (`--headless --vpn`) flips the live instance and exits. Routing/
+  process-list run locally toward the daemon's port; connections+latency come from
+  the daemon's Clash API; logs tail the daemon's file. The control protocol is a
+  command registry (`STATUS/STOP/MODE/SETTINGS-GET|SET/KEYS-GET|ADD`); `control`
+  stays free of the `ui` import (settings JSON is (un)marshalled in main/remote).
 - **Daemon.** `--daemon` (or the in-UI daemonize action) re-execs a detached
   headless background process (setsid) that keeps the proxy running after the
   utility exits; the key comes from the saved profile (never the process table).

@@ -90,6 +90,15 @@ Attach to an already-running singctl instance (started, e.g., with
 .B \-\-headless
 in another tab) and live-tail its log. Ctrl+C detaches without stopping it.
 Runs without root.
+.PP
+Note: simply launching
+.B singctl
+again while an instance is already running does NOT start a second proxy (which
+would fail to bind the port) — the new TUI automatically ATTACHES to the running
+instance and can change its mode/settings/keys in real time over the control
+socket. A second
+.B \-\-headless
+launch applies the requested mode (\-\-proxy/\-\-vpn) to the running instance and exits.
 .TP
 .B \-\-stop
 Tell the running instance to shut down. Runs without root.
