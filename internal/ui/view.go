@@ -65,10 +65,11 @@ func (m Model) frame(header, body, footer string) string {
 }
 
 // topBar renders the title row (title left, optional badge right) plus a rule.
+// The app name renders as a filled pill; any " — section" suffix is dim subtitle.
 func (m Model) topBar(title, right string) string {
 	s := m.styles
 	w := max(m.width, 1)
-	left := s.Title.Render(title)
+	left := m.titlePill(title)
 	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
 	bar := left
 	if right != "" && lw+1+rw <= w {
@@ -77,6 +78,17 @@ func (m Model) topBar(title, right string) string {
 		bar = s.clampLine(left, w)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, bar, s.rule(w))
+}
+
+// titlePill renders the app name as a filled pill; a " — section" suffix becomes
+// dim subtitle text next to it.
+func (m Model) titlePill(title string) string {
+	s := m.styles
+	sep := " " + s.gl.Dash + " "
+	if app, rest, ok := strings.Cut(title, sep); ok {
+		return s.Title.Render(app) + " " + s.Muted.Render(rest)
+	}
+	return s.Title.Render(title)
 }
 
 // --- dashboard ---
@@ -537,8 +549,8 @@ func (m Model) procView() string {
 			marker := "  "
 			label := fmt.Sprintf("%-6d %s", p.PID, p.Name)
 			if i == cur {
-				marker = s.colored(s.th.Accent, s.gl.Cursor+" ")
-				label = s.colored(s.th.Accent, fmt.Sprintf("%-6d %s", p.PID, p.Name))
+				marker = s.colored(s.th.Accent, s.gl.SelBar+" ")
+				label = s.Accent.Render(fmt.Sprintf("%-6d %s", p.PID, p.Name))
 			}
 			if p.Ports != "" {
 				label += "  " + s.Subtle.Render(p.Ports)
@@ -593,7 +605,7 @@ func (m Model) settingsView() string {
 		focused := i == m.setForm.focus
 		marker := "  "
 		if focused {
-			marker = s.colored(s.th.Accent, s.gl.Cursor+" ")
+			marker = s.colored(s.th.Accent, s.gl.SelBar+" ")
 		}
 		var line string
 		switch f.kind {

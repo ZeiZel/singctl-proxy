@@ -22,6 +22,7 @@ type Glyphs struct {
 	DotOn    string // filled status dot
 	DotOff   string // hollow status dot
 	Cursor   string // keyboard-cursor marker on the focused segment
+	SelBar   string // selected-row gutter bar
 	Sep      string // footer / inline separator
 	Dash     string // em-dash placeholder
 	Ellipsis string // truncation tail
@@ -44,6 +45,7 @@ func PickGlyphs(unicode bool) Glyphs {
 			DotOn:    "●",
 			DotOff:   "○",
 			Cursor:   "◄",
+			SelBar:   "▌",
 			Sep:      "·",
 			Dash:     "—",
 			Ellipsis: "…",
@@ -61,6 +63,7 @@ func PickGlyphs(unicode bool) Glyphs {
 		DotOn:    "[*]",
 		DotOff:   "[ ]",
 		Cursor:   "<",
+		SelBar:   ">",
 		Sep:      "-",
 		Dash:     "-",
 		Ellipsis: "...",

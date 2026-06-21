@@ -30,23 +30,24 @@ type Theme struct {
 	Error lipgloss.AdaptiveColor
 }
 
-// DefaultTheme is the shipped palette: an indigo accent with semantic
-// success/warn/error/muted roles.
+// DefaultTheme is the shipped palette: Tokyo Night on dark terminals (the
+// glamorous default), with tasteful light-mode equivalents so AdaptiveColor still
+// adapts. Mirrors the spy-control aesthetic.
 func DefaultTheme() Theme {
 	return Theme{
-		Accent:       lipgloss.AdaptiveColor{Light: "#5B53D6", Dark: "#8B7FF5"},
-		OnAccent:     lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#0B0B12"},
-		Text:         lipgloss.AdaptiveColor{Light: "#1C1C1C", Dark: "#E4E4E4"},
-		Muted:        lipgloss.AdaptiveColor{Light: "#6B6B6B", Dark: "#9A9A9A"},
-		Subtle:       lipgloss.AdaptiveColor{Light: "#9A9A9A", Dark: "#6E6E6E"},
-		Border:       lipgloss.AdaptiveColor{Light: "#D0D0D0", Dark: "#3A3A3A"},
-		BorderActive: lipgloss.AdaptiveColor{Light: "#5B53D6", Dark: "#8B7FF5"},
-		Off:          lipgloss.AdaptiveColor{Light: "#6B6B6B", Dark: "#9A9A9A"},
-		Proxy:        lipgloss.AdaptiveColor{Light: "#1A7F4B", Dark: "#3FD17B"},
-		Vpn:          lipgloss.AdaptiveColor{Light: "#2563EB", Dark: "#60A5FA"},
-		Warn:         lipgloss.AdaptiveColor{Light: "#B26A00", Dark: "#E0A100"},
-		Ok:           lipgloss.AdaptiveColor{Light: "#1A7F4B", Dark: "#3FD17B"},
-		Error:        lipgloss.AdaptiveColor{Light: "#C02626", Dark: "#FF6B6B"},
+		Accent:       lipgloss.AdaptiveColor{Light: "#3B5BDB", Dark: "#7AA2F7"},
+		OnAccent:     lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#1A1B26"},
+		Text:         lipgloss.AdaptiveColor{Light: "#1C1C1C", Dark: "#C0CAF5"},
+		Muted:        lipgloss.AdaptiveColor{Light: "#6B6B6B", Dark: "#7E89B3"},
+		Subtle:       lipgloss.AdaptiveColor{Light: "#9A9A9A", Dark: "#565F89"},
+		Border:       lipgloss.AdaptiveColor{Light: "#D0D0D0", Dark: "#3B4261"},
+		BorderActive: lipgloss.AdaptiveColor{Light: "#3B5BDB", Dark: "#7AA2F7"},
+		Off:          lipgloss.AdaptiveColor{Light: "#6B6B6B", Dark: "#565F89"},
+		Proxy:        lipgloss.AdaptiveColor{Light: "#1A7F4B", Dark: "#9ECE6A"},
+		Vpn:          lipgloss.AdaptiveColor{Light: "#7C3AED", Dark: "#BB9AF7"},
+		Warn:         lipgloss.AdaptiveColor{Light: "#B26A00", Dark: "#E0AF68"},
+		Ok:           lipgloss.AdaptiveColor{Light: "#1A7F4B", Dark: "#9ECE6A"},
+		Error:        lipgloss.AdaptiveColor{Light: "#C02626", Dark: "#F7768E"},
 	}
 }
 
@@ -124,7 +125,8 @@ type Styles struct {
 	th Theme
 	gl Glyphs
 
-	Title  lipgloss.Style // app name / screen title (accent, bold)
+	Title  lipgloss.Style // app/screen title — a filled "pill" (dark on accent)
+	Accent lipgloss.Style // accent-coloured text (panel titles, highlights)
 	Muted  lipgloss.Style
 	Subtle lipgloss.Style
 	Err    lipgloss.Style
@@ -153,10 +155,11 @@ func NewStyles(c Caps, th Theme, gl Glyphs) Styles {
 		th: th,
 		gl: gl,
 
-		Title:  ns().Bold(true).Foreground(th.Accent),
+		Title:  ns().Bold(true).Foreground(th.OnAccent).Background(th.Accent).Padding(0, 1),
+		Accent: ns().Foreground(th.Accent),
 		Muted:  ns().Foreground(th.Muted),
 		Subtle: ns().Foreground(th.Subtle),
-		Err:    ns().Foreground(th.Error),
+		Err:    ns().Foreground(th.Error).Bold(true),
 
 		Panel:       panel,
 		PanelActive: panel.BorderForeground(th.BorderActive),

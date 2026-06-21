@@ -68,3 +68,4 @@
 {"id":"int-0d253f95","kind":"field_change","created_at":"2026-06-21T19:28:47.207545877Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-wuo","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-ac3167c3","kind":"field_change","created_at":"2026-06-21T19:29:01.136288926Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-tnu","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-417c51c3","kind":"field_change","created_at":"2026-06-21T19:29:52.660341338Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-tnu","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-8a4164ba","kind":"field_change","created_at":"2026-06-21T19:33:12.006746708Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-kgd","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
