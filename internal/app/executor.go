@@ -484,6 +484,22 @@ func (e *Executor) RestartProxied(ctx context.Context, pid int) (int, error) {
 	return e.procRouter().RestartPID(ctx, pid)
 }
 
+// CurrentSettings returns the live tunables as a ui.Settings (the inverse of
+// ApplySettings) so a remote client / SETTINGS-GET can seed its form.
+func (e *Executor) CurrentSettings() ui.Settings {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return ui.Settings{
+		SocksPort:        e.ports.Socks,
+		ClashEnabled:     e.clashAddr != "",
+		ClashAddr:        e.clashAddr,
+		URLTestURL:       e.urltest.URL,
+		URLTestInterval:  e.urltest.Interval,
+		URLTestTolerance: e.urltest.Tolerance,
+		SaveProfile:      e.save != nil,
+	}
+}
+
 // ApplySettings reloads the running core with edited tunables (port, Clash API,
 // urltest) and re-enables the current mode so the changes take effect live.
 func (e *Executor) ApplySettings(ctx context.Context, s ui.Settings) error {

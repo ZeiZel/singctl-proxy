@@ -2,33 +2,50 @@ package control
 
 import (
 	"bufio"
-	"encoding/json"
 	"io"
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
-// Status is the live status reported over the control socket.
+// connDeadline bounds a single request/response. It is generous because some
+// commands (MODE vpn, SETTINGS-SET) trigger a sing-box core reload.
+const connDeadline = 15 * time.Second
+
+// Status is the STATUS payload reported over the control socket.
 type Status struct {
 	PID       int    `json:"pid"`
 	Mode      string `json:"mode"`
 	StartedAt string `json:"started_at"`
 }
 
-// Server listens on a Unix socket and answers STATUS / STOP commands.
+// HandlerFunc handles one command. arg is everything after the first token
+// (possibly empty, possibly JSON). The returned reply is sent verbatim as one
+// line; a non-nil err is sent as "ERR <err>".
+type HandlerFunc func(arg string) (reply string, err error)
+
+// Server is a Unix-socket command registry: a running instance registers
+// handlers (STATUS, STOP, MODE, SETTINGS-*, KEYS-*) that a second invocation
+// drives remotely.
 type Server struct {
-	path   string
-	status func() Status
-	onStop func()
-	ln     net.Listener
+	path     string
+	mu       sync.RWMutex
+	handlers map[string]HandlerFunc
+	ln       net.Listener
 }
 
-// NewServer builds a control server for socketPath. status reports current
-// state; onStop is invoked (asynchronously) when a STOP command arrives.
-func NewServer(socketPath string, status func() Status, onStop func()) *Server {
-	return &Server{path: socketPath, status: status, onStop: onStop}
+// NewServer builds a control server for socketPath. Register commands with Handle.
+func NewServer(socketPath string) *Server {
+	return &Server{path: socketPath, handlers: map[string]HandlerFunc{}}
+}
+
+// Handle registers fn for cmd (case-insensitive).
+func (s *Server) Handle(cmd string, fn HandlerFunc) {
+	s.mu.Lock()
+	s.handlers[strings.ToUpper(cmd)] = fn
+	s.mu.Unlock()
 }
 
 // Start removes any stale socket, begins listening, and serves in a goroutine.
@@ -49,30 +66,30 @@ func (s *Server) acceptLoop() {
 		if err != nil {
 			return // listener closed
 		}
-		go s.handle(conn)
+		go s.serve(conn)
 	}
 }
 
-func (s *Server) handle(conn net.Conn) {
+func (s *Server) serve(conn net.Conn) {
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(connDeadline))
 	line, _ := bufio.NewReader(conn).ReadString('\n')
-	switch strings.ToUpper(strings.TrimSpace(line)) {
-	case "STOP":
-		_, _ = io.WriteString(conn, "OK\n")
-		if s.onStop != nil {
-			go s.onStop()
-		}
-	case "STATUS":
-		var st Status
-		if s.status != nil {
-			st = s.status()
-		}
-		data, _ := json.Marshal(st)
-		_, _ = conn.Write(append(data, '\n'))
-	default:
+	cmd, arg, _ := strings.Cut(strings.TrimRight(line, "\r\n"), " ")
+	cmd = strings.ToUpper(strings.TrimSpace(cmd))
+
+	s.mu.RLock()
+	h := s.handlers[cmd]
+	s.mu.RUnlock()
+	if h == nil {
 		_, _ = io.WriteString(conn, "ERR unknown command\n")
+		return
 	}
+	reply, err := h(arg)
+	if err != nil {
+		_, _ = io.WriteString(conn, "ERR "+err.Error()+"\n")
+		return
+	}
+	_, _ = io.WriteString(conn, reply+"\n")
 }
 
 // Close stops listening and removes the socket file.

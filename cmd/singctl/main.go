@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	_ "embed"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -136,6 +137,48 @@ func tailFile(ctx context.Context, path string) error {
 			return err
 		}
 	}
+}
+
+// registerControl wires the control-socket commands a remote invocation uses to
+// drive this running instance.
+func registerControl(srv *control.Server, executor *app.Executor, stop func(), startedAt string) {
+	srv.Handle("STATUS", func(string) (string, error) {
+		data, _ := json.Marshal(control.Status{PID: os.Getpid(), Mode: executor.StateLabel(), StartedAt: startedAt})
+		return string(data), nil
+	})
+	srv.Handle("STOP", func(string) (string, error) {
+		go stop()
+		return "OK", nil
+	})
+	srv.Handle("MODE", func(arg string) (string, error) {
+		ctx := context.Background()
+		switch strings.ToLower(strings.TrimSpace(arg)) {
+		case "off":
+			return "OK", executor.Stop(ctx)
+		case "proxy":
+			return "OK", executor.EnableProxy(ctx)
+		case "vpn":
+			return "OK", executor.EnableVPN(ctx)
+		}
+		return "", fmt.Errorf("unknown mode %q", arg)
+	})
+	srv.Handle("SETTINGS-GET", func(string) (string, error) {
+		data, _ := json.Marshal(executor.CurrentSettings())
+		return string(data), nil
+	})
+	srv.Handle("SETTINGS-SET", func(arg string) (string, error) {
+		var s ui.Settings
+		if err := json.Unmarshal([]byte(arg), &s); err != nil {
+			return "", fmt.Errorf("bad settings json: %w", err)
+		}
+		return "OK", executor.ApplySettings(context.Background(), s)
+	})
+	srv.Handle("KEYS-GET", func(string) (string, error) {
+		return strings.Join(executor.CurrentLinks(), "\n"), nil
+	})
+	srv.Handle("KEYS-ADD", func(arg string) (string, error) {
+		return "OK", executor.AddLink(context.Background(), arg)
+	})
 }
 
 // randomSecret returns a 128-bit hex token used as the default Clash API secret
@@ -306,12 +349,8 @@ func main() {
 	// tab can follow logs and stop it. Best-effort: failures don't block startup.
 	if configDir != "" {
 		sockPath := filepath.Join(configDir, "control.sock")
-		srv := control.NewServer(sockPath,
-			func() control.Status {
-				return control.Status{PID: os.Getpid(), Mode: executor.StateLabel(), StartedAt: startedAt}
-			},
-			cancelRun,
-		)
+		srv := control.NewServer(sockPath)
+		registerControl(srv, executor, cancelRun, startedAt)
 		if err := srv.Start(); err == nil {
 			_ = os.Chown(sockPath, realUID, realGID)
 			defer srv.Close()
