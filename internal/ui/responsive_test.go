@@ -71,6 +71,11 @@ func TestView_NeverExceedsWidth(t *testing.T) {
 			m.routedPIDs = []int{123}
 			return m
 		}},
+		{"settings", func(m Model) Model {
+			m.showSettings = true
+			m.setForm.draft = Settings{SocksPort: 1080, ClashEnabled: true, ClashAddr: "127.0.0.1:9090", URLTestInterval: "3m"}
+			return m
+		}},
 		{"logs", func(m Model) Model {
 			m.showLogs = true
 			var sb strings.Builder

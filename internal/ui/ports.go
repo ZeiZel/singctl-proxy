@@ -31,4 +31,10 @@ type Backend interface {
 	// RestartProxied terminates a running PID and relaunches it through the
 	// proxy (best-effort; the only way to proxy an existing process on macOS).
 	RestartProxied(ctx context.Context, pid int) (int, error)
+	// ApplySettings reloads the running core with edited settings (port, Clash
+	// API, urltest), preserving the current mode.
+	ApplySettings(ctx context.Context, s Settings) error
+	// Daemonize re-execs a detached background process that keeps the proxy
+	// running after this process exits.
+	Daemonize(ctx context.Context) error
 }

@@ -32,6 +32,9 @@ func (m Model) View() string {
 	if m.showLogs {
 		return m.logsView()
 	}
+	if m.showSettings {
+		return m.settingsView()
+	}
 	switch m.screen {
 	case ScreenLink:
 		return m.linkView()
@@ -564,6 +567,53 @@ func (m Model) procView() string {
 		{"^R", "перезапуск"},
 		{"esc", "назад"},
 	}), max(m.width, 1))
+	return m.frame(header, body, footer)
+}
+
+// --- settings ---
+
+func (m Model) settingsView() string {
+	s := m.styles
+	header := m.topBar("singctl "+s.gl.Dash+" настройки", "")
+	w := max(m.width, 1)
+	const labelW = 22
+
+	rows := make([]string, 0, len(settingsFields)+2)
+	for i, f := range settingsFields {
+		focused := i == m.setForm.focus
+		marker := "  "
+		if focused {
+			marker = s.colored(s.th.Accent, s.gl.Cursor+" ")
+		}
+		var line string
+		switch f.kind {
+		case sfAction:
+			label := "[ " + f.label + " ]"
+			if focused {
+				label = s.colored(s.th.Accent, label)
+			}
+			line = marker + label
+		default:
+			val := m.setForm.draft.display(i)
+			if focused && m.setForm.editing {
+				val = m.setForm.edit.View()
+			} else if focused {
+				val = s.colored(s.th.Accent, val)
+			}
+			line = marker + s.kv(f.label, val, labelW)
+		}
+		rows = append(rows, s.clampLine(line, w))
+	}
+	if m.errText != "" {
+		rows = append(rows, "", s.Err.Render(wrap(s.gl.Warn+" "+m.errText, max(w-2, 1))))
+	}
+	body := lipgloss.JoinVertical(lipgloss.Left, rows...)
+
+	footer := s.clampLine(s.footerHints([][2]string{
+		{s.gl.ArrowsUD, "поле"},
+		{"Enter", "изменить/применить"},
+		{"esc", "назад"},
+	}), w)
 	return m.frame(header, body, footer)
 }
 

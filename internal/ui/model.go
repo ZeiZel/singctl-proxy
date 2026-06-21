@@ -53,6 +53,10 @@ type Model struct {
 	procErr     string          // process-list fetch error
 	routedPIDs  []int           // PIDs currently routed/launched through the proxy
 
+	showSettings bool         // Настройки section open
+	settings     Settings     // last-applied settings (seeded from the CLI)
+	setForm      settingsForm // editing state for the Настройки section
+
 	// presentation
 	theme       Theme
 	caps        Caps
@@ -126,6 +130,12 @@ func newWithCaps(backend Backend, notes <-chan tea.Msg, caps Caps) Model {
 	hp.ShortSeparator = "  " + gl.Sep + "  "
 	hp.Ellipsis = gl.Ellipsis
 
+	se := textinput.New()
+	se.Prompt = gl.Prompt
+	se.PromptStyle = caps.R.NewStyle().Foreground(th.Accent)
+	se.Cursor.Style = caps.R.NewStyle().Foreground(th.Accent)
+	se.Width = 40
+
 	sp := spinner.New()
 	sp.Spinner = spinner.MiniDot // braille dots
 	if !caps.Unicode {
@@ -150,7 +160,14 @@ func newWithCaps(backend Backend, notes <-chan tea.Msg, caps Caps) Model {
 		backend:     backend,
 		decide:      policy.Decide,
 		notes:       notes,
+		setForm:     settingsForm{edit: se},
 	}
+}
+
+// WithSettings seeds the Настройки section with the running configuration.
+func (m Model) WithSettings(s Settings) Model {
+	m.settings = s
+	return m
 }
 
 // WithLoadedProfile starts directly on the dashboard (mode OFF) — used when a
@@ -219,19 +236,21 @@ func (m Model) Init() tea.Cmd {
 
 // --- test/inspection accessors ---
 
-func (m Model) Screen() Screen        { return m.screen }
-func (m Model) Mode() RunMode         { return m.mode }
-func (m Model) ModalShown() bool      { return m.modal != "" }
-func (m Model) CiscoActive() bool     { return m.cisco }
-func (m Model) Status() string        { return m.status }
-func (m Model) ErrText() string       { return m.errText }
-func (m Model) ShowingLogs() bool     { return m.showLogs }
-func (m Model) Logs() string          { return m.logs }
-func (m Model) ShowingConns() bool    { return m.showConns }
-func (m Model) Conns() []ConnRow      { return m.conns }
-func (m Model) Latency() []LatencyRow { return m.latency }
-func (m Model) LinkValue() string     { return m.input.Value() }
-func (m Model) Busy() bool            { return m.busy }
-func (m Model) SegCursor() int        { return m.segCursor }
-func (m Model) Focus() int            { return m.focus }
-func (m Model) RoutedPIDs() []int     { return m.routedPIDs }
+func (m Model) Screen() Screen          { return m.screen }
+func (m Model) Mode() RunMode           { return m.mode }
+func (m Model) ModalShown() bool        { return m.modal != "" }
+func (m Model) CiscoActive() bool       { return m.cisco }
+func (m Model) Status() string          { return m.status }
+func (m Model) ErrText() string         { return m.errText }
+func (m Model) ShowingLogs() bool       { return m.showLogs }
+func (m Model) Logs() string            { return m.logs }
+func (m Model) ShowingConns() bool      { return m.showConns }
+func (m Model) Conns() []ConnRow        { return m.conns }
+func (m Model) Latency() []LatencyRow   { return m.latency }
+func (m Model) LinkValue() string       { return m.input.Value() }
+func (m Model) Busy() bool              { return m.busy }
+func (m Model) SegCursor() int          { return m.segCursor }
+func (m Model) Focus() int              { return m.focus }
+func (m Model) RoutedPIDs() []int       { return m.routedPIDs }
+func (m Model) ShowingSettings() bool   { return m.showSettings }
+func (m Model) DraftSettings() Settings { return m.setForm.draft }

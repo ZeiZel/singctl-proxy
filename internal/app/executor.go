@@ -6,6 +6,8 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -16,6 +18,7 @@ import (
 
 	"singctl/internal/clashapi"
 	"singctl/internal/core"
+	"singctl/internal/daemon"
 	"singctl/internal/monitor"
 	"singctl/internal/policy"
 	"singctl/internal/proclist"
@@ -479,6 +482,87 @@ func (e *Executor) RestartProxied(ctx context.Context, pid int) (int, error) {
 		return 0, errProxyNotRunning
 	}
 	return e.procRouter().RestartPID(ctx, pid)
+}
+
+// ApplySettings reloads the running core with edited tunables (port, Clash API,
+// urltest) and re-enables the current mode so the changes take effect live.
+func (e *Executor) ApplySettings(ctx context.Context, s ui.Settings) error {
+	e.SetSocksPort(s.SocksPort)
+	if s.ClashEnabled {
+		secret := e.clashSecret
+		if secret == "" {
+			secret = randomHex()
+		}
+		e.SetClashAPI(s.ClashAddr, secret)
+	} else {
+		e.SetClashAPI("", "")
+	}
+	e.SetURLTest(singbox.URLTestParams{URL: s.URLTestURL, Interval: s.URLTestInterval, Tolerance: s.URLTestTolerance})
+	e.resetRouter() // new port → fresh per-process router
+
+	links := e.CurrentLinks()
+	if len(links) == 0 {
+		return nil
+	}
+	prev := e.StateLabel()
+	if err := e.LoadLink(ctx, strings.Join(links, "\n")); err != nil {
+		return err
+	}
+	switch prev {
+	case "vpn":
+		return e.EnableVPN(ctx)
+	case "proxy", "suspended":
+		return e.EnableProxy(ctx)
+	}
+	return nil
+}
+
+// Daemonize re-execs a detached background process that keeps the proxy running
+// after this process exits, then the caller (UI) quits. The key is persisted so
+// the child loads it from the profile.
+func (e *Executor) Daemonize(_ context.Context) error {
+	links := e.CurrentLinks()
+	if len(links) == 0 {
+		return errNoProxy
+	}
+	if e.save != nil {
+		_ = e.save(strings.Join(links, "\n"))
+	}
+	mode := "proxy"
+	if e.StateLabel() == "vpn" {
+		mode = "vpn"
+	}
+	return daemon.Spawn(daemon.Config{
+		Mode:             mode,
+		Port:             e.ports.Socks,
+		NoClash:          e.clashAddr == "",
+		ClashAddr:        e.clashAddr,
+		ClashSecret:      e.clashSecret,
+		URLTestURL:       e.urltest.URL,
+		URLTestInterval:  e.urltest.Interval,
+		URLTestTolerance: e.urltest.Tolerance,
+		LogPath:          e.logPath,
+	})
+}
+
+// resetRouter tears down the per-process router so the next route uses fresh
+// settings (e.g. a changed socks port).
+func (e *Executor) resetRouter() {
+	if e.router != nil {
+		_ = e.router.Cleanup()
+	}
+	e.router = nil
+	e.routerOnce = sync.Once{}
+}
+
+// randomHex returns a 128-bit hex token (Clash API secret when enabling it from
+// the settings UI without one set).
+func randomHex() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "singctl-local"
+	}
+	return hex.EncodeToString(b)
 }
 
 // Shutdown tears down both cores and any per-process routing state.

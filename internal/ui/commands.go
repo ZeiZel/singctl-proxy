@@ -20,6 +20,20 @@ func routePIDCmd(b Backend, pid int) tea.Cmd {
 	}
 }
 
+// applySettingsCmd reloads the running core with edited settings.
+func applySettingsCmd(b Backend, s Settings) tea.Cmd {
+	return func() tea.Msg {
+		return settingsAppliedMsg{err: b.ApplySettings(context.Background(), s)}
+	}
+}
+
+// daemonizeCmd re-execs a detached background process.
+func daemonizeCmd(b Backend) tea.Cmd {
+	return func() tea.Msg {
+		return daemonizedMsg{err: b.Daemonize(context.Background())}
+	}
+}
+
 // listProcessesCmd fetches the process list for the picker.
 func listProcessesCmd(b Backend) tea.Cmd {
 	return func() tea.Msg {

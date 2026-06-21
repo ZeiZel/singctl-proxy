@@ -95,3 +95,6 @@ type procListMsg struct {
 type linkAddedMsg struct {
 	links []string
 }
+
+type settingsAppliedMsg struct{ err error }
+type daemonizedMsg struct{ err error }

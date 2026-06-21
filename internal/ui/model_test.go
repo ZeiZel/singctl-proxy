@@ -25,6 +25,11 @@ type fakeBackend struct {
 	links        []string
 	addedLink    string
 	addErr       error
+	applied      Settings
+	applyErr     error
+	applyCalls   int
+	daemonCalls  int
+	daemonErr    error
 }
 
 func (b *fakeBackend) LoadLink(_ context.Context, link string) error {
@@ -70,6 +75,15 @@ func (b *fakeBackend) RestartProxied(_ context.Context, pid int) (int, error) {
 		return 0, b.restartErr
 	}
 	return pid + 1, nil
+}
+func (b *fakeBackend) ApplySettings(_ context.Context, s Settings) error {
+	b.applyCalls++
+	b.applied = s
+	return b.applyErr
+}
+func (b *fakeBackend) Daemonize(context.Context) error {
+	b.daemonCalls++
+	return b.daemonErr
 }
 
 func rune_(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }

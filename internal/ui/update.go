@@ -139,6 +139,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.procCursor = 0
 		return m, nil
+
+	case settingsAppliedMsg:
+		if msg.err != nil {
+			m.errText = msg.err.Error()
+			m.status = ""
+		} else {
+			m.errText = ""
+			m.status = "настройки применены"
+		}
+		return m, nil
+
+	case daemonizedMsg:
+		if msg.err != nil {
+			m.errText = msg.err.Error()
+			m.status = ""
+			return m, nil
+		}
+		// The detached child now owns the proxy; quit the TUI (deferred Shutdown
+		// stops this process's cores).
+		return m, tea.Quit
 	}
 
 	if m.screen == ScreenLink {
@@ -330,6 +350,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Настройки section: edit fields, toggle, apply / daemonize.
+	if m.showSettings {
+		return m.handleSettingsKey(msg)
+	}
+
 	switch m.screen {
 	case ScreenLink:
 		switch msg.String() {
@@ -381,6 +406,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.openSection(secConns)
 		case key.Matches(msg, m.keys.Proc):
 			return m.openSection(secApps)
+		case key.Matches(msg, m.keys.Settings):
+			return m.openSection(secSettings)
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
 			return m, nil
@@ -420,10 +447,11 @@ const (
 	secLogs
 	secApps
 	secKeys
+	secSettings
 )
 
 // dashSectionLabels are the expandable sections shown as разделы chips.
-var dashSectionLabels = []string{"Соединения", "Логи", "Приложения", "Ключи"}
+var dashSectionLabels = []string{"Соединения", "Логи", "Приложения", "Ключи", "Настройки"}
 
 func (m Model) sectionCount() int { return len(dashSectionLabels) }
 
@@ -468,6 +496,77 @@ func (m Model) openSection(idx int) (tea.Model, tea.Cmd) {
 		m.screen = ScreenLink
 		m.errText = ""
 		return m, textinput.Blink
+	case secSettings:
+		m.setForm.focus = 0
+		m.setForm.editing = false
+		m.setForm.draft = m.settings // edit a working copy
+		m.setForm.edit.Blur()
+		m.showSettings = true
+		m.errText = ""
+		return m, nil
+	}
+	return m, nil
+}
+
+// handleSettingsKey drives the Настройки section: ↑/↓ move focus, Enter toggles
+// a boolean / edits a value / triggers an action; while editing, Enter commits
+// and Esc cancels.
+func (m Model) handleSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	f := &m.setForm
+	if f.editing {
+		switch msg.String() {
+		case "enter":
+			f.draft.setField(f.focus, f.edit.Value())
+			f.editing = false
+			f.edit.Blur()
+			return m, nil
+		case "esc":
+			f.editing = false
+			f.edit.Blur()
+			return m, nil
+		default:
+			var cmd tea.Cmd
+			f.edit, cmd = f.edit.Update(msg)
+			return m, cmd
+		}
+	}
+
+	switch msg.String() {
+	case "esc", "q":
+		m.showSettings = false
+		return m, nil
+	case "up", "k":
+		if f.focus > 0 {
+			f.focus--
+		}
+		return m, nil
+	case "down", "j":
+		if f.focus < len(settingsFields)-1 {
+			f.focus++
+		}
+		return m, nil
+	case "enter", " ":
+		fld := settingsFields[f.focus]
+		switch fld.kind {
+		case sfToggle:
+			f.draft.toggle(f.focus)
+			return m, nil
+		case sfInt, sfText:
+			f.editing = true
+			f.edit.SetValue(f.draft.editable(f.focus))
+			f.edit.CursorEnd()
+			f.edit.Focus()
+			return m, textinput.Blink
+		case sfAction:
+			if fld.action == "daemon" {
+				m.status = "запуск в фоне…"
+				return m, daemonizeCmd(m.backend)
+			}
+			m.settings = f.draft
+			m.showSettings = false
+			m.status = "применяю настройки…"
+			return m, applySettingsCmd(m.backend, f.draft)
+		}
 	}
 	return m, nil
 }

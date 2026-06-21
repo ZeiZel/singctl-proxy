@@ -347,7 +347,15 @@ func main() {
 		return
 	}
 
-	model := ui.New(executor, notes).WithLogPath(logPath)
+	model := ui.New(executor, notes).WithLogPath(logPath).WithSettings(ui.Settings{
+		SocksPort:        c.proxy.port,
+		ClashEnabled:     clashAddr != "",
+		ClashAddr:        c.obs.clashAPI,
+		URLTestURL:       c.obs.urltestURL,
+		URLTestInterval:  c.obs.urltestInterval,
+		URLTestTolerance: c.obs.urltestTolerance,
+		SaveProfile:      !c.keys.noSave,
+	})
 	if initialLink != "" {
 		// Remember the link: load it (no mode started — user picks PROXY/VPN) and
 		// skip the input screen.
