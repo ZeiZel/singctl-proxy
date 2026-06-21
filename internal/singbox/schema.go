@@ -94,6 +94,29 @@ type SocksOutbound struct {
 	ServerPort int    `json:"server_port"`
 }
 
+// URLTestOutbound is a sing-box selector group that periodically latency-tests
+// its members and routes through the fastest reachable one. We use it to fail
+// over between several VLESS servers: Outbounds lists the per-server tags in
+// priority order, Tag is the group's stable name (route.final points at it).
+type URLTestOutbound struct {
+	Type        string   `json:"type"` // "urltest"
+	Tag         string   `json:"tag"`
+	Outbounds   []string `json:"outbounds"`
+	URL         string   `json:"url,omitempty"`       // probe URL, e.g. https://www.gstatic.com/generate_204
+	Interval    string   `json:"interval,omitempty"`  // re-test interval, e.g. "3m"
+	Tolerance   int      `json:"tolerance,omitempty"` // ms hysteresis before switching
+	IdleTimeout string   `json:"idle_timeout,omitempty"`
+}
+
+// SelectorOutbound is a manual group (kept for completeness / future manual
+// server selection from the TUI).
+type SelectorOutbound struct {
+	Type      string   `json:"type"` // "selector"
+	Tag       string   `json:"tag"`
+	Outbounds []string `json:"outbounds"`
+	Default   string   `json:"default,omitempty"`
+}
+
 type TLS struct {
 	Enabled    bool     `json:"enabled"`
 	ServerName string   `json:"server_name,omitempty"`
@@ -143,6 +166,8 @@ type RouteRule struct {
 	IPIsPrivate bool     `json:"ip_is_private,omitempty"`
 	DomainRegex []string `json:"domain_regex,omitempty"`
 	IPCIDR      []string `json:"ip_cidr,omitempty"`
+	ProcessName []string `json:"process_name,omitempty"`
+	ProcessPath []string `json:"process_path,omitempty"`
 	Outbound    string   `json:"outbound,omitempty"`
 }
 
@@ -150,10 +175,21 @@ type RouteRule struct {
 
 type Experimental struct {
 	CacheFile *CacheFile `json:"cache_file,omitempty"`
+	ClashAPI  *ClashAPI  `json:"clash_api,omitempty"`
 }
 
 type CacheFile struct {
 	Enabled bool `json:"enabled"`
+}
+
+// ClashAPI enables sing-box's Clash-compatible HTTP API. We bind it to loopback
+// with a random secret and poll /connections (source process, destination,
+// chain) and /proxies (per-server latency) for the connections view and
+// urltest status. ExternalController is "host:port".
+type ClashAPI struct {
+	ExternalController string `json:"external_controller,omitempty"`
+	Secret             string `json:"secret,omitempty"`
+	DefaultMode        string `json:"default_mode,omitempty"`
 }
 
 // MarshalIndented renders a Config to deterministic, 2-space-indented JSON with
