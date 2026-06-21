@@ -32,3 +32,6 @@
 {"id":"int-c217fca8","kind":"field_change","created_at":"2026-06-21T16:04:46.621859878Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-6tn","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-34707dd0","kind":"field_change","created_at":"2026-06-21T16:06:11.315104292Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-6tn","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-d081539b","kind":"field_change","created_at":"2026-06-21T16:06:45.80776717Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-663","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-ba02d119","kind":"field_change","created_at":"2026-06-21T16:08:20.577467755Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-663","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-8bb53a3b","kind":"field_change","created_at":"2026-06-21T16:15:13.879367794Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-6fp","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-00ec297a","kind":"field_change","created_at":"2026-06-21T16:15:14.317567211Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-h8w","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}

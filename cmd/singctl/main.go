@@ -60,7 +60,7 @@ func realConfigDir() (dir string, uid, gid int) {
 // runControlCommand handles --attach/--stop/--status against a running instance.
 // These never need root: they only read the advertisement file, the log file and
 // the control socket.
-func runControlCommand(opts *options) int {
+func runControlCommand(c *cli) int {
 	dir, _, _ := realConfigDir()
 	if dir == "" {
 		fmt.Fprintln(os.Stderr, "error: cannot resolve config directory")
@@ -76,14 +76,14 @@ func runControlCommand(opts *options) int {
 		return 1
 	}
 	switch {
-	case opts.stop:
+	case c.ctl.stop:
 		if err := control.Stop(inst.ControlSocket); err != nil {
 			fmt.Fprintln(os.Stderr, "error: stop:", err)
 			return 1
 		}
 		fmt.Printf("singctl: asked PID %d to stop\n", inst.PID)
 		return 0
-	case opts.status:
+	case c.ctl.status:
 		st, err := control.QueryStatus(inst.ControlSocket)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error: status:", err)
@@ -162,7 +162,7 @@ func requireRoot(goos string, euid int) error {
 }
 
 func main() {
-	opts, err := parseOptions(os.Args[1:], os.Stderr)
+	c, err := parseCLI(os.Args[1:], os.Stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		os.Exit(0)
 	}
@@ -173,30 +173,30 @@ func main() {
 
 	// Informational flags work without root.
 	switch {
-	case opts.version:
+	case c.root.version:
 		fmt.Println("singctl", version)
 		return
-	case opts.man:
+	case c.root.man:
 		fmt.Print(manPage)
 		return
 	}
 
 	// Control commands target an already-running instance and need no root.
-	if opts.attach || opts.stop || opts.status {
-		os.Exit(runControlCommand(opts))
+	if c.ctl.attach || c.ctl.stop || c.ctl.status {
+		os.Exit(runControlCommand(c))
 	}
 
 	// .env (explicit path, or ./.env if present) feeds SINGCTL_KEY/SINGCTL_PORT;
 	// real environment variables win, flags win over both.
-	if opts.envFile != "" {
-		if err := godotenv.Load(opts.envFile); err != nil {
+	if c.root.envFile != "" {
+		if err := godotenv.Load(c.root.envFile); err != nil {
 			fmt.Fprintln(os.Stderr, "error: load env file:", err)
 			os.Exit(1)
 		}
 	} else {
 		_ = godotenv.Load() // best-effort ./.env
 	}
-	if err := opts.applyEnv(os.Getenv); err != nil {
+	if err := c.applyEnv(os.Getenv); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -221,9 +221,9 @@ func main() {
 
 	notes := make(chan tea.Msg, 32)
 	executor := app.NewExecutor(core.NewFactory(), prober, routes, notes)
-	executor.SetSocksPort(opts.port)
-	clashAddr := opts.effectiveClashAPI()
-	clashSecret := opts.clashSecret
+	executor.SetSocksPort(c.proxy.port)
+	clashAddr := c.obs.effectiveClashAPI()
+	clashSecret := c.obs.clashSecret
 	if clashAddr != "" {
 		if clashSecret == "" {
 			clashSecret = randomSecret()
@@ -231,9 +231,9 @@ func main() {
 		executor.SetClashAPI(clashAddr, clashSecret)
 	}
 	executor.SetURLTest(singbox.URLTestParams{
-		URL:       opts.urltestURL,
-		Interval:  opts.urltestInterval,
-		Tolerance: opts.urltestTolerance,
+		URL:       c.obs.urltestURL,
+		Interval:  c.obs.urltestInterval,
+		Tolerance: c.obs.urltestTolerance,
 	})
 
 	// Persist the profile + log file under the real user's home (chowned back),
@@ -249,14 +249,14 @@ func main() {
 		logPath = filepath.Join(configDir, "singbox.log")
 
 		store := profile.NewStore(profile.OSFS{}, ru.HomeDir, ru.Uid, ru.Gid)
-		if !opts.noSave {
+		if !c.keys.noSave {
 			executor.SetSaver(store.Save)
 		}
 		if l, err := store.Load(); err == nil {
 			savedLink = l
 		}
 	}
-	if !(opts.headless && opts.logs) {
+	if !(c.proxy.headless && c.proxy.logs) {
 		executor.SetLogPath(logPath)
 	}
 
@@ -264,7 +264,7 @@ func main() {
 	// tab can follow logs and stop it. Best-effort: failures don't block startup.
 	if configDir != "" {
 		mode := "proxy"
-		if opts.vpn {
+		if c.proxy.vpn {
 			mode = "vpn"
 		}
 		sockPath := filepath.Join(configDir, "control.sock")
@@ -290,7 +290,7 @@ func main() {
 	}
 
 	// flag/env key overrides the saved profile.
-	initialLink := strings.TrimSpace(opts.combinedKey())
+	initialLink := strings.TrimSpace(c.keys.combined())
 	if initialLink == "" {
 		initialLink = savedLink
 	}
@@ -307,8 +307,8 @@ func main() {
 	go mon.Run(ctx, ticker.C, events)
 	go executor.Loop(ctx, monOut)
 
-	if opts.headless {
-		if err := runHeadless(ctx, executor, notes, initialLink, opts); err != nil {
+	if c.proxy.headless {
+		if err := runHeadless(ctx, executor, notes, initialLink, c); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
@@ -323,12 +323,12 @@ func main() {
 			model = model.WithLoadedProfile().WithCurrentLink(initialLink).
 				WithCurrentLinks(executor.CurrentLinks())
 			switch {
-			case opts.proxy:
+			case c.proxy.proxy:
 				model = model.WithAutoMode(ui.RunProxy)
-			case opts.vpn:
+			case c.proxy.vpn:
 				model = model.WithAutoMode(ui.RunVPN)
 			}
-			if opts.logs {
+			if c.proxy.logs {
 				model = model.WithLogsOpen()
 			}
 		}
@@ -354,7 +354,7 @@ func main() {
 // requested mode (proxy unless --vpn), print status notes to stdout and run
 // until SIGINT/SIGTERM. The notes channel must be drained here — the executor
 // blocks pushing into it otherwise.
-func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan tea.Msg, link string, opts *options) error {
+func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan tea.Msg, link string, c *cli) error {
 	if link == "" {
 		return fmt.Errorf("headless mode needs a key: pass --key, set %s (or .env), or save a profile first", envKey)
 	}
@@ -364,13 +364,13 @@ func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan tea.M
 
 	mode := "PROXY"
 	enable := executor.EnableProxy
-	if opts.vpn {
+	if c.proxy.vpn {
 		mode, enable = "VPN", executor.EnableVPN
 	}
 	if err := enable(ctx); err != nil {
 		return fmt.Errorf("enable %s: %w", strings.ToLower(mode), err)
 	}
-	socks := opts.port
+	socks := c.proxy.port
 	if socks == 0 {
 		socks = 1080
 	}
@@ -379,7 +379,7 @@ func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan tea.M
 
 	// Route requested PIDs and/or launch a proxied command (best-effort; errors
 	// are reported but do not abort the running proxy).
-	pids, _ := opts.routePIDs()
+	pids, _ := c.proc.routePIDs()
 	for _, pid := range pids {
 		if err := executor.RoutePID(ctx, pid); err != nil {
 			fmt.Fprintf(os.Stderr, "route-pid %d: %v\n", pid, err)
@@ -387,7 +387,7 @@ func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan tea.M
 			fmt.Printf("singctl: routing PID %d through the proxy\n", pid)
 		}
 	}
-	restartPIDs, _ := opts.restartPIDs()
+	restartPIDs, _ := c.proc.restartPIDs()
 	for _, pid := range restartPIDs {
 		if newPID, err := executor.RestartProxied(ctx, pid); err != nil {
 			fmt.Fprintf(os.Stderr, "restart-pid %d: %v\n", pid, err)
@@ -395,8 +395,8 @@ func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan tea.M
 			fmt.Printf("singctl: restarted PID %d in proxy mode (new PID %d)\n", pid, newPID)
 		}
 	}
-	if opts.launch {
-		if pid, err := executor.LaunchProxied(ctx, opts.launchArgv); err != nil {
+	if c.proc.launch {
+		if pid, err := executor.LaunchProxied(ctx, c.proc.launchArgv); err != nil {
 			fmt.Fprintf(os.Stderr, "launch: %v\n", err)
 		} else {
 			fmt.Printf("singctl: launched PID %d through the proxy\n", pid)
