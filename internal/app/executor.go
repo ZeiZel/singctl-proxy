@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -186,9 +187,67 @@ func (e *Executor) startPoller() {
 		Client:   clashapi.NewClient(e.clashAddr, e.clashSecret),
 		Interval: pollInterval,
 		Resolve:  clashapi.NewProcessResolver(),
-		Sink:     clashapi.Sink{LogLine: e.appendLog},
+		Sink: clashapi.Sink{
+			LogLine:     e.appendLog,
+			Connections: e.pushConnections,
+			Proxies:     e.pushProxies,
+		},
 	}
 	go poller.Run(ctx)
+}
+
+// pushConnections converts the Clash API connection list into a UI message and
+// sends it non-blocking (a dropped update is harmless — the next tick replaces
+// it, and we must never wedge the poller on a quit UI).
+func (e *Executor) pushConnections(conns []clashapi.Connection) {
+	rows := make([]ui.ConnRow, 0, len(conns))
+	for _, c := range conns {
+		rows = append(rows, ui.ConnRow{
+			Process: c.Metadata.Process,
+			Source:  c.Metadata.Source(),
+			Dest:    c.Metadata.Dest(),
+			Network: c.Metadata.Network,
+			Chain:   strings.Join(c.Chains, "→"),
+		})
+	}
+	e.pushNonBlocking(ui.ConnectionsMsg{Rows: rows})
+}
+
+// pushProxies extracts the failover group's per-server latency and selection
+// from the Clash API /proxies map and pushes it to the UI. The group is named
+// "proxy" (singbox.proxyTag); with a single server "proxy" is the server itself.
+func (e *Executor) pushProxies(proxies map[string]clashapi.ProxyState) {
+	group, ok := proxies["proxy"]
+	if !ok {
+		return
+	}
+	var msg ui.LatencyMsg
+	if len(group.All) > 0 { // urltest group (multi-server)
+		msg.Selected = group.Now
+		for _, tag := range group.All {
+			msg.Rows = append(msg.Rows, ui.LatencyRow{
+				Tag:      tag,
+				Delay:    proxies[tag].LastDelay(),
+				Selected: tag == group.Now,
+			})
+		}
+	} else { // single server
+		msg.Selected = "proxy"
+		msg.Rows = []ui.LatencyRow{{Tag: "proxy", Delay: group.LastDelay(), Selected: true}}
+	}
+	e.pushNonBlocking(msg)
+}
+
+// pushNonBlocking sends a message to the UI notes channel without blocking; if
+// no reader is ready the message is dropped.
+func (e *Executor) pushNonBlocking(msg tea.Msg) {
+	if e.notes == nil {
+		return
+	}
+	select {
+	case e.notes <- msg:
+	default:
+	}
 }
 
 // stopPoller stops the Clash API poller if running.

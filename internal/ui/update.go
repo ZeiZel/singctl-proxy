@@ -41,6 +41,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, listen(m.notes)
 
+	case ConnectionsMsg:
+		m.conns = msg.Rows
+		return m, listen(m.notes)
+
+	case LatencyMsg:
+		m.latency = msg.Rows
+		m.latencySel = msg.Selected
+		return m, listen(m.notes)
+
 	case linkLoadedMsg:
 		m.loaded = true
 		if link := strings.TrimSpace(m.input.Value()); link != "" {
@@ -150,6 +159,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	// Connections overlay: c/esc/q return to the dashboard.
+	if m.showConns {
+		switch {
+		case key.Matches(msg, m.keys.Conns), msg.String() == "esc", msg.String() == "q":
+			m.showConns = false
+		}
+		return m, nil
+	}
+
 	// Logs overlay: l/esc/q return to the dashboard; everything else scrolls the
 	// viewport (intercept the close keys before viewport sees them).
 	if m.showLogs {
@@ -222,6 +240,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Logs):
 			m.showLogs = true
 			return m, tea.Batch(readLogsCmd(m.logPath), logsTick())
+		case key.Matches(msg, m.keys.Conns):
+			m.showConns = true
+			return m, nil
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
 			return m, nil

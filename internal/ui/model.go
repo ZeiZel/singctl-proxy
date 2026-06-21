@@ -21,22 +21,27 @@ const (
 // Model is the Bubble Tea model. All fields are unexported; tests in this
 // package set them directly (white-box) and feed messages to Update.
 type Model struct {
-	screen   Screen
-	mode     RunMode // user-chosen running state (OFF until they pick)
-	cisco    bool
-	phys     string
-	width    int
-	height   int
-	input    textinput.Model
-	modal    string
-	status   string
-	errText  string
+	screen      Screen
+	mode        RunMode // user-chosen running state (OFF until they pick)
+	cisco       bool
+	phys        string
+	width       int
+	height      int
+	input       textinput.Model
+	modal       string
+	status      string
+	errText     string
 	loaded      bool // a profile (link) has been loaded
 	showLogs    bool
 	logs        string
 	logPath     string
 	currentLink string  // the loaded link, shown as the placeholder when editing
 	autoMode    RunMode // mode to enable right after start (RunOff = none)
+
+	showConns  bool         // connections overlay open
+	conns      []ConnRow    // live connection table (from the Clash API poller)
+	latency    []LatencyRow // per-server failover latencies
+	latencySel string       // currently-selected server tag
 
 	// presentation
 	theme     Theme
@@ -175,14 +180,17 @@ func (m Model) Init() tea.Cmd {
 
 // --- test/inspection accessors ---
 
-func (m Model) Screen() Screen    { return m.screen }
-func (m Model) Mode() RunMode     { return m.mode }
-func (m Model) ModalShown() bool  { return m.modal != "" }
-func (m Model) CiscoActive() bool { return m.cisco }
-func (m Model) Status() string    { return m.status }
-func (m Model) ErrText() string   { return m.errText }
-func (m Model) ShowingLogs() bool { return m.showLogs }
-func (m Model) Logs() string      { return m.logs }
-func (m Model) LinkValue() string { return m.input.Value() }
-func (m Model) Busy() bool        { return m.busy }
-func (m Model) SegCursor() int    { return m.segCursor }
+func (m Model) Screen() Screen        { return m.screen }
+func (m Model) Mode() RunMode         { return m.mode }
+func (m Model) ModalShown() bool      { return m.modal != "" }
+func (m Model) CiscoActive() bool     { return m.cisco }
+func (m Model) Status() string        { return m.status }
+func (m Model) ErrText() string       { return m.errText }
+func (m Model) ShowingLogs() bool     { return m.showLogs }
+func (m Model) Logs() string          { return m.logs }
+func (m Model) ShowingConns() bool    { return m.showConns }
+func (m Model) Conns() []ConnRow      { return m.conns }
+func (m Model) Latency() []LatencyRow { return m.latency }
+func (m Model) LinkValue() string     { return m.input.Value() }
+func (m Model) Busy() bool            { return m.busy }
+func (m Model) SegCursor() int        { return m.segCursor }
