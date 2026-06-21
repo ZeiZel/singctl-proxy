@@ -12,6 +12,12 @@ type fakeBackend struct {
 	loadErr, proxyErr, vpnErr, stopErr         error
 	loadCalls, proxyCalls, vpnCalls, stopCalls int
 	lastLink                                   string
+
+	routePIDErr  error
+	launchErr    error
+	routedPID    int
+	launchedArgv []string
+	launchPID    int
 }
 
 func (b *fakeBackend) LoadLink(_ context.Context, link string) error {
@@ -22,6 +28,20 @@ func (b *fakeBackend) LoadLink(_ context.Context, link string) error {
 func (b *fakeBackend) EnableProxy(context.Context) error { b.proxyCalls++; return b.proxyErr }
 func (b *fakeBackend) EnableVPN(context.Context) error   { b.vpnCalls++; return b.vpnErr }
 func (b *fakeBackend) Stop(context.Context) error        { b.stopCalls++; return b.stopErr }
+func (b *fakeBackend) RoutePID(_ context.Context, pid int) error {
+	b.routedPID = pid
+	return b.routePIDErr
+}
+func (b *fakeBackend) LaunchProxied(_ context.Context, argv []string) (int, error) {
+	b.launchedArgv = argv
+	if b.launchErr != nil {
+		return 0, b.launchErr
+	}
+	if b.launchPID == 0 {
+		b.launchPID = 4242
+	}
+	return b.launchPID, nil
+}
 
 func rune_(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
 

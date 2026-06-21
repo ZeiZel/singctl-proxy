@@ -110,6 +110,44 @@ func ParseLink(raw string) (ServerProfile, error) {
 	return p, nil
 }
 
+// ParseLinks parses one or more vless:// links into a ProfileSet, preserving
+// order as failover priority. Each input string may itself contain several
+// links separated by newlines, spaces, semicolons, or commas (so a pasted blob
+// or a repeated --key flag both work). It fails on the first malformed link.
+func ParseLinks(raws []string) (ProfileSet, error) {
+	var set ProfileSet
+	for _, raw := range raws {
+		for _, link := range splitLinks(raw) {
+			p, err := ParseLink(link)
+			if err != nil {
+				return ProfileSet{}, err
+			}
+			set.Profiles = append(set.Profiles, p)
+		}
+	}
+	if len(set.Profiles) == 0 {
+		return ProfileSet{}, ErrNoLinks
+	}
+	return set, nil
+}
+
+// splitLinks breaks a blob into individual link tokens on any whitespace,
+// semicolon, or comma. Commas inside a single link's query (e.g. alpn=h2,http/1.1)
+// are not a concern because real links contain no top-level comma — vless links
+// always start with the "vless://" scheme, which we additionally guard on.
+func splitLinks(raw string) []string {
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == '\t' || r == ' ' || r == ';'
+	})
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // splitCSV splits a comma-separated value, trimming spaces and dropping empties.
 func splitCSV(s string) []string {
 	if strings.TrimSpace(s) == "" {

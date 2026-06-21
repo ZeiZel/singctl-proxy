@@ -6,7 +6,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	_ "embed"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -29,6 +31,7 @@ import (
 	"singctl/internal/platform"
 	"singctl/internal/profile"
 	"singctl/internal/runtime"
+	"singctl/internal/singbox"
 	"singctl/internal/types"
 	"singctl/internal/ui"
 )
@@ -40,6 +43,17 @@ var version = "dev"
 
 //go:embed singctl.1
 var manPage string
+
+// randomSecret returns a 128-bit hex token used as the default Clash API secret
+// so the loopback API is not left open without authentication. On the vanishingly
+// unlikely RNG failure it falls back to a fixed-but-private string.
+func randomSecret() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "singctl-local"
+	}
+	return hex.EncodeToString(b)
+}
 
 // requireRoot enforces that we run under sudo (TUN/auto_route need privileges).
 // On Windows there is no euid (os.Geteuid returns -1); elevation is checked by
@@ -105,6 +119,18 @@ func main() {
 	notes := make(chan tea.Msg, 32)
 	executor := app.NewExecutor(core.NewFactory(), prober, routes, notes)
 	executor.SetSocksPort(opts.port)
+	if addr := opts.effectiveClashAPI(); addr != "" {
+		secret := opts.clashSecret
+		if secret == "" {
+			secret = randomSecret()
+		}
+		executor.SetClashAPI(addr, secret)
+	}
+	executor.SetURLTest(singbox.URLTestParams{
+		URL:       opts.urltestURL,
+		Interval:  opts.urltestInterval,
+		Tolerance: opts.urltestTolerance,
+	})
 
 	// Persist the profile + log file under the real user's home (chowned back),
 	// and remember the last link. In headless --logs mode the log path stays
@@ -129,7 +155,7 @@ func main() {
 	}
 
 	// flag/env key overrides the saved profile.
-	initialLink := strings.TrimSpace(opts.key)
+	initialLink := strings.TrimSpace(opts.combinedKey())
 	if initialLink == "" {
 		initialLink = savedLink
 	}
@@ -214,6 +240,24 @@ func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan tea.M
 	}
 	fmt.Printf("singctl %s: %s mode up — socks 127.0.0.1:%d, http 127.0.0.1:%d (ctrl+c to stop)\n",
 		version, mode, socks, socks+1)
+
+	// Route requested PIDs and/or launch a proxied command (best-effort; errors
+	// are reported but do not abort the running proxy).
+	pids, _ := opts.routePIDs()
+	for _, pid := range pids {
+		if err := executor.RoutePID(ctx, pid); err != nil {
+			fmt.Fprintf(os.Stderr, "route-pid %d: %v\n", pid, err)
+		} else {
+			fmt.Printf("singctl: routing PID %d through the proxy\n", pid)
+		}
+	}
+	if opts.launch {
+		if pid, err := executor.LaunchProxied(ctx, opts.launchArgv); err != nil {
+			fmt.Fprintf(os.Stderr, "launch: %v\n", err)
+		} else {
+			fmt.Printf("singctl: launched PID %d through the proxy\n", pid)
+		}
+	}
 
 	// Drain executor/monitor notes; surface mode changes and notices.
 	for {

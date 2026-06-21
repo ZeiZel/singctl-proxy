@@ -1,6 +1,7 @@
 package singbox
 
 import (
+	"fmt"
 	"net"
 
 	"singctl/internal/vless"
@@ -43,6 +44,18 @@ var tunAddress = []string{"198.18.0.1/30", "fdfe:dcba:9876::1/126"}
 
 func ptrLog() *Log { return &Log{Level: "info", Timestamp: true} }
 
+// processProbePath is an impossible process path used only to make sing-box turn
+// on process-search (so /connections reports the source process) without
+// changing any real routing decision — the rule can never match.
+const processProbePath = "/singctl/__process_probe_never_matches__"
+
+// Default urltest probe settings for the multi-server failover group.
+const (
+	defaultURLTestURL       = "https://www.gstatic.com/generate_204"
+	defaultURLTestInterval  = "3m"
+	defaultURLTestTolerance = 50
+)
+
 // Ports are the local listen ports of the persistent proxy. The zero value
 // means "defaults" (socks 1080, http 2080) — normalize with withDefaults.
 type Ports struct {
@@ -63,20 +76,50 @@ func (p Ports) withDefaults() Ports {
 	return p
 }
 
-// GenerateProxyConfig builds the persistent PROXY instance on the default
-// ports (socks 1080 + http 2080). See GenerateProxyConfigPorts.
-func GenerateProxyConfig(p vless.ServerProfile, physIface string) (Config, error) {
-	return GenerateProxyConfigPorts(p, physIface, DefaultPorts())
+// URLTestParams configures the multi-server failover group. The zero value means
+// the defaults above.
+type URLTestParams struct {
+	URL       string
+	Interval  string
+	Tolerance int
 }
 
-// GenerateProxyConfigPorts builds the persistent PROXY instance. physIface is
-// non-empty ONLY in VPN mode (decision D3): then bind_interface/
-// default_interface pin egress to the physical NIC so it escapes our own TUN.
-// In proxy-only mode physIface == "" and those fields are omitted, so traffic
-// follows the default route (through Cisco if active — D4: bypass is
-// impossible). The PROXY instance never contains a tun inbound.
+func (u URLTestParams) withDefaults() URLTestParams {
+	if u.URL == "" {
+		u.URL = defaultURLTestURL
+	}
+	if u.Interval == "" {
+		u.Interval = defaultURLTestInterval
+	}
+	if u.Tolerance == 0 {
+		u.Tolerance = defaultURLTestTolerance
+	}
+	return u
+}
+
+// ProxyOpts are the knobs for the persistent proxy config. The zero value is the
+// historical single-server, no-Clash, proxy-only config.
+type ProxyOpts struct {
+	PhysIface string        // VPN mode only; "" = proxy-only (no bind, rides default route)
+	Ports     Ports         // local listen ports (zero = defaults)
+	ClashAPI  *ClashAPI     // non-nil enables the Clash API + process-search logging
+	URLTest   URLTestParams // failover group settings (used only with >1 server)
+}
+
+// GenerateProxyConfig builds the persistent PROXY instance on the default
+// ports (socks 1080 + http 2080). See GenerateProxyConfigOpts.
+func GenerateProxyConfig(p vless.ServerProfile, physIface string) (Config, error) {
+	return GenerateProxyConfigOpts(vless.SingleSet(p), ProxyOpts{PhysIface: physIface})
+}
+
+// GenerateProxyConfigPorts is the single-profile adapter with custom ports.
 func GenerateProxyConfigPorts(p vless.ServerProfile, physIface string, ports Ports) (Config, error) {
-	ports = ports.withDefaults()
+	return GenerateProxyConfigOpts(vless.SingleSet(p), ProxyOpts{PhysIface: physIface, Ports: ports})
+}
+
+// vlessOutbound builds one VLESS outbound for profile p under the given tag.
+// physIface (VPN mode) binds its egress to the physical NIC.
+func vlessOutbound(p vless.ServerProfile, tag, physIface string) VLESSOutbound {
 	var tlsCfg *TLS
 	if p.Security == vless.SecurityTLS || p.Security == vless.SecurityReality {
 		tlsCfg = &TLS{Enabled: true, ServerName: p.TLS.ServerName, Insecure: p.TLS.Insecure}
@@ -109,9 +152,9 @@ func GenerateProxyConfigPorts(p vless.ServerProfile, physIface string, ports Por
 		transport = nil
 	}
 
-	vlessOut := VLESSOutbound{
+	return VLESSOutbound{
 		Type:           "vless",
-		Tag:            proxyTag,
+		Tag:            tag,
 		Server:         p.Host,
 		ServerPort:     int(p.Port),
 		UUID:           p.UUID,
@@ -120,6 +163,57 @@ func GenerateProxyConfigPorts(p vless.ServerProfile, physIface string, ports Por
 		TLS:            tlsCfg,
 		Transport:      transport,
 		BindInterface:  physIface,
+	}
+}
+
+// proxyServerTag is the per-server outbound tag in a multi-server set.
+func proxyServerTag(i int) string { return fmt.Sprintf("%s-%d", proxyTag, i) }
+
+// GenerateProxyConfigOpts builds the persistent PROXY instance from a set of one
+// or more servers. PhysIface is non-empty ONLY in VPN mode (decision D3): then
+// bind_interface/default_interface pin egress to the physical NIC so it escapes
+// our own TUN. In proxy-only mode PhysIface == "" and those fields are omitted,
+// so traffic follows the default route (through Cisco if active — D4). The PROXY
+// instance never contains a tun inbound.
+//
+// With one server the VLESS outbound is tagged "proxy" directly (byte-identical
+// to the historical config). With several, each server is tagged "proxy-0..N"
+// and a "proxy" urltest group latency-tests them and routes through the fastest
+// reachable one — so route.final ("proxy") and the DNS detour are unchanged.
+func GenerateProxyConfigOpts(set vless.ProfileSet, opts ProxyOpts) (Config, error) {
+	ports := opts.Ports.withDefaults()
+
+	var outbounds []any
+	if set.Multi() {
+		tags := make([]string, set.Len())
+		for i, p := range set.Profiles {
+			tag := proxyServerTag(i)
+			tags[i] = tag
+			outbounds = append(outbounds, vlessOutbound(p, tag, opts.PhysIface))
+		}
+		ut := opts.URLTest.withDefaults()
+		outbounds = append(outbounds, URLTestOutbound{
+			Type: "urltest", Tag: proxyTag, Outbounds: tags,
+			URL: ut.URL, Interval: ut.Interval, Tolerance: ut.Tolerance,
+		})
+	} else {
+		outbounds = append(outbounds, vlessOutbound(set.Primary(), proxyTag, opts.PhysIface))
+	}
+	outbounds = append(outbounds, DirectOutbound{Type: "direct", Tag: directTag, BindInterface: opts.PhysIface})
+
+	rules := []RouteRule{
+		{Action: "sniff", Timeout: "3s"},
+		{IPIsPrivate: true, Outbound: directTag},
+		{DomainRegex: ruDomainRegex, Outbound: directTag},
+	}
+
+	var experimental *Experimental
+	if opts.ClashAPI != nil {
+		experimental = &Experimental{CacheFile: &CacheFile{Enabled: false}, ClashAPI: opts.ClashAPI}
+		// Enable process-search so /connections reports the client process.
+		rules = append(rules, RouteRule{ProcessPath: []string{processProbePath}, Outbound: proxyTag})
+	} else {
+		experimental = &Experimental{CacheFile: &CacheFile{Enabled: false}}
 	}
 
 	cfg := Config{
@@ -136,21 +230,14 @@ func GenerateProxyConfigPorts(p vless.ServerProfile, physIface string, ports Por
 			SocksInbound{Type: "socks", Tag: socksTag, Listen: listenAddr, ListenPort: ports.Socks},
 			HTTPInbound{Type: "http", Tag: httpTag, Listen: listenAddr, ListenPort: ports.HTTP},
 		},
-		Outbounds: []any{
-			vlessOut,
-			DirectOutbound{Type: "direct", Tag: directTag, BindInterface: physIface},
-		},
+		Outbounds: outbounds,
 		Route: &Route{
-			DefaultInterface: physIface,
-			Rules: []RouteRule{
-				{Action: "sniff", Timeout: "3s"},
-				{IPIsPrivate: true, Outbound: directTag},
-				{DomainRegex: ruDomainRegex, Outbound: directTag},
-			},
+			DefaultInterface:      opts.PhysIface,
+			Rules:                 rules,
 			Final:                 proxyTag,
 			DefaultDomainResolver: localDNSTag,
 		},
-		Experimental: &Experimental{CacheFile: &CacheFile{Enabled: false}},
+		Experimental: experimental,
 	}
 	return cfg, nil
 }
@@ -173,24 +260,33 @@ func GenerateProxyConfigPorts(p vless.ServerProfile, physIface string, ports Por
 //   - If the server host is a literal IP, a belt-and-suspenders ip_cidr→direct
 //     rule prevents any loop even if the proxy's bind were ineffective (R1).
 func GenerateForwarderConfig(p vless.ServerProfile) (Config, error) {
-	return GenerateForwarderConfigPorts(p, DefaultPorts())
+	return GenerateForwarderConfigSet(vless.SingleSet(p), DefaultPorts())
 }
 
-// GenerateForwarderConfigPorts is GenerateForwarderConfig with a custom proxy
-// socks port (the forwarder must dial wherever the proxy actually listens).
+// GenerateForwarderConfigPorts is the single-profile adapter with a custom port.
 func GenerateForwarderConfigPorts(p vless.ServerProfile, ports Ports) (Config, error) {
+	return GenerateForwarderConfigSet(vless.SingleSet(p), ports)
+}
+
+// GenerateForwarderConfigSet builds the on-demand TUN forwarder for a set of
+// servers. The proxy socks port is where the forwarder relays everything; each
+// server host that is a literal IP gets a belt-and-suspenders ip_cidr→direct
+// loop-guard (so traffic to any server never re-enters our TUN).
+func GenerateForwarderConfigSet(set vless.ProfileSet, ports Ports) (Config, error) {
 	ports = ports.withDefaults()
 	rules := []RouteRule{
 		{Action: "sniff", Timeout: "3s"},
 		{Inbound: []string{tunTag}, Protocol: "dns", Action: "hijack-dns"},
 		{IPIsPrivate: true, Outbound: directTag},
 	}
-	if ip := net.ParseIP(p.Host); ip != nil {
-		cidr := p.Host + "/32"
-		if ip.To4() == nil {
-			cidr = p.Host + "/128"
+	for _, p := range set.Profiles {
+		if ip := net.ParseIP(p.Host); ip != nil {
+			cidr := p.Host + "/32"
+			if ip.To4() == nil {
+				cidr = p.Host + "/128"
+			}
+			rules = append(rules, RouteRule{IPCIDR: []string{cidr}, Outbound: directTag})
 		}
-		rules = append(rules, RouteRule{IPCIDR: []string{cidr}, Outbound: directTag})
 	}
 
 	cfg := Config{

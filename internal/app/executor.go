@@ -6,19 +6,29 @@ package app
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"strings"
 	"sync"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"singctl/internal/clashapi"
 	"singctl/internal/core"
 	"singctl/internal/monitor"
 	"singctl/internal/policy"
+	"singctl/internal/procproxy"
 	"singctl/internal/runtime"
 	"singctl/internal/singbox"
 	"singctl/internal/types"
 	"singctl/internal/ui"
 	"singctl/internal/vless"
 )
+
+// pollInterval is how often the Clash API is polled for live connections and
+// per-server latency.
+const pollInterval = 2 * time.Second
 
 // Executor wires the UI/monitor to the runtime.Manager. The manager is built
 // lazily on StartProxy (once the link is known).
@@ -33,10 +43,31 @@ type Executor struct {
 	save    func(string) error
 	logPath string
 	ports   singbox.Ports
+
+	clashAddr   string
+	clashSecret string
+	urltest     singbox.URLTestParams
+
+	pollMu     sync.Mutex
+	pollCancel context.CancelFunc
+
+	routerOnce sync.Once
+	router     procproxy.Router
 }
 
 // SetLogPath redirects sing-box logs to a file (keeps them out of the TUI).
 func (e *Executor) SetLogPath(path string) { e.logPath = path }
+
+// SetClashAPI enables the sing-box Clash API on the given "host:port" with the
+// given secret (empty addr disables it). Takes effect on the next LoadLink.
+func (e *Executor) SetClashAPI(addr, secret string) {
+	e.clashAddr = addr
+	e.clashSecret = secret
+}
+
+// SetURLTest tunes the multi-server failover group (probe URL / interval /
+// tolerance). The zero value uses sensible defaults.
+func (e *Executor) SetURLTest(u singbox.URLTestParams) { e.urltest = u }
 
 // SetSocksPort overrides the proxy's local socks port (the http port follows
 // at port+1). 0 keeps the defaults (socks 1080, http 2080). Takes effect on
@@ -63,14 +94,21 @@ func (e *Executor) SetSaver(fn func(string) error) { e.save = fn }
 // starting anything (the user explicitly enables a mode afterwards). Changing
 // the link tears down any previous runtime first.
 func (e *Executor) LoadLink(ctx context.Context, link string) error {
-	profile, err := vless.ParseLink(link)
+	set, err := vless.ParseLinks([]string{link})
 	if err != nil {
 		return err
 	}
+	e.stopPoller()
 	if old := e.manager(); old != nil {
 		_ = old.Shutdown(ctx)
 	}
-	builder := runtime.ProfileConfigBuilder{Profile: profile, LogPath: e.logPath, Ports: e.ports}
+	builder := runtime.ProfileConfigBuilder{
+		Profiles: set,
+		LogPath:  e.logPath,
+		Ports:    e.ports,
+		ClashAPI: e.clashAPIConfig(),
+		URLTest:  e.urltest,
+	}
 	mgr := runtime.NewManager(e.factory, builder, e.prober, e.routes)
 	e.mu.Lock()
 	e.mgr = mgr
@@ -81,6 +119,14 @@ func (e *Executor) LoadLink(ctx context.Context, link string) error {
 	return nil
 }
 
+// clashAPIConfig returns the sing-box Clash API config, or nil if disabled.
+func (e *Executor) clashAPIConfig() *singbox.ClashAPI {
+	if e.clashAddr == "" {
+		return nil
+	}
+	return &singbox.ClashAPI{ExternalController: e.clashAddr, Secret: e.clashSecret}
+}
+
 // EnableProxy starts (or switches to) proxy-only mode.
 func (e *Executor) EnableProxy(ctx context.Context) error {
 	mgr := e.manager()
@@ -88,9 +134,17 @@ func (e *Executor) EnableProxy(ctx context.Context) error {
 		return errNoProxy
 	}
 	if mgr.State() == runtime.StateVPN {
-		return mgr.StopForwarder(ctx) // VPN -> proxy
+		if err := mgr.StopForwarder(ctx); err != nil { // VPN -> proxy
+			return err
+		}
+		e.startPoller()
+		return nil
 	}
-	return mgr.StartProxy(ctx) // off/suspended -> proxy (idempotent)
+	if err := mgr.StartProxy(ctx); err != nil { // off/suspended -> proxy (idempotent)
+		return err
+	}
+	e.startPoller()
+	return nil
 }
 
 // EnableVPN starts VPN mode (proxy + forwarder), ensuring the proxy is up first.
@@ -102,17 +156,128 @@ func (e *Executor) EnableVPN(ctx context.Context) error {
 	if err := mgr.StartProxy(ctx); err != nil {
 		return err
 	}
-	return mgr.StartForwarder(ctx)
+	if err := mgr.StartForwarder(ctx); err != nil {
+		return err
+	}
+	e.startPoller()
+	return nil
 }
 
 // Stop shuts everything down (back to OFF), keeping the loaded profile so the
 // user can re-enable a mode.
 func (e *Executor) Stop(ctx context.Context) error {
+	e.stopPoller()
 	mgr := e.manager()
 	if mgr == nil {
 		return nil
 	}
 	return mgr.Shutdown(ctx)
+}
+
+// startPoller launches the Clash API poller (idempotent; no-op when the Clash
+// API is disabled). Enriched connection lines are appended to the log sink.
+func (e *Executor) startPoller() {
+	if e.clashAddr == "" {
+		return
+	}
+	e.pollMu.Lock()
+	defer e.pollMu.Unlock()
+	if e.pollCancel != nil {
+		return // already running
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	e.pollCancel = cancel
+	poller := &clashapi.Poller{
+		Client:   clashapi.NewClient(e.clashAddr, e.clashSecret),
+		Interval: pollInterval,
+		Resolve:  clashapi.NewProcessResolver(),
+		Sink: clashapi.Sink{
+			LogLine:     e.appendLog,
+			Connections: e.pushConnections,
+			Proxies:     e.pushProxies,
+		},
+	}
+	go poller.Run(ctx)
+}
+
+// pushConnections converts the Clash API connection list into a UI message and
+// sends it non-blocking (a dropped update is harmless — the next tick replaces
+// it, and we must never wedge the poller on a quit UI).
+func (e *Executor) pushConnections(conns []clashapi.Connection) {
+	rows := make([]ui.ConnRow, 0, len(conns))
+	for _, c := range conns {
+		rows = append(rows, ui.ConnRow{
+			Process: c.Metadata.Process,
+			Source:  c.Metadata.Source(),
+			Dest:    c.Metadata.Dest(),
+			Network: c.Metadata.Network,
+			Chain:   strings.Join(c.Chains, "→"),
+		})
+	}
+	e.pushNonBlocking(ui.ConnectionsMsg{Rows: rows})
+}
+
+// pushProxies extracts the failover group's per-server latency and selection
+// from the Clash API /proxies map and pushes it to the UI. The group is named
+// "proxy" (singbox.proxyTag); with a single server "proxy" is the server itself.
+func (e *Executor) pushProxies(proxies map[string]clashapi.ProxyState) {
+	group, ok := proxies["proxy"]
+	if !ok {
+		return
+	}
+	var msg ui.LatencyMsg
+	if len(group.All) > 0 { // urltest group (multi-server)
+		msg.Selected = group.Now
+		for _, tag := range group.All {
+			msg.Rows = append(msg.Rows, ui.LatencyRow{
+				Tag:      tag,
+				Delay:    proxies[tag].LastDelay(),
+				Selected: tag == group.Now,
+			})
+		}
+	} else { // single server
+		msg.Selected = "proxy"
+		msg.Rows = []ui.LatencyRow{{Tag: "proxy", Delay: group.LastDelay(), Selected: true}}
+	}
+	e.pushNonBlocking(msg)
+}
+
+// pushNonBlocking sends a message to the UI notes channel without blocking; if
+// no reader is ready the message is dropped.
+func (e *Executor) pushNonBlocking(msg tea.Msg) {
+	if e.notes == nil {
+		return
+	}
+	select {
+	case e.notes <- msg:
+	default:
+	}
+}
+
+// stopPoller stops the Clash API poller if running.
+func (e *Executor) stopPoller() {
+	e.pollMu.Lock()
+	defer e.pollMu.Unlock()
+	if e.pollCancel != nil {
+		e.pollCancel()
+		e.pollCancel = nil
+	}
+}
+
+// appendLog writes one enriched connection line to the same destination as the
+// sing-box log: the log file in TUI/non-interactive mode, or stdout when logs
+// are streamed (headless --logs, logPath == "").
+func (e *Executor) appendLog(line string) {
+	if e.logPath == "" {
+		fmt.Fprintln(os.Stdout, line)
+		return
+	}
+	f, err := os.OpenFile(e.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintln(f, line)
 }
 
 // --- monitor integration ---
@@ -194,8 +359,53 @@ func (e *Executor) runMode() ui.RunMode {
 	}
 }
 
-// Shutdown tears down both cores.
+// --- per-process proxying (ui.Backend) ---
+
+// proxyRunning reports whether the proxy listeners are up (required before
+// routing a process through them).
+func (e *Executor) proxyRunning() bool {
+	m := e.manager()
+	return m != nil && m.State() != runtime.StateStopped
+}
+
+// procRouter lazily builds the platform per-PID router, pinned to the proxy's
+// actual local ports.
+func (e *Executor) procRouter() procproxy.Router {
+	e.routerOnce.Do(func() {
+		socks, http := 1080, 2080
+		if e.ports.Socks != 0 {
+			socks, http = e.ports.Socks, e.ports.HTTP
+		}
+		e.router = procproxy.NewRouter(procproxy.Config{
+			SocksAddr: fmt.Sprintf("127.0.0.1:%d", socks),
+			HTTPAddr:  fmt.Sprintf("127.0.0.1:%d", http),
+		})
+	})
+	return e.router
+}
+
+// RoutePID routes an already-running PID's traffic through the proxy.
+func (e *Executor) RoutePID(ctx context.Context, pid int) error {
+	if !e.proxyRunning() {
+		return errProxyNotRunning
+	}
+	return e.procRouter().AddPID(ctx, pid)
+}
+
+// LaunchProxied starts a command with its traffic routed through the proxy.
+func (e *Executor) LaunchProxied(ctx context.Context, argv []string) (int, error) {
+	if !e.proxyRunning() {
+		return 0, errProxyNotRunning
+	}
+	return e.procRouter().Launch(ctx, argv)
+}
+
+// Shutdown tears down both cores and any per-process routing state.
 func (e *Executor) Shutdown(ctx context.Context) error {
+	e.stopPoller()
+	if e.router != nil {
+		_ = e.router.Cleanup()
+	}
 	if m := e.manager(); m != nil {
 		return m.Shutdown(ctx)
 	}

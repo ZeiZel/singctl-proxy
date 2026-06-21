@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "singctl_proxy",
+  "project_id": "5d9f5482-9923-4af7-b188-1e61571a5f1a"
+}

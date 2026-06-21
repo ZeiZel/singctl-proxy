@@ -37,6 +37,34 @@ type StatusMsg struct {
 	Note string
 }
 
+// ConnRow is one live connection for the connections view (already formatted by
+// the executor from the Clash API, so the UI stays decoupled from clashapi).
+type ConnRow struct {
+	Process string
+	Source  string
+	Dest    string
+	Network string
+	Chain   string
+}
+
+// ConnectionsMsg carries the current live connection table.
+type ConnectionsMsg struct {
+	Rows []ConnRow
+}
+
+// LatencyRow is one server's measured latency in the failover group.
+type LatencyRow struct {
+	Tag      string
+	Delay    int // ms; 0 means timed out / unknown
+	Selected bool
+}
+
+// LatencyMsg carries per-server latencies and the currently-selected server tag.
+type LatencyMsg struct {
+	Selected string
+	Rows     []LatencyRow
+}
+
 // internal command results.
 type linkLoadedMsg struct{}
 type proxyEnabledMsg struct{}
@@ -45,3 +73,7 @@ type stoppedMsg struct{}
 type errMsg struct{ err error }
 type logsMsg struct{ content string }
 type logsTickMsg struct{}
+type procResultMsg struct {
+	note string
+	err  error
+}

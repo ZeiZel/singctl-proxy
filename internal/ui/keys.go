@@ -12,6 +12,8 @@ type keyMap struct {
 	Stop  key.Binding
 	Edit  key.Binding
 	Logs  key.Binding
+	Conns key.Binding
+	Proc  key.Binding
 	Help  key.Binding
 	Quit  key.Binding
 
@@ -30,6 +32,8 @@ func defaultKeys(gl Glyphs) keyMap {
 		Stop:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "стоп")),
 		Edit:     key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "ссылка")),
 		Logs:     key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "логи")),
+		Conns:    key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "соединения")),
+		Proc:     key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "процесс")),
 		Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "справка")),
 		Quit:     key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "выход")),
 		Next:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "далее")),
@@ -42,14 +46,15 @@ func defaultKeys(gl Glyphs) keyMap {
 
 // ShortHelp is the single-line footer (truncated to width by help.Model).
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Proxy, k.VPN, k.Stop, k.Edit, k.Logs, k.Help, k.Quit}
+	// Kept short so it fits without truncation; Edit/Logs live in FullHelp ('?').
+	return []key.Binding{k.Proxy, k.VPN, k.Stop, k.Conns, k.Proc, k.Help, k.Quit}
 }
 
 // FullHelp is the expanded, multi-column footer shown when '?' is pressed.
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Proxy, k.VPN, k.Stop},
-		{k.Edit, k.Logs},
+		{k.Edit, k.Logs, k.Conns, k.Proc},
 		{k.Left, k.Activate, k.Next},
 		{k.Help, k.Quit},
 	}

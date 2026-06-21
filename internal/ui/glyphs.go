@@ -28,6 +28,7 @@ type Glyphs struct {
 	ScrollAt string // "at bottom" indicator in the logs header
 	ArrowsLR string // left/right hint
 	ArrowsUD string // up/down hint
+	ArrowR   string // rightwards arrow (connection source → dest)
 	Enter    string // enter-key hint
 	Prompt   string // text-input prompt
 	Border   lipgloss.Border
@@ -49,6 +50,7 @@ func PickGlyphs(unicode bool) Glyphs {
 			ScrollAt: "↓",
 			ArrowsLR: "←→",
 			ArrowsUD: "↑↓",
+			ArrowR:   "→",
 			Enter:    "↵",
 			Prompt:   "» ",
 			Border:   lipgloss.RoundedBorder(),
@@ -65,6 +67,7 @@ func PickGlyphs(unicode bool) Glyphs {
 		ScrollAt: "v",
 		ArrowsLR: "<>",
 		ArrowsUD: "^v",
+		ArrowR:   "->",
 		Enter:    "enter",
 		Prompt:   "> ",
 		Border: lipgloss.Border{

@@ -21,6 +21,12 @@ func (m Model) View() string {
 	if layoutFor(m.width, m.height) == layoutTooSmall {
 		return m.tooSmallView()
 	}
+	if m.showProc {
+		return m.procView()
+	}
+	if m.showConns {
+		return m.connsView()
+	}
 	if m.showLogs {
 		return m.logsView()
 	}
@@ -147,6 +153,9 @@ func (m Model) statusBody(contentW int) string {
 		s.kv("Cisco", s.ciscoBadge(m.cisco), keyW),
 		s.kv("iface", s.clampLine(phys, valW), keyW),
 	}
+	if sum := m.latencySummary(); sum != "" {
+		rows = append(rows, s.kv("сервер", s.clampLine(sum, valW), keyW))
+	}
 	if notice := m.noticeLine(); notice != "" {
 		rows = append(rows, s.rule(contentW), wrap(notice, contentW))
 	}
@@ -244,6 +253,118 @@ func (m Model) logsView() string {
 		}
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+}
+
+// --- connections ---
+
+func (m Model) connsHeaderView() string {
+	s := m.styles
+	w := max(m.width, 1)
+	left := s.Title.Render("соединения")
+	right := s.Subtle.Render(fmt.Sprintf("%d %s %s", len(m.conns), s.gl.Sep, m.latencySummary()))
+	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
+	bar := left
+	if right != "" && lw+1+rw <= w {
+		bar = left + strings.Repeat(" ", w-lw-rw) + right
+	} else {
+		bar = s.clampLine(left, w)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, bar, s.rule(w))
+}
+
+// latencySummary renders the selected server and its latency for the header /
+// status panel (e.g. "proxy-0 42ms"). Empty when no latency data yet.
+func (m Model) latencySummary() string {
+	if len(m.latency) == 0 {
+		return ""
+	}
+	for _, r := range m.latency {
+		if r.Selected || r.Tag == m.latencySel {
+			return r.Tag + " " + delayText(r.Delay)
+		}
+	}
+	// No explicit selection (single server): show the first.
+	return m.latency[0].Tag + " " + delayText(m.latency[0].Delay)
+}
+
+func delayText(ms int) string {
+	if ms <= 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%dms", ms)
+}
+
+func (m Model) connsView() string {
+	s := m.styles
+	header := m.connsHeaderView()
+	footer := s.clampLine(s.footerHints([][2]string{
+		{"c/esc", "назад"},
+		{"ctrl+c", "выход"},
+	}), max(m.width, 1))
+
+	w := max(m.width, 1)
+	var rows []string
+	// Latency table for the failover group (only meaningful with data).
+	if len(m.latency) > 0 {
+		rows = append(rows, s.Subtle.Render("серверы:"))
+		for _, r := range m.latency {
+			marker := "  "
+			if r.Selected || r.Tag == m.latencySel {
+				marker = s.colored(s.th.Accent, s.gl.DotOn+" ")
+			}
+			rows = append(rows, s.clampLine(marker+r.Tag+"  "+delayText(r.Delay), w))
+		}
+		rows = append(rows, s.rule(w))
+	}
+
+	if len(m.conns) == 0 {
+		rows = append(rows, s.Subtle.Render("(нет активных соединений)"))
+	} else {
+		for _, c := range m.conns {
+			proc := c.Process
+			if proc == "" {
+				proc = s.gl.Dash
+			}
+			line := fmt.Sprintf("%s  %s %s %s  [%s]", proc, c.Source, s.gl.ArrowR, c.Dest, c.Network)
+			if c.Chain != "" {
+				line += "  " + s.Subtle.Render(c.Chain)
+			}
+			rows = append(rows, s.clampLine(line, w))
+		}
+	}
+	body := strings.Join(rows, "\n")
+	return m.frame(header, body, footer)
+}
+
+// --- per-process routing prompt ---
+
+func (m Model) procView() string {
+	s := m.styles
+	lay := layoutFor(m.width, m.height)
+	header := m.topBar("singctl "+s.gl.Dash+" проксировать процесс", "")
+
+	var box string
+	if lay == layoutNarrow {
+		box = s.clampLine(m.procInput.View(), max(m.width, 1))
+	} else {
+		bw := min(m.width-2, 64)
+		box = s.Panel.Width(max(bw-2, 1)).Render(m.procInput.View())
+	}
+	subW := max(m.width-2, 1)
+	hint := "Введите PID запущенного процесса (Linux) или команду для запуска " +
+		"через прокси. На macOS поддерживается только запуск команды."
+	rows := []string{box, "", s.Muted.Render(wrap(hint, subW))}
+	if m.errText != "" {
+		rows = append(rows, "", s.Err.Render(wrap(s.gl.Warn+" "+m.errText, subW)))
+	}
+	body := lipgloss.JoinVertical(lipgloss.Left, rows...)
+
+	footer := s.clampLine(s.footerHints([][2]string{
+		{"Enter", "проксировать"},
+		{"esc", "отмена"},
+		{"ctrl+c", "выход"},
+	}), max(m.width, 1))
+	return m.frame(header, body, footer)
 }
 
 // --- warning modal (the narrow-terminal overflow fix) ---

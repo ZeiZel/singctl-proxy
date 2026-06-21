@@ -1,0 +1,129 @@
+.TH SINGCTL 1 "2026" "singctl" "User Commands"
+.SH NAME
+singctl \- VLESS proxy / VPN client on an embedded sing-box core
+.SH SYNOPSIS
+.B sudo singctl
+.RI [ flags ]
+.SH DESCRIPTION
+.B singctl
+runs a VLESS proxy on an embedded sing-box core and toggles a system-wide VPN
+(TUN) mode from a terminal UI. It passively coexists with Cisco Secure Client
+(observe-only): while a corporate VPN is connecting or active, singctl yields
+the routing table to avoid AnyConnect's IP-forwarding integrity check.
+.PP
+Two sing-box instances are managed: a persistent PROXY (local SOCKS on
+127.0.0.1:1080 and HTTP on 127.0.0.1:2080 by default) and an on-demand
+TUN forwarder used only in VPN mode.
+.PP
+The shipping binary is built with the
+.B singbox
+build tag; the default build links a stub core for the hermetic test suite.
+.SH FLAGS
+.TP
+.BR \-k ", " \-\-key " " \fIvless://...\fR
+VLESS key (link) to load. May be given more than once to register several
+servers; the proxy then picks the fastest reachable one automatically
+(latency-tested, priority follows the order given).
+.TP
+.B \-\-headless
+Run without the terminal UI. Requires a key from
+.BR \-\-key ,
+.B $SINGCTL_KEY
+or the saved profile.
+.TP
+.BR \-l ", " \-\-logs
+Stream sing-box logs to stdout (headless) or open the logs view on start (TUI).
+.TP
+.B \-\-vpn
+Enable VPN (TUN) mode on start.
+.TP
+.BR \-p ", " \-\-proxy
+Enable proxy mode on start.
+.TP
+.BI \-\-port " n"
+Local SOCKS port (HTTP proxy listens on port+1; defaults: 1080/2080).
+.TP
+.BI \-\-clash\-api " host:port"
+Address of sing-box's Clash API, used for enriched connection logging (source
+process, full destination, outbound chain) and per-server latency. Bound to
+loopback with a random secret. Default: 127.0.0.1:9090.
+.TP
+.B \-\-no\-clash\-api
+Disable the Clash API (no connection logging or latency metrics).
+.TP
+.BI \-\-clash\-secret " s"
+Clash API secret. Default: a random token generated per run.
+.TP
+.BI \-\-urltest\-url " url"
+Probe URL used to latency-test servers for failover. Default: gstatic
+generate_204.
+.TP
+.BI \-\-urltest\-interval " d"
+How often servers are re-probed (e.g. 3m). Default: 3m.
+.TP
+.BI \-\-urltest\-tolerance " ms"
+Latency hysteresis before switching the active server. Default: 50.
+.TP
+.BI \-\-route\-pid " pid"
+Route an already-running process's traffic through the proxy. Linux only
+(cgroup v2 + nftables); repeatable. Requires VPN mode (the TUN must be up).
+.TP
+.B \-\-launch " \-\- cmd args..."
+Run a command with its traffic routed through the proxy. On Linux this uses real
+interception; on other platforms it injects proxy environment variables
+(HTTP_PROXY/HTTPS_PROXY/ALL_PROXY) into the child, which only covers env-aware
+applications.
+.TP
+.BI \-\-env\-file " path"
+Load environment variables from this file (default: ./.env if present).
+.TP
+.B \-\-no\-save
+Do not persist the key to ~/.config/singctl.
+.TP
+.B \-\-man
+Print this man page (roff) and exit.
+.TP
+.BR \-v ", " \-\-version
+Print version and exit.
+.TP
+.BR \-h ", " \-\-help
+Show usage help.
+.SH ENVIRONMENT
+.TP
+.B SINGCTL_KEY
+VLESS key, used when
+.B \-\-key
+is not given. May contain several newline-separated links.
+.TP
+.B SINGCTL_KEYS
+Several newline/semicolon-separated VLESS keys for failover.
+.TP
+.B SINGCTL_PORT
+SOCKS port, used when
+.B \-\-port
+is not given.
+.TP
+.B SINGCTL_CLASH_API
+Clash API address, used when
+.B \-\-clash\-api
+is left at its default.
+.TP
+.B SINGCTL_CLASH_SECRET
+Clash API secret, used when
+.B \-\-clash\-secret
+is unset.
+.PP
+These variables can also be placed in a .env file in the working directory.
+.SH FILES
+.TP
+.B ~/.config/singctl/profile.txt
+Saved VLESS key(s).
+.TP
+.B ~/.config/singctl/singbox.log
+sing-box log output (TUI mode).
+.SH NOTES
+singctl must run as root: creating the TUN device and managing routes requires
+privileges. Re-run with
+.BR sudo .
+.SH SEE ALSO
+sing-box(1)
