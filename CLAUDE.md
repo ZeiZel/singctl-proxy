@@ -95,8 +95,12 @@ Hexagonal: a pure decision/config core surrounded by injected I/O ports, with
 the only sing-box dependency isolated behind a build tag.
 
 ```
-cmd/singctl            entry point: flags/env/profile precedence, wiring,
+cmd/singctl            composition root: assembles feature modules into a
+                       feature.Registry (generates --help), wires the Executor,
                        headless vs TUI, embedded man page (singctl.1)
+internal/feature       pure CLI module framework: Descriptor/FlagSpec, the Module
+                       interface (Descriptor + Bind) and a Registry that GENERATES
+                       --help/usage + man from descriptors (no internal imports)
 internal/vless         parse vless:// links -> ServerProfile / ProfileSet (pure)
 internal/singbox       build sing-box JSON config as Go structs (pure; NO sing-box
                        import). Contract = JSON, verified by testdata/*.golden.json
@@ -146,6 +150,16 @@ internal/control       instance advertisement (instance.json) + Unix control
   (suspend) while it is connecting/active and resume after it disconnects.
 - **Platform-specific code is build-tag / file-suffix split** (`*_linux.go`,
   `*_darwin.go`, `*_other.go`), each with a pure-Go fake for tests.
+- **The CLI is a feature-module registry, not a hand-written usage string.** Each
+  user-facing package exposes `FeatureDescriptor() feature.Descriptor` (name,
+  docs, flag specs); `cmd/singctl` wraps each as a `feature.Module` (owns flag
+  fields + `Bind` + typed parsed values) and assembles them in
+  `cli.buildRegistry()`. `--help` is generated from the registry. Adding a flag =
+  add it to the owning module's `Bind` AND its `FeatureDescriptor` flag specs —
+  the `TestFlagDescriptorParity` test fails if they diverge, and
+  `TestManPageParity` fails if `singctl.1` omits a long flag. `internal/feature`
+  must stay pure (no internal imports) so any package can describe itself without
+  an import cycle; wiring against the Executor lives only in package `main`.
 
 ## Features
 
@@ -174,6 +188,12 @@ internal/control       instance advertisement (instance.json) + Unix control
 - **Masked keys + add a second key.** The connection-strings screen shows loaded
   keys masked (bullets + the `#name` label only) with a field to add another key
   (joins the failover group live); the raw key is never echoed.
+- **Panel dashboard.** The dashboard surfaces functionality directly: СТАТУС +
+  РЕЖИМ panels plus an always-on СОЕДИНЕНИЯ panel (live connections + per-server
+  latency). Wide layout puts status/mode side-by-side with a full-width
+  connections panel below; compact terminals collapse it to a one-line summary.
+  The `c`/`x`/`l` overlays remain for the detailed connections / process picker /
+  logs views.
 
 ## Conventions & Patterns
 
