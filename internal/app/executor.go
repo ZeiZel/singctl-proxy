@@ -41,6 +41,7 @@ type Executor struct {
 
 	mu      sync.Mutex
 	mgr     *runtime.Manager
+	links   []string // raw VLESS links currently loaded (priority order)
 	save    func(string) error
 	logPath string
 	ports   singbox.Ports
@@ -129,11 +130,45 @@ func (e *Executor) LoadLink(ctx context.Context, link string) error {
 		URLTest:  e.urltest,
 	}
 	mgr := runtime.NewManager(e.factory, builder, e.prober, e.routes)
+	links := make([]string, 0, set.Len())
+	for _, p := range set.Profiles {
+		links = append(links, p.Raw)
+	}
 	e.mu.Lock()
 	e.mgr = mgr
+	e.links = links
 	e.mu.Unlock()
 	if e.save != nil {
 		_ = e.save(link)
+	}
+	return nil
+}
+
+// CurrentLinks returns the raw VLESS links currently loaded (in priority order).
+func (e *Executor) CurrentLinks() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]string, len(e.links))
+	copy(out, e.links)
+	return out
+}
+
+// AddLink appends another VLESS server to the set and reloads, preserving the
+// running mode so the new server joins the failover group live.
+func (e *Executor) AddLink(ctx context.Context, link string) error {
+	if _, err := vless.ParseLinks([]string{link}); err != nil {
+		return err
+	}
+	prev := e.StateLabel()
+	combined := append(e.CurrentLinks(), strings.TrimSpace(link))
+	if err := e.LoadLink(ctx, strings.Join(combined, "\n")); err != nil {
+		return err
+	}
+	switch prev {
+	case "vpn":
+		return e.EnableVPN(ctx)
+	case "proxy", "suspended":
+		return e.EnableProxy(ctx)
 	}
 	return nil
 }

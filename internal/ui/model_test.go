@@ -22,13 +22,28 @@ type fakeBackend struct {
 	procListErr  error
 	restartedPID int
 	restartErr   error
+	links        []string
+	addedLink    string
+	addErr       error
 }
 
 func (b *fakeBackend) LoadLink(_ context.Context, link string) error {
 	b.loadCalls++
 	b.lastLink = link
+	if b.loadErr == nil {
+		b.links = []string{link}
+	}
 	return b.loadErr
 }
+func (b *fakeBackend) AddLink(_ context.Context, link string) error {
+	b.addedLink = link
+	if b.addErr != nil {
+		return b.addErr
+	}
+	b.links = append(b.links, link)
+	return nil
+}
+func (b *fakeBackend) CurrentLinks() []string            { return b.links }
 func (b *fakeBackend) EnableProxy(context.Context) error { b.proxyCalls++; return b.proxyErr }
 func (b *fakeBackend) EnableVPN(context.Context) error   { b.vpnCalls++; return b.vpnErr }
 func (b *fakeBackend) Stop(context.Context) error        { b.stopCalls++; return b.stopErr }

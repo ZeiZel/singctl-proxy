@@ -51,11 +51,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.latencySel = msg.Selected
 		return m, listen(m.notes)
 
+	case linkAddedMsg:
+		m.currentLinks = msg.links
+		m.busy = false
+		m.errText = ""
+		m.input.SetValue("")
+		m.status = "ключ добавлен (" + strconv.Itoa(len(msg.links)) + " всего)"
+		return m, nil
+
 	case linkLoadedMsg:
 		m.loaded = true
 		if link := strings.TrimSpace(m.input.Value()); link != "" {
 			m.currentLink = link
 		}
+		m.currentLinks = msg.links
 		m.screen = ScreenDashboard
 		m.mode = RunOff
 		m.busy = false
@@ -270,6 +279,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.errText = ""
 			m.busy = true
+			// With keys already loaded, Enter ADDS another (failover); otherwise
+			// it loads the first.
+			if len(m.currentLinks) > 0 {
+				m.status = "добавляю ключ…"
+				return m, addLinkCmd(m.backend, link)
+			}
 			m.status = "загрузка ссылки…"
 			return m, loadLinkCmd(m.backend, link)
 		}
@@ -288,12 +303,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Stop):
 			return m.applyMode(RunOff)
 		case key.Matches(msg, m.keys.Edit):
-			// Change link: clear the field and return to input (cancellable with esc).
-			// The current link stays visible as the placeholder so the user sees
-			// what they are replacing.
+			// Open the connection-strings screen: existing keys are shown masked
+			// and the field adds another (the raw key is never echoed as the
+			// placeholder, so it stays secret).
 			m.input.SetValue("")
-			if m.currentLink != "" {
-				m.input.Placeholder = m.currentLink
+			if len(m.currentLinks) > 0 {
+				m.input.Placeholder = "vless://… (добавить ключ)"
+			} else {
+				m.input.Placeholder = "vless://..."
 			}
 			m.input.Focus()
 			m.screen = ScreenLink

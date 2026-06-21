@@ -55,7 +55,17 @@ func loadLinkCmd(b Backend, link string) tea.Cmd {
 		if err := b.LoadLink(context.Background(), link); err != nil {
 			return errMsg{err}
 		}
-		return linkLoadedMsg{}
+		return linkLoadedMsg{links: b.CurrentLinks()}
+	}
+}
+
+// addLinkCmd appends another VLESS key (failover) and returns the refreshed set.
+func addLinkCmd(b Backend, link string) tea.Cmd {
+	return func() tea.Msg {
+		if err := b.AddLink(context.Background(), link); err != nil {
+			return errMsg{err}
+		}
+		return linkAddedMsg{links: b.CurrentLinks()}
 	}
 }
 

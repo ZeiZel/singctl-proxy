@@ -21,22 +21,23 @@ const (
 // Model is the Bubble Tea model. All fields are unexported; tests in this
 // package set them directly (white-box) and feed messages to Update.
 type Model struct {
-	screen      Screen
-	mode        RunMode // user-chosen running state (OFF until they pick)
-	cisco       bool
-	phys        string
-	width       int
-	height      int
-	input       textinput.Model
-	modal       string
-	status      string
-	errText     string
-	loaded      bool // a profile (link) has been loaded
-	showLogs    bool
-	logs        string
-	logPath     string
-	currentLink string  // the loaded link, shown as the placeholder when editing
-	autoMode    RunMode // mode to enable right after start (RunOff = none)
+	screen       Screen
+	mode         RunMode // user-chosen running state (OFF until they pick)
+	cisco        bool
+	phys         string
+	width        int
+	height       int
+	input        textinput.Model
+	modal        string
+	status       string
+	errText      string
+	loaded       bool // a profile (link) has been loaded
+	showLogs     bool
+	logs         string
+	logPath      string
+	currentLink  string   // the loaded link, shown as the placeholder when editing
+	currentLinks []string // all loaded keys (masked) shown on the link screen
+	autoMode     RunMode  // mode to enable right after start (RunOff = none)
 
 	showConns  bool         // connections overlay open
 	conns      []ConnRow    // live connection table (from the Clash API poller)
@@ -158,6 +159,13 @@ func (m Model) WithLogPath(p string) Model {
 // the input placeholder.
 func (m Model) WithCurrentLink(link string) Model {
 	m.currentLink = link
+	return m
+}
+
+// WithCurrentLinks records all loaded keys so the connection-strings screen can
+// show them masked.
+func (m Model) WithCurrentLinks(links []string) Model {
+	m.currentLinks = links
 	return m
 }
 

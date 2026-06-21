@@ -66,7 +66,7 @@ type LatencyMsg struct {
 }
 
 // internal command results.
-type linkLoadedMsg struct{}
+type linkLoadedMsg struct{ links []string }
 type proxyEnabledMsg struct{}
 type vpnEnabledMsg struct{}
 type stoppedMsg struct{}
@@ -88,4 +88,9 @@ type ProcInfo struct {
 type procListMsg struct {
 	rows []ProcInfo
 	err  error
+}
+
+// linkAddedMsg is the result of adding a second key; links is the refreshed set.
+type linkAddedMsg struct {
+	links []string
 }

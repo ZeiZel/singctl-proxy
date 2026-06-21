@@ -12,6 +12,11 @@ import "context"
 // messages.
 type Backend interface {
 	LoadLink(ctx context.Context, link string) error
+	// AddLink appends another VLESS key to the set (failover) and reloads,
+	// preserving the running mode.
+	AddLink(ctx context.Context, link string) error
+	// CurrentLinks returns the loaded VLESS links (priority order) for display.
+	CurrentLinks() []string
 	EnableProxy(ctx context.Context) error
 	EnableVPN(ctx context.Context) error
 	Stop(ctx context.Context) error

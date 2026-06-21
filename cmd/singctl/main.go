@@ -320,7 +320,8 @@ func main() {
 		// Remember the link: load it (no mode started — user picks PROXY/VPN) and
 		// skip the input screen.
 		if err := executor.LoadLink(ctx, initialLink); err == nil {
-			model = model.WithLoadedProfile().WithCurrentLink(initialLink)
+			model = model.WithLoadedProfile().WithCurrentLink(initialLink).
+				WithCurrentLinks(executor.CurrentLinks())
 			switch {
 			case opts.proxy:
 				model = model.WithAutoMode(ui.RunProxy)

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -179,7 +180,28 @@ func (m Model) noticeLine() string {
 func (m Model) linkView() string {
 	s := m.styles
 	lay := layoutFor(m.width, m.height)
-	header := m.topBar("singctl "+s.gl.Dash+" вставьте VLESS-ссылку", "")
+	subW := max(m.width-2, 1)
+
+	title := "singctl " + s.gl.Dash + " вставьте VLESS-ссылку"
+	if len(m.currentLinks) > 0 {
+		title = "singctl " + s.gl.Dash + " строки подключения"
+	}
+	header := m.topBar(title, "")
+
+	maskChar := "•"
+	if !m.caps.Unicode {
+		maskChar = "*"
+	}
+
+	var rows []string
+	// Show the already-loaded keys, masked like a password.
+	if len(m.currentLinks) > 0 {
+		rows = append(rows, s.Subtle.Render("текущие ключи (скрыты):"))
+		for i, link := range m.currentLinks {
+			rows = append(rows, s.clampLine(strconv.Itoa(i+1)+". "+maskLink(link, maskChar), subW))
+		}
+		rows = append(rows, "", s.Subtle.Render("добавить второй ключ:"))
+	}
 
 	var box string
 	if lay == layoutNarrow {
@@ -190,15 +212,22 @@ func (m Model) linkView() string {
 		bw := min(m.width-2, 60)
 		box = s.Panel.Width(max(bw-2, 1)).Render(m.input.View())
 	}
-	subW := max(m.width-2, 1)
-	rows := []string{box}
+	rows = append(rows, box)
 	if m.errText != "" {
 		rows = append(rows, "", s.Err.Render(wrap(s.gl.Warn+" "+m.errText, subW)))
 	}
-	rows = append(rows, "", s.Muted.Render(wrap("Ничего не запустится, пока вы сами не выберете режим.", subW)))
+	if len(m.currentLinks) > 0 {
+		rows = append(rows, "", s.Muted.Render(wrap("Несколько ключей образуют группу с авто-выбором самого быстрого.", subW)))
+	} else {
+		rows = append(rows, "", s.Muted.Render(wrap("Ничего не запустится, пока вы сами не выберете режим.", subW)))
+	}
 	body := lipgloss.JoinVertical(lipgloss.Left, rows...)
 
-	pairs := [][2]string{{"Enter", "загрузить"}}
+	enterLabel := "загрузить"
+	if len(m.currentLinks) > 0 {
+		enterLabel = "добавить"
+	}
+	pairs := [][2]string{{"Enter", enterLabel}}
 	if m.loaded {
 		pairs = append(pairs, [2]string{"esc", "назад"})
 	}
