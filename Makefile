@@ -9,9 +9,12 @@ MANPREFIX ?= /usr/local/share/man
 MANPAGE := cmd/singctl/singctl.1
 
 # sing-box build tags. `singbox` links the real core; `with_utls` is REQUIRED for
-# REALITY/uTLS. We use the TUN system stack, so `with_gvisor` is intentionally
-# omitted (it also fails to build with sing-tun's pinned gVisor version).
-SINGBOX_TAGS := singbox with_utls
+# REALITY/uTLS; `with_clash_api` is REQUIRED because singctl enables sing-box's
+# Clash API by default (connection logging + per-server latency) — without it the
+# core fails at startup with "clash api is not included in this build". We use the
+# TUN system stack, so `with_gvisor` is intentionally omitted (it also fails to
+# build with sing-tun's pinned gVisor version).
+SINGBOX_TAGS := singbox with_utls with_clash_api
 
 .PHONY: build build-macos build-windows build-linux build-all \
 	test test-integration tidy run lint clean install-man uninstall-man
