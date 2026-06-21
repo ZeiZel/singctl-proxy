@@ -76,6 +76,7 @@ type logsTickMsg struct{}
 type procResultMsg struct {
 	note string
 	err  error
+	pid  int // PID now routed/launched (0 if none); tracked in routedPIDs
 }
 
 // ProcInfo is one process for the per-process routing picker.

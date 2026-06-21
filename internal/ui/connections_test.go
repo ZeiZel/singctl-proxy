@@ -87,18 +87,20 @@ func TestProcPrompt_RoutePID(t *testing.T) {
 	m.width, m.height = 100, 30
 	m.relayout()
 
-	// 'x' opens the process prompt.
+	// 'x' opens Приложения (launch field focused). Tab to the process filter,
+	// type a PID and submit → RoutePID called.
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
 	m = next.(Model)
 	if !m.showProc {
-		t.Fatal("'x' should open the process prompt")
+		t.Fatal("'x' should open the Приложения view")
 	}
-	// Type a PID and submit → RoutePID called.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab}) // → process filter
+	m = next.(Model)
 	m.procInput.SetValue("12345")
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
 	if m.showProc {
-		t.Error("submitting should close the prompt")
+		t.Error("submitting should close the view")
 	}
 	if cmd == nil {
 		t.Fatal("expected a command from submit")
@@ -114,16 +116,18 @@ func TestProcPrompt_RoutePID(t *testing.T) {
 func TestProcPrompt_LaunchCommand(t *testing.T) {
 	b := &fakeBackend{}
 	m := newWithCaps(b, nil, asciiCaps()).WithLoadedProfile()
-	m.showProc = true
-	m.procInput.SetValue("curl https://example.com")
+	// Open the view so the launch field is focused (appFocus=0).
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	m = next.(Model)
+	m.launchInput.SetValue("zen --private")
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	_ = next
+	m = next.(Model)
 	if cmd == nil {
 		t.Fatal("expected launch command")
 	}
 	_ = cmd()
-	if len(b.launchedArgv) != 2 || b.launchedArgv[0] != "curl" {
-		t.Errorf("LaunchProxied argv = %v, want [curl https://example.com]", b.launchedArgv)
+	if len(b.launchedArgv) != 2 || b.launchedArgv[0] != "zen" {
+		t.Errorf("LaunchProxied argv = %v, want [zen --private]", b.launchedArgv)
 	}
 }
 
@@ -152,7 +156,8 @@ func TestProcPicker_ListAndRouteHighlighted(t *testing.T) {
 	if !strings.Contains(out, "codex") || !strings.Contains(out, "alpha") {
 		t.Errorf("picker should list processes, got:\n%s", out)
 	}
-	// Move cursor to the second row and route it.
+	// Tab to the process filter, move cursor to the second row and route it.
+	m, _ = step(m, tea.KeyMsg{Type: tea.KeyTab})
 	m3, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = m3.(Model)
 	_, rcmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})

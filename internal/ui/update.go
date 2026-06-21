@@ -123,6 +123,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.errText = ""
 			m.status = msg.note
+			if msg.pid > 0 {
+				m.routedPIDs = appendUnique(m.routedPIDs, msg.pid)
+			}
 		}
 		return m, nil
 
@@ -224,14 +227,25 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	// Process-routing prompt: esc cancels; ↑/↓ move the picker cursor; enter
-	// routes the highlighted/typed PID or launches a typed command.
+	// Приложения view: a launch field (запустить приложение в прокси) + a process
+	// picker. Tab toggles focus between them; esc closes.
 	if m.showProc {
 		switch {
 		case msg.String() == "esc":
 			m.showProc = false
+			m.launchInput.Blur()
 			m.procInput.Blur()
 			return m, nil
+		case msg.Type == tea.KeyTab:
+			m.appFocus = 1 - m.appFocus
+			if m.appFocus == 0 {
+				m.launchInput.Focus()
+				m.procInput.Blur()
+			} else {
+				m.procInput.Focus()
+				m.launchInput.Blur()
+			}
+			return m, textinput.Blink
 		case msg.String() == "up":
 			if m.procCursor > 0 {
 				m.procCursor--
@@ -250,16 +264,29 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			pid := fp[clampIdx(m.procCursor, len(fp))].PID
-			m.procInput.Blur()
 			m.showProc = false
 			m.status = "перезапускаю процесс в proxy-режиме…"
 			return m, restartPIDCmd(m.backend, pid)
 		case msg.String() == "enter":
-			return m.submitProc()
+			if m.appFocus == 0 { // launch an application by command
+				v := strings.TrimSpace(m.launchInput.Value())
+				if v == "" {
+					return m, nil
+				}
+				m.launchInput.SetValue("")
+				m.showProc = false
+				m.status = "запускаю приложение через прокси…"
+				return m, launchProcCmd(m.backend, strings.Fields(v))
+			}
+			return m.submitProc() // route the highlighted/typed PID
 		default:
 			var cmd tea.Cmd
-			m.procInput, cmd = m.procInput.Update(msg)
-			m.procCursor = 0 // filter changed — reset the highlight
+			if m.appFocus == 0 {
+				m.launchInput, cmd = m.launchInput.Update(msg)
+			} else {
+				m.procInput, cmd = m.procInput.Update(msg)
+				m.procCursor = 0 // filter changed — reset the highlight
+			}
 			return m, cmd
 		}
 	}
@@ -420,7 +447,10 @@ func (m Model) openSection(idx int) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(readLogsCmd(m.logPath), logsTick())
 	case secApps:
 		m.procInput.SetValue("")
-		m.procInput.Focus()
+		m.launchInput.SetValue("")
+		m.appFocus = 0 // launch field focused first
+		m.launchInput.Focus()
+		m.procInput.Blur()
 		m.showProc = true
 		m.procCursor = 0
 		m.errText = ""
@@ -485,15 +515,11 @@ func (m Model) requestVPN() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// filteredProcs returns the process rows matching the current input. An input
-// containing a space is treated as a launch command, so the picker is hidden.
+// filteredProcs returns the process rows matching the current filter (name/PID).
 func (m Model) filteredProcs() []ProcInfo {
 	q := strings.TrimSpace(m.procInput.Value())
 	if q == "" {
 		return m.procRows
-	}
-	if strings.ContainsAny(q, " ") {
-		return nil // launch-command mode
 	}
 	lq := strings.ToLower(q)
 	var out []ProcInfo
@@ -505,36 +531,32 @@ func (m Model) filteredProcs() []ProcInfo {
 	return out
 }
 
-// submitProc resolves the Enter action in the process prompt: an explicit PID
-// (all digits) is routed; a command (has a space) is launched; otherwise the
-// highlighted picker row is routed.
+// submitProc routes the process selected in the picker: an explicit PID typed
+// into the filter, otherwise the highlighted row.
 func (m Model) submitProc() (tea.Model, tea.Cmd) {
 	raw := strings.TrimSpace(m.procInput.Value())
 	fp := m.filteredProcs()
 	m.procInput.SetValue("")
-	m.procInput.Blur()
 	m.showProc = false
 
-	switch {
-	case raw != "" && !strings.ContainsAny(raw, " "):
-		if pid, err := strconv.Atoi(raw); err == nil {
-			m.status = "проксирую процесс…"
-			return m, routePIDCmd(m.backend, pid)
-		}
-		if len(fp) > 0 {
-			m.status = "проксирую процесс…"
-			return m, routePIDCmd(m.backend, fp[clampIdx(m.procCursor, len(fp))].PID)
-		}
-		m.status = "запускаю процесс…"
-		return m, launchProcCmd(m.backend, strings.Fields(raw))
-	case raw != "": // contains a space → launch command
-		m.status = "запускаю процесс…"
-		return m, launchProcCmd(m.backend, strings.Fields(raw))
-	case len(fp) > 0: // empty input → route highlighted row
+	if pid, err := strconv.Atoi(raw); err == nil && raw != "" {
+		m.status = "проксирую процесс…"
+		return m, routePIDCmd(m.backend, pid)
+	}
+	if len(fp) > 0 {
 		m.status = "проксирую процесс…"
 		return m, routePIDCmd(m.backend, fp[clampIdx(m.procCursor, len(fp))].PID)
 	}
 	return m, nil
+}
+
+func appendUnique(s []int, v int) []int {
+	for _, x := range s {
+		if x == v {
+			return s
+		}
+	}
+	return append(s, v)
 }
 
 func clampIdx(i, n int) int {

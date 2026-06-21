@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -478,33 +479,44 @@ func (m Model) connsBody(w, limit int) string {
 	return strings.Join(rows, "\n")
 }
 
-// --- per-process routing prompt ---
+// --- Приложения: launch app in proxy + route running processes ---
+
+// inputBox renders a text input, bordered on wide/medium, clamped on narrow,
+// highlighting when focused.
+func (m Model) inputBox(ti textinput.Model, focused bool) string {
+	s := m.styles
+	if layoutFor(m.width, m.height) == layoutNarrow {
+		return s.clampLine(ti.View(), max(m.width, 1))
+	}
+	bw := min(m.width-2, 64)
+	box := s.Panel
+	if focused {
+		box = s.PanelActive
+	}
+	return box.Width(max(bw-2, 1)).Render(ti.View())
+}
 
 func (m Model) procView() string {
 	s := m.styles
-	lay := layoutFor(m.width, m.height)
-	header := m.topBar("singctl "+s.gl.Dash+" проксировать процесс", "")
-
-	var box string
-	if lay == layoutNarrow {
-		box = s.clampLine(m.procInput.View(), max(m.width, 1))
-	} else {
-		bw := min(m.width-2, 64)
-		box = s.Panel.Width(max(bw-2, 1)).Render(m.procInput.View())
-	}
+	header := m.topBar("singctl "+s.gl.Dash+" приложения", "")
 	subW := max(m.width-2, 1)
-	hint := "Фильтруйте по имени/PID и выберите процесс (↑/↓, Enter), " +
-		"введите PID, или команду для запуска через прокси."
-	rows := []string{box, "", s.Muted.Render(wrap(hint, subW))}
+
+	rows := []string{
+		s.PanelTitle.Render("Запустить приложение в прокси"),
+		m.inputBox(m.launchInput, m.appFocus == 0),
+		s.Muted.Render(wrap("Введите имя или путь приложения и нажмите Enter — оно запустится с трафиком через прокси (напр. zen).", subW)),
+		s.rule(subW),
+		s.PanelTitle.Render("Проксировать запущенный процесс"),
+		m.inputBox(m.procInput, m.appFocus == 1),
+	}
 
 	// Process picker list (filtered).
 	fp := m.filteredProcs()
 	if m.procErr != "" {
-		rows = append(rows, "", s.Err.Render(wrap(s.gl.Warn+" "+m.procErr, subW)))
+		rows = append(rows, s.Err.Render(wrap(s.gl.Warn+" "+m.procErr, subW)))
 	} else if len(fp) > 0 {
-		rows = append(rows, s.rule(subW))
 		shown := fp
-		const maxRows = 12
+		const maxRows = 10
 		if len(shown) > maxRows {
 			shown = shown[:maxRows]
 		}
@@ -512,35 +524,45 @@ func (m Model) procView() string {
 		for i, p := range shown {
 			marker := "  "
 			label := fmt.Sprintf("%-6d %s", p.PID, p.Name)
-			if p.Ports != "" {
-				label += "  " + s.Subtle.Render(p.Ports)
-			}
 			if i == cur {
 				marker = s.colored(s.th.Accent, s.gl.Cursor+" ")
 				label = s.colored(s.th.Accent, fmt.Sprintf("%-6d %s", p.PID, p.Name))
-				if p.Ports != "" {
-					label += "  " + s.Subtle.Render(p.Ports)
-				}
+			}
+			if p.Ports != "" {
+				label += "  " + s.Subtle.Render(p.Ports)
 			}
 			rows = append(rows, s.clampLine(marker+label, subW))
 		}
 		if len(fp) > maxRows {
 			rows = append(rows, s.Subtle.Render(fmt.Sprintf("…ещё %d", len(fp)-maxRows)))
 		}
-	} else if strings.TrimSpace(m.procInput.Value()) == "" {
-		rows = append(rows, "", s.Subtle.Render("(процессы с сетевой активностью не найдены)"))
+	} else {
+		rows = append(rows, s.Subtle.Render("(процессы с сетевой активностью не найдены)"))
+	}
+
+	// Currently routed PIDs.
+	rows = append(rows, s.rule(subW), s.PanelTitle.Render("Проксируются сейчас"))
+	if len(m.routedPIDs) == 0 {
+		rows = append(rows, s.Subtle.Render("(пока никого)"))
+	} else {
+		parts := make([]string, len(m.routedPIDs))
+		for i, pid := range m.routedPIDs {
+			parts[i] = strconv.Itoa(pid)
+		}
+		rows = append(rows, s.clampLine("PID: "+strings.Join(parts, ", "), subW))
 	}
 
 	if m.errText != "" {
-		rows = append(rows, "", s.Err.Render(wrap(s.gl.Warn+" "+m.errText, subW)))
+		rows = append(rows, s.Err.Render(wrap(s.gl.Warn+" "+m.errText, subW)))
 	}
 	body := lipgloss.JoinVertical(lipgloss.Left, rows...)
 
 	footer := s.clampLine(s.footerHints([][2]string{
+		{"Tab", "поле"},
 		{s.gl.ArrowsUD, "выбор"},
-		{"Enter", "проксировать"},
+		{"Enter", "запустить/проксировать"},
 		{"^R", "перезапуск"},
-		{"esc", "отмена"},
+		{"esc", "назад"},
 	}), max(m.width, 1))
 	return m.frame(header, body, footer)
 }

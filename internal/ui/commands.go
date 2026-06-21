@@ -16,7 +16,7 @@ func routePIDCmd(b Backend, pid int) tea.Cmd {
 		if err := b.RoutePID(context.Background(), pid); err != nil {
 			return procResultMsg{err: err}
 		}
-		return procResultMsg{note: fmt.Sprintf("PID %d проксируется", pid)}
+		return procResultMsg{note: fmt.Sprintf("PID %d проксируется", pid), pid: pid}
 	}
 }
 
@@ -35,7 +35,7 @@ func launchProcCmd(b Backend, argv []string) tea.Cmd {
 		if err != nil {
 			return procResultMsg{err: err}
 		}
-		return procResultMsg{note: fmt.Sprintf("запущен PID %d через прокси", pid)}
+		return procResultMsg{note: fmt.Sprintf("запущен PID %d через прокси", pid), pid: pid}
 	}
 }
 
@@ -46,7 +46,7 @@ func restartPIDCmd(b Backend, pid int) tea.Cmd {
 		if err != nil {
 			return procResultMsg{err: err}
 		}
-		return procResultMsg{note: fmt.Sprintf("PID %d перезапущен в proxy-режиме (новый PID %d)", pid, newPID)}
+		return procResultMsg{note: fmt.Sprintf("PID %d перезапущен в proxy-режиме (новый PID %d)", pid, newPID), pid: newPID}
 	}
 }
 

@@ -44,11 +44,14 @@ type Model struct {
 	latency    []LatencyRow // per-server failover latencies
 	latencySel string       // currently-selected server tag
 
-	showProc   bool            // per-process routing prompt open
-	procInput  textinput.Model // PID/command filter or manual entry
-	procRows   []ProcInfo      // processes with network sockets (picker)
-	procCursor int             // highlighted row in the filtered list
-	procErr    string          // process-list fetch error
+	showProc    bool            // Приложения view open (launcher + picker)
+	procInput   textinput.Model // process filter for the picker
+	launchInput textinput.Model // "запустить приложение в прокси" field
+	appFocus    int             // 0 = launch field, 1 = process filter
+	procRows    []ProcInfo      // processes with network sockets (picker)
+	procCursor  int             // highlighted row in the filtered list
+	procErr     string          // process-list fetch error
+	routedPIDs  []int           // PIDs currently routed/launched through the proxy
 
 	// presentation
 	theme       Theme
@@ -94,12 +97,20 @@ func newWithCaps(backend Backend, notes <-chan tea.Msg, caps Caps) Model {
 	ti.Width = 48
 
 	pi := textinput.New()
-	pi.Placeholder = "PID или команда (напр. 12345 или: curl https://...)"
+	pi.Placeholder = "фильтр по имени или PID"
 	pi.Prompt = gl.Prompt
 	pi.PromptStyle = caps.R.NewStyle().Foreground(th.Accent)
 	pi.PlaceholderStyle = caps.R.NewStyle().Foreground(th.Subtle)
 	pi.Cursor.Style = caps.R.NewStyle().Foreground(th.Accent)
 	pi.Width = 48
+
+	li := textinput.New()
+	li.Placeholder = "напр.: zen  (Enter — запустить через прокси)"
+	li.Prompt = gl.Prompt
+	li.PromptStyle = caps.R.NewStyle().Foreground(th.Accent)
+	li.PlaceholderStyle = caps.R.NewStyle().Foreground(th.Subtle)
+	li.Cursor.Style = caps.R.NewStyle().Foreground(th.Accent)
+	li.Width = 48
 
 	keyStyle := caps.R.NewStyle().Foreground(th.Accent)
 	descStyle := caps.R.NewStyle().Foreground(th.Muted)
@@ -123,21 +134,22 @@ func newWithCaps(backend Backend, notes <-chan tea.Msg, caps Caps) Model {
 	sp.Style = caps.R.NewStyle().Foreground(th.Accent)
 
 	return Model{
-		screen:    ScreenLink,
-		mode:      RunOff,
-		focus:     -1, // selector focused by default
-		input:     ti,
-		procInput: pi,
-		theme:     th,
-		caps:      caps,
-		glyphs:    gl,
-		styles:    styles,
-		keys:      defaultKeys(gl),
-		help:      hp,
-		spin:      sp,
-		backend:   backend,
-		decide:    policy.Decide,
-		notes:     notes,
+		screen:      ScreenLink,
+		mode:        RunOff,
+		focus:       -1, // selector focused by default
+		input:       ti,
+		procInput:   pi,
+		launchInput: li,
+		theme:       th,
+		caps:        caps,
+		glyphs:      gl,
+		styles:      styles,
+		keys:        defaultKeys(gl),
+		help:        hp,
+		spin:        sp,
+		backend:     backend,
+		decide:      policy.Decide,
+		notes:       notes,
 	}
 }
 
@@ -222,3 +234,4 @@ func (m Model) LinkValue() string     { return m.input.Value() }
 func (m Model) Busy() bool            { return m.busy }
 func (m Model) SegCursor() int        { return m.segCursor }
 func (m Model) Focus() int            { return m.focus }
+func (m Model) RoutedPIDs() []int     { return m.routedPIDs }

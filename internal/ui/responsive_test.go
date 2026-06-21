@@ -65,6 +65,12 @@ func TestView_NeverExceedsWidth(t *testing.T) {
 			m.errText = "введите vless:// ссылку"
 			return m
 		}},
+		{"apps", func(m Model) Model {
+			m.showProc = true
+			m.procRows = []ProcInfo{{PID: 123, Name: "zen", Ports: ":443"}, {PID: 456, Name: "codex"}}
+			m.routedPIDs = []int{123}
+			return m
+		}},
 		{"logs", func(m Model) Model {
 			m.showLogs = true
 			var sb strings.Builder
