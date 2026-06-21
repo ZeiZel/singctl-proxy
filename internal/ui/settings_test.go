@@ -93,6 +93,49 @@ func TestSettings_DaemonAction(t *testing.T) {
 	}
 }
 
+func TestSettings_AttachedShowsStopDaemon(t *testing.T) {
+	b := &fakeBackend{}
+	m := newWithCaps(b, nil, asciiCaps()).WithLoadedProfile().WithAttached(4321)
+	m.width, m.height = 100, 30
+	m.relayout()
+	m, _ = step(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
+	out := m.View()
+	if !strings.Contains(out, "Остановить демон") {
+		t.Errorf("attached settings should offer 'Остановить демон':\n%s", out)
+	}
+	if strings.Contains(out, "Запустить в фоне") {
+		t.Error("attached settings should NOT offer the daemonize action")
+	}
+	// Focus the stop-daemon action and trigger it.
+	fields := m.settingsFieldsFor()
+	for i := range fields {
+		if fields[i].action == "stopdaemon" {
+			m.setForm.focus = i
+		}
+	}
+	m, cmd := step(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("stop-daemon should issue a command")
+	}
+	msg := cmd()
+	if b.stopDaemonCalls != 1 {
+		t.Errorf("StopDaemon calls = %d, want 1", b.stopDaemonCalls)
+	}
+	if _, qcmd := step(m, msg); qcmd == nil || func() bool { _, ok := qcmd().(tea.QuitMsg); return !ok }() {
+		t.Error("successful stop-daemon should quit the client")
+	}
+}
+
+func TestDashboard_AttachedBadge(t *testing.T) {
+	m := newWithCaps(&fakeBackend{}, nil, asciiCaps()).WithLoadedProfile().WithAttached(4321).WithDisplayMode(RunProxy)
+	m.width, m.height = 100, 30
+	m.relayout()
+	out := m.View()
+	if !strings.Contains(out, "attached PID 4321") {
+		t.Errorf("dashboard should show the attached badge:\n%s", out)
+	}
+}
+
 func TestSettingsView_RendersFields(t *testing.T) {
 	m := openSettings(t, &fakeBackend{})
 	out := m.View()

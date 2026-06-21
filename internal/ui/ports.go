@@ -37,4 +37,7 @@ type Backend interface {
 	// Daemonize re-execs a detached background process that keeps the proxy
 	// running after this process exits.
 	Daemonize(ctx context.Context) error
+	// StopDaemon fully stops a running background instance (used by an attached
+	// client). On a local run there is no separate daemon.
+	StopDaemon(ctx context.Context) error
 }

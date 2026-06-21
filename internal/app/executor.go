@@ -535,6 +535,13 @@ func (e *Executor) Daemonize(_ context.Context) error {
 	})
 }
 
+// StopDaemon is part of ui.Backend but only meaningful for a remote (attached)
+// client; the local executor is the process itself, so it has no background
+// instance to stop.
+func (e *Executor) StopDaemon(context.Context) error {
+	return fmt.Errorf("нет фонового процесса (это локальный запуск)")
+}
+
 // resetRouter tears down the per-process router so the next route uses fresh
 // settings (e.g. a changed socks port).
 func (e *Executor) resetRouter() {

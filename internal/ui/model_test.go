@@ -13,23 +13,25 @@ type fakeBackend struct {
 	loadCalls, proxyCalls, vpnCalls, stopCalls int
 	lastLink                                   string
 
-	routePIDErr  error
-	launchErr    error
-	routedPID    int
-	launchedArgv []string
-	launchPID    int
-	procRows     []ProcInfo
-	procListErr  error
-	restartedPID int
-	restartErr   error
-	links        []string
-	addedLink    string
-	addErr       error
-	applied      Settings
-	applyErr     error
-	applyCalls   int
-	daemonCalls  int
-	daemonErr    error
+	routePIDErr     error
+	launchErr       error
+	routedPID       int
+	launchedArgv    []string
+	launchPID       int
+	procRows        []ProcInfo
+	procListErr     error
+	restartedPID    int
+	restartErr      error
+	links           []string
+	addedLink       string
+	addErr          error
+	applied         Settings
+	applyErr        error
+	applyCalls      int
+	daemonCalls     int
+	daemonErr       error
+	stopDaemonCalls int
+	stopDaemonErr   error
 }
 
 func (b *fakeBackend) LoadLink(_ context.Context, link string) error {
@@ -84,6 +86,10 @@ func (b *fakeBackend) ApplySettings(_ context.Context, s Settings) error {
 func (b *fakeBackend) Daemonize(context.Context) error {
 	b.daemonCalls++
 	return b.daemonErr
+}
+func (b *fakeBackend) StopDaemon(context.Context) error {
+	b.stopDaemonCalls++
+	return b.stopDaemonErr
 }
 
 func rune_(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }

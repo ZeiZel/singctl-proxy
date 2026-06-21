@@ -86,7 +86,15 @@ func (m Model) dashboardView() string {
 	lay := layoutFor(m.width, m.height)
 	compact := m.height < 20 // tight height: drop borders/spacers so nothing is clipped
 
-	header := m.topBar("singctl", s.modeBadge(m.mode))
+	right := s.modeBadge(m.mode)
+	if m.attached {
+		arrow := "↔"
+		if !m.caps.Unicode {
+			arrow = "<->"
+		}
+		right = s.colored(s.th.Accent, fmt.Sprintf("%s attached PID %d", arrow, m.attachedPID)) + "  " + right
+	}
+	header := m.topBar("singctl", right)
 	footer := s.clampBlock(m.help.View(m.keys), max(m.width, 1))
 
 	opts := []string{"ВЫКЛ", "ПРОКСИ", "VPN"}
@@ -579,8 +587,9 @@ func (m Model) settingsView() string {
 	w := max(m.width, 1)
 	const labelW = 22
 
-	rows := make([]string, 0, len(settingsFields)+2)
-	for i, f := range settingsFields {
+	fields := m.settingsFieldsFor()
+	rows := make([]string, 0, len(fields)+2)
+	for i, f := range fields {
 		focused := i == m.setForm.focus
 		marker := "  "
 		if focused {

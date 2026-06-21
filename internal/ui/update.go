@@ -159,6 +159,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The detached child now owns the proxy; quit the TUI (deferred Shutdown
 		// stops this process's cores).
 		return m, tea.Quit
+
+	case daemonStoppedMsg:
+		if msg.err != nil {
+			m.errText = msg.err.Error()
+			m.status = ""
+			return m, nil
+		}
+		// The background instance is gone; nothing left to control — quit.
+		return m, tea.Quit
 	}
 
 	if m.screen == ScreenLink {
@@ -531,6 +540,7 @@ func (m Model) handleSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	fields := m.settingsFieldsFor()
 	switch msg.String() {
 	case "esc", "q":
 		m.showSettings = false
@@ -541,12 +551,12 @@ func (m Model) handleSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "down", "j":
-		if f.focus < len(settingsFields)-1 {
+		if f.focus < len(fields)-1 {
 			f.focus++
 		}
 		return m, nil
 	case "enter", " ":
-		fld := settingsFields[f.focus]
+		fld := fields[clampIdx(f.focus, len(fields))]
 		switch fld.kind {
 		case sfToggle:
 			f.draft.toggle(f.focus)
@@ -558,14 +568,19 @@ func (m Model) handleSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			f.edit.Focus()
 			return m, textinput.Blink
 		case sfAction:
-			if fld.action == "daemon" {
+			switch fld.action {
+			case "daemon":
 				m.status = "запуск в фоне…"
 				return m, daemonizeCmd(m.backend)
+			case "stopdaemon":
+				m.status = "останавливаю демон…"
+				return m, stopDaemonCmd(m.backend)
+			default: // apply
+				m.settings = f.draft
+				m.showSettings = false
+				m.status = "применяю настройки…"
+				return m, applySettingsCmd(m.backend, f.draft)
 			}
-			m.settings = f.draft
-			m.showSettings = false
-			m.status = "применяю настройки…"
-			return m, applySettingsCmd(m.backend, f.draft)
 		}
 	}
 	return m, nil

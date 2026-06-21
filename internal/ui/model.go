@@ -57,6 +57,9 @@ type Model struct {
 	settings     Settings     // last-applied settings (seeded from the CLI)
 	setForm      settingsForm // editing state for the Настройки section
 
+	attached    bool // driving a remote (already-running) instance over the control socket
+	attachedPID int
+
 	// presentation
 	theme       Theme
 	caps        Caps
@@ -170,6 +173,23 @@ func (m Model) WithSettings(s Settings) Model {
 	return m
 }
 
+// WithAttached marks the UI as driving a remote running instance (PID) over the
+// control socket — shown as a header badge; changes the Настройки daemon action
+// to "Остановить демон".
+func (m Model) WithAttached(pid int) Model {
+	m.attached = true
+	m.attachedPID = pid
+	return m
+}
+
+// WithDisplayMode sets the shown mode without issuing any command (used on
+// attach to reflect the daemon's current mode).
+func (m Model) WithDisplayMode(mode RunMode) Model {
+	m.mode = mode
+	m.segCursor = int(mode)
+	return m
+}
+
 // WithLoadedProfile starts directly on the dashboard (mode OFF) — used when a
 // saved link was loaded at startup, so the input screen is skipped.
 func (m Model) WithLoadedProfile() Model {
@@ -254,3 +274,4 @@ func (m Model) Focus() int              { return m.focus }
 func (m Model) RoutedPIDs() []int       { return m.routedPIDs }
 func (m Model) ShowingSettings() bool   { return m.showSettings }
 func (m Model) DraftSettings() Settings { return m.setForm.draft }
+func (m Model) Attached() bool          { return m.attached }

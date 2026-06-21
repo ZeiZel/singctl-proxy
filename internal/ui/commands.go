@@ -34,6 +34,13 @@ func daemonizeCmd(b Backend) tea.Cmd {
 	}
 }
 
+// stopDaemonCmd fully stops the attached background instance.
+func stopDaemonCmd(b Backend) tea.Cmd {
+	return func() tea.Msg {
+		return daemonStoppedMsg{err: b.StopDaemon(context.Background())}
+	}
+}
+
 // listProcessesCmd fetches the process list for the picker.
 func listProcessesCmd(b Backend) tea.Cmd {
 	return func() tea.Msg {

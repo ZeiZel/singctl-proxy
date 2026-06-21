@@ -47,6 +47,18 @@ var settingsFields = []sfField{
 	{"Запустить в фоне (daemon)", sfAction, "daemon"},
 }
 
+// settingsFieldsFor returns the field list, swapping the last action to
+// "Остановить демон" when attached to a remote instance (vs "Запустить в фоне"
+// for a local run).
+func (m Model) settingsFieldsFor() []sfField {
+	f := make([]sfField, len(settingsFields))
+	copy(f, settingsFields)
+	if m.attached {
+		f[len(f)-1] = sfField{"Остановить демон", sfAction, "stopdaemon"}
+	}
+	return f
+}
+
 // settingsForm is the editing state for the Настройки section.
 type settingsForm struct {
 	focus   int

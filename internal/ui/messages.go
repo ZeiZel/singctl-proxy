@@ -98,3 +98,4 @@ type linkAddedMsg struct {
 
 type settingsAppliedMsg struct{ err error }
 type daemonizedMsg struct{ err error }
+type daemonStoppedMsg struct{ err error }
