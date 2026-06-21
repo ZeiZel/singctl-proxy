@@ -271,13 +271,14 @@ func (m Model) linkView() string {
 	}
 
 	var rows []string
-	// Show the already-loaded keys, masked like a password.
+	// Show the already-loaded keys, masked like a password, labelled "Ключ N".
 	if len(m.currentLinks) > 0 {
-		rows = append(rows, s.Subtle.Render("текущие ключи (скрыты):"))
+		rows = append(rows, s.Subtle.Render("ключи подключения (скрыты):"))
 		for i, link := range m.currentLinks {
-			rows = append(rows, s.clampLine(strconv.Itoa(i+1)+". "+maskLink(link, maskChar), subW))
+			label := s.Key.Render("Ключ " + strconv.Itoa(i+1) + ": ")
+			rows = append(rows, s.clampLine(label+maskLink(link, maskChar), subW))
 		}
-		rows = append(rows, "", s.Subtle.Render("добавить второй ключ:"))
+		rows = append(rows, "", s.Subtle.Render("Ключ "+strconv.Itoa(len(m.currentLinks)+1)+" — добавить ключ:"))
 	}
 
 	var box string
