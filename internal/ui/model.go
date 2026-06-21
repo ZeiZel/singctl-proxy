@@ -43,8 +43,11 @@ type Model struct {
 	latency    []LatencyRow // per-server failover latencies
 	latencySel string       // currently-selected server tag
 
-	showProc  bool            // per-process routing prompt open
-	procInput textinput.Model // PID or command to route
+	showProc   bool            // per-process routing prompt open
+	procInput  textinput.Model // PID/command filter or manual entry
+	procRows   []ProcInfo      // processes with network sockets (picker)
+	procCursor int             // highlighted row in the filtered list
+	procErr    string          // process-list fetch error
 
 	// presentation
 	theme     Theme

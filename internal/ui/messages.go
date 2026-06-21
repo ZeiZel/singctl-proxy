@@ -77,3 +77,15 @@ type procResultMsg struct {
 	note string
 	err  error
 }
+
+// ProcInfo is one process for the per-process routing picker.
+type ProcInfo struct {
+	PID   int
+	Name  string
+	Ports string // pre-rendered ":80 :443"
+}
+
+type procListMsg struct {
+	rows []ProcInfo
+	err  error
+}

@@ -20,6 +20,14 @@ func routePIDCmd(b Backend, pid int) tea.Cmd {
 	}
 }
 
+// listProcessesCmd fetches the process list for the picker.
+func listProcessesCmd(b Backend) tea.Cmd {
+	return func() tea.Msg {
+		rows, err := b.ListProcesses(context.Background())
+		return procListMsg{rows: rows, err: err}
+	}
+}
+
 // launchProcCmd starts a command with its traffic routed through the proxy.
 func launchProcCmd(b Backend, argv []string) tea.Cmd {
 	return func() tea.Msg {

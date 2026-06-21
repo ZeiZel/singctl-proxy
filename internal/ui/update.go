@@ -114,6 +114,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = msg.note
 		}
 		return m, nil
+
+	case procListMsg:
+		if msg.err != nil {
+			m.procErr = msg.err.Error()
+			m.procRows = nil
+		} else {
+			m.procErr = ""
+			m.procRows = msg.rows
+		}
+		m.procCursor = 0
+		return m, nil
 	}
 
 	if m.screen == ScreenLink {
@@ -170,31 +181,30 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	// Process-routing prompt: esc cancels; enter submits a PID (digits) or a
-	// command line to launch through the proxy.
+	// Process-routing prompt: esc cancels; ↑/↓ move the picker cursor; enter
+	// routes the highlighted/typed PID or launches a typed command.
 	if m.showProc {
-		switch msg.String() {
-		case "esc":
+		switch {
+		case msg.String() == "esc":
 			m.showProc = false
 			m.procInput.Blur()
 			return m, nil
-		case "enter":
-			raw := strings.TrimSpace(m.procInput.Value())
-			m.procInput.SetValue("")
-			m.procInput.Blur()
-			m.showProc = false
-			if raw == "" {
-				return m, nil
+		case msg.String() == "up":
+			if m.procCursor > 0 {
+				m.procCursor--
 			}
-			if pid, err := strconv.Atoi(raw); err == nil {
-				m.status = "проксирую процесс…"
-				return m, routePIDCmd(m.backend, pid)
+			return m, nil
+		case msg.String() == "down":
+			if n := len(m.filteredProcs()); n > 0 && m.procCursor < n-1 {
+				m.procCursor++
 			}
-			m.status = "запускаю процесс…"
-			return m, launchProcCmd(m.backend, strings.Fields(raw))
+			return m, nil
+		case msg.String() == "enter":
+			return m.submitProc()
 		default:
 			var cmd tea.Cmd
 			m.procInput, cmd = m.procInput.Update(msg)
+			m.procCursor = 0 // filter changed — reset the highlight
 			return m, cmd
 		}
 	}
@@ -284,10 +294,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.showConns = true
 			return m, nil
 		case key.Matches(msg, m.keys.Proc):
+			m.procInput.SetValue("")
 			m.procInput.Focus()
 			m.showProc = true
+			m.procCursor = 0
 			m.errText = ""
-			return m, textinput.Blink
+			return m, tea.Batch(textinput.Blink, listProcessesCmd(m.backend))
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
 			return m, nil
@@ -345,6 +357,68 @@ func (m Model) requestVPN() (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// filteredProcs returns the process rows matching the current input. An input
+// containing a space is treated as a launch command, so the picker is hidden.
+func (m Model) filteredProcs() []ProcInfo {
+	q := strings.TrimSpace(m.procInput.Value())
+	if q == "" {
+		return m.procRows
+	}
+	if strings.ContainsAny(q, " ") {
+		return nil // launch-command mode
+	}
+	lq := strings.ToLower(q)
+	var out []ProcInfo
+	for _, p := range m.procRows {
+		if strings.Contains(strings.ToLower(p.Name), lq) || strings.Contains(strconv.Itoa(p.PID), q) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// submitProc resolves the Enter action in the process prompt: an explicit PID
+// (all digits) is routed; a command (has a space) is launched; otherwise the
+// highlighted picker row is routed.
+func (m Model) submitProc() (tea.Model, tea.Cmd) {
+	raw := strings.TrimSpace(m.procInput.Value())
+	fp := m.filteredProcs()
+	m.procInput.SetValue("")
+	m.procInput.Blur()
+	m.showProc = false
+
+	switch {
+	case raw != "" && !strings.ContainsAny(raw, " "):
+		if pid, err := strconv.Atoi(raw); err == nil {
+			m.status = "проксирую процесс…"
+			return m, routePIDCmd(m.backend, pid)
+		}
+		if len(fp) > 0 {
+			m.status = "проксирую процесс…"
+			return m, routePIDCmd(m.backend, fp[clampIdx(m.procCursor, len(fp))].PID)
+		}
+		m.status = "запускаю процесс…"
+		return m, launchProcCmd(m.backend, strings.Fields(raw))
+	case raw != "": // contains a space → launch command
+		m.status = "запускаю процесс…"
+		return m, launchProcCmd(m.backend, strings.Fields(raw))
+	case len(fp) > 0: // empty input → route highlighted row
+		m.status = "проксирую процесс…"
+		return m, routePIDCmd(m.backend, fp[clampIdx(m.procCursor, len(fp))].PID)
+	}
+	return m, nil
+}
+
+func clampIdx(i, n int) int {
+	if i < 0 {
+		return 0
+	}
+	if i >= n {
+		return n - 1
+	}
+	return i
 }
 
 func toPolicyMode(m RunMode) policy.Mode {

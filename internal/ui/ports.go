@@ -21,4 +21,6 @@ type Backend interface {
 	// LaunchProxied starts a command with its traffic routed through the proxy
 	// and returns the child PID.
 	LaunchProxied(ctx context.Context, argv []string) (int, error)
+	// ListProcesses enumerates processes with network sockets for the picker.
+	ListProcesses(ctx context.Context) ([]ProcInfo, error)
 }

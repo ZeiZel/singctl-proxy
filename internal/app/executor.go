@@ -18,6 +18,7 @@ import (
 	"singctl/internal/core"
 	"singctl/internal/monitor"
 	"singctl/internal/policy"
+	"singctl/internal/proclist"
 	"singctl/internal/procproxy"
 	"singctl/internal/runtime"
 	"singctl/internal/singbox"
@@ -53,6 +54,24 @@ type Executor struct {
 
 	routerOnce sync.Once
 	router     procproxy.Router
+
+	listerOnce sync.Once
+	lister     proclist.Lister
+}
+
+// ListProcesses enumerates processes with network sockets so the UI can offer a
+// picker for per-process routing.
+func (e *Executor) ListProcesses(ctx context.Context) ([]ui.ProcInfo, error) {
+	e.listerOnce.Do(func() { e.lister = proclist.NewLister() })
+	procs, err := e.lister.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]ui.ProcInfo, 0, len(procs))
+	for _, p := range procs {
+		rows = append(rows, ui.ProcInfo{PID: p.PID, Name: p.Name, Ports: p.PortsString()})
+	}
+	return rows, nil
 }
 
 // SetLogPath redirects sing-box logs to a file (keeps them out of the TUI).

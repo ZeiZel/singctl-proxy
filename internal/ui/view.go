@@ -351,15 +351,51 @@ func (m Model) procView() string {
 		box = s.Panel.Width(max(bw-2, 1)).Render(m.procInput.View())
 	}
 	subW := max(m.width-2, 1)
-	hint := "Введите PID запущенного процесса (Linux) или команду для запуска " +
-		"через прокси. На macOS поддерживается только запуск команды."
+	hint := "Фильтруйте по имени/PID и выберите процесс (↑/↓, Enter), " +
+		"введите PID, или команду для запуска через прокси."
 	rows := []string{box, "", s.Muted.Render(wrap(hint, subW))}
+
+	// Process picker list (filtered).
+	fp := m.filteredProcs()
+	if m.procErr != "" {
+		rows = append(rows, "", s.Err.Render(wrap(s.gl.Warn+" "+m.procErr, subW)))
+	} else if len(fp) > 0 {
+		rows = append(rows, s.rule(subW))
+		shown := fp
+		const maxRows = 12
+		if len(shown) > maxRows {
+			shown = shown[:maxRows]
+		}
+		cur := clampIdx(m.procCursor, len(fp))
+		for i, p := range shown {
+			marker := "  "
+			label := fmt.Sprintf("%-6d %s", p.PID, p.Name)
+			if p.Ports != "" {
+				label += "  " + s.Subtle.Render(p.Ports)
+			}
+			if i == cur {
+				marker = s.colored(s.th.Accent, s.gl.Cursor+" ")
+				label = s.colored(s.th.Accent, fmt.Sprintf("%-6d %s", p.PID, p.Name))
+				if p.Ports != "" {
+					label += "  " + s.Subtle.Render(p.Ports)
+				}
+			}
+			rows = append(rows, s.clampLine(marker+label, subW))
+		}
+		if len(fp) > maxRows {
+			rows = append(rows, s.Subtle.Render(fmt.Sprintf("…ещё %d", len(fp)-maxRows)))
+		}
+	} else if strings.TrimSpace(m.procInput.Value()) == "" {
+		rows = append(rows, "", s.Subtle.Render("(процессы с сетевой активностью не найдены)"))
+	}
+
 	if m.errText != "" {
 		rows = append(rows, "", s.Err.Render(wrap(s.gl.Warn+" "+m.errText, subW)))
 	}
 	body := lipgloss.JoinVertical(lipgloss.Left, rows...)
 
 	footer := s.clampLine(s.footerHints([][2]string{
+		{s.gl.ArrowsUD, "выбор"},
 		{"Enter", "проксировать"},
 		{"esc", "отмена"},
 		{"ctrl+c", "выход"},

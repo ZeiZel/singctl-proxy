@@ -127,6 +127,58 @@ func TestProcPrompt_LaunchCommand(t *testing.T) {
 	}
 }
 
+func TestProcPicker_ListAndRouteHighlighted(t *testing.T) {
+	b := &fakeBackend{procRows: []ProcInfo{
+		{PID: 100, Name: "alpha", Ports: ":80"},
+		{PID: 200, Name: "codex", Ports: ":54321"},
+	}}
+	m := newWithCaps(b, nil, asciiCaps()).WithLoadedProfile()
+	m.width, m.height = 100, 30
+	m.relayout()
+
+	// Open the process view (fires the list command via a batch).
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	m = next.(Model)
+	if !m.showProc {
+		t.Fatal("'x' should open the process prompt")
+	}
+	// Deliver the process list message (as the command would).
+	m2, _ := m.Update(procListMsg{rows: b.procRows})
+	m = m2.(Model)
+	if len(m.procRows) != 2 {
+		t.Fatalf("expected 2 process rows, got %d", len(m.procRows))
+	}
+	out := m.View()
+	if !strings.Contains(out, "codex") || !strings.Contains(out, "alpha") {
+		t.Errorf("picker should list processes, got:\n%s", out)
+	}
+	// Move cursor to the second row and route it.
+	m3, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = m3.(Model)
+	_, rcmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if rcmd == nil {
+		t.Fatal("expected a route command")
+	}
+	_ = rcmd()
+	if b.routedPID != 200 {
+		t.Errorf("routed PID = %d, want 200 (highlighted codex)", b.routedPID)
+	}
+}
+
+func TestProcPicker_FilterByName(t *testing.T) {
+	b := &fakeBackend{procRows: []ProcInfo{
+		{PID: 100, Name: "alpha"}, {PID: 200, Name: "codex"},
+	}}
+	m := newWithCaps(b, nil, asciiCaps()).WithLoadedProfile()
+	m.showProc = true
+	m.procRows = b.procRows
+	m.procInput.SetValue("cod")
+	fp := m.filteredProcs()
+	if len(fp) != 1 || fp[0].Name != "codex" {
+		t.Errorf("filter 'cod' = %+v, want only codex", fp)
+	}
+}
+
 func TestProcResultMsg_ShowsError(t *testing.T) {
 	m := dashboardModel(t)
 	next, _ := m.Update(procResultMsg{err: errSample})
