@@ -44,16 +44,23 @@ func TestDashboard_ConnectionsEmptyState(t *testing.T) {
 	}
 }
 
-func TestDashboard_ConnsCappedAtDashRows(t *testing.T) {
+func TestDashboard_ConnsFillsHeight(t *testing.T) {
+	// The dashboard panel now shows as many rows as the height allows (well past
+	// the old fixed cap of dashConnRows), and only overflows ("…ещё N") when the
+	// connection count exceeds that height-derived limit.
 	m := newWithCaps(&fakeBackend{}, nil, asciiCaps()).WithLoadedProfile()
 	m.width, m.height = 100, 40
 	m.relayout()
-	for i := 0; i < dashConnRows+5; i++ {
+	for i := 0; i < 100; i++ {
 		m.conns = append(m.conns, ConnRow{Process: "p", Source: "127.0.0.1:1", Dest: "h:443", Network: "tcp"})
 	}
+	limit := m.dashConnLimit()
+	if limit <= dashConnRows {
+		t.Fatalf("tall terminal should raise the row limit above the old fixed %d, got %d", dashConnRows, limit)
+	}
 	out := m.View()
-	if !strings.Contains(out, "…ещё 5") {
-		t.Errorf("dashboard should cap connection rows and show the overflow tail:\n%s", out)
+	if !strings.Contains(out, "…ещё") {
+		t.Errorf("with 100 conns the panel should still show an overflow tail:\n%s", out)
 	}
 }
 

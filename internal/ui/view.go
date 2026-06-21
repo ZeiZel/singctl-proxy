@@ -130,15 +130,31 @@ func (m Model) dashboardView() string {
 }
 
 // dashConnsBody is the body of the always-on dashboard СОЕДИНЕНИЯ panel: the
-// per-server latency list (when present) above a capped live-connection list.
+// per-server latency list (when present) above a live-connection list capped to
+// the rows that fit the current terminal height (so the panel fills the screen
+// instead of showing a fixed handful).
 func (m Model) dashConnsBody(cw int) string {
 	w := max(cw, 1)
 	var parts []string
 	if lat := m.latencyBody(w); lat != "" {
 		parts = append(parts, lat, m.styles.rule(w))
 	}
-	parts = append(parts, m.connsBody(w, dashConnRows))
+	parts = append(parts, m.connsBody(w, m.dashConnLimit()))
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// dashConnLimit is how many connection rows the dashboard panel shows: as many
+// as the terminal height allows (the status+mode panels take the top), clamped
+// to a sane band. The full, scrollable list lives in the expanded view (c).
+func (m Model) dashConnLimit() int {
+	n := m.height - 18 // header + status + mode panels + spacers + footer
+	if n < dashConnRows {
+		n = dashConnRows
+	}
+	if n > 40 {
+		n = 40
+	}
+	return n
 }
 
 // dashConnsSummary is the one-line connections fallback for very short terminals.
@@ -352,22 +368,34 @@ func delayText(ms int) string {
 	return fmt.Sprintf("%dms", ms)
 }
 
-func (m Model) connsView() string {
+func (m Model) connsFooterView() string {
 	s := m.styles
-	header := m.connsHeaderView()
-	footer := s.clampLine(s.footerHints([][2]string{
+	return s.clampLine(s.footerHints([][2]string{
+		{s.gl.ArrowsUD + "/jk", "прокрутка"},
+		{"g/G", "верх/низ"},
 		{"c/esc", "назад"},
 		{"ctrl+c", "выход"},
 	}), max(m.width, 1))
+}
 
-	w := max(m.width, 1)
-	var rows []string
-	if lat := m.latencyBody(w); lat != "" {
-		rows = append(rows, lat, s.rule(w))
+func (m Model) connsChromeHeight() int {
+	return lipgloss.Height(m.connsHeaderView()) + lipgloss.Height(m.connsFooterView())
+}
+
+func (m Model) connsView() string {
+	header := m.connsHeaderView()
+	footer := m.connsFooterView()
+	var body string
+	if m.connVPReady {
+		// Render from a copy seeded with current content so the view never goes
+		// stale (the real viewport keeps the scroll offset, which the copy reuses).
+		vp := m.connVP
+		vp.SetContent(m.connContent(max(vp.Width, 1)))
+		body = vp.View()
+	} else {
+		body = m.connContent(max(m.width, 1)) // no size yet (unit tests): plain render
 	}
-	rows = append(rows, m.connsBody(w, 0)) // 0 = no row cap in the full overlay
-	body := strings.Join(rows, "\n")
-	return m.frame(header, body, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 }
 
 // latencyBody renders the failover group's per-server latency list (selected

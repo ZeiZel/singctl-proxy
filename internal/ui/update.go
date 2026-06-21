@@ -44,11 +44,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ConnectionsMsg:
 		m.conns = msg.Rows
+		m.refreshConnViewport()
 		return m, listen(m.notes)
 
 	case LatencyMsg:
 		m.latency = msg.Rows
 		m.latencySel = msg.Selected
+		m.refreshConnViewport()
 		return m, listen(m.notes)
 
 	case linkAddedMsg:
@@ -160,6 +162,38 @@ func (m *Model) relayout() {
 		m.vp.Width, m.vp.Height = w, bodyH
 	}
 	m.refreshLogViewport()
+
+	connH := max(m.height-m.connsChromeHeight(), 1)
+	if !m.connVPReady {
+		m.connVP = viewport.New(w, connH)
+		m.connVPReady = true
+	} else {
+		m.connVP.Width, m.connVP.Height = w, connH
+	}
+	m.refreshConnViewport()
+}
+
+// refreshConnViewport re-renders the full connections + latency content into the
+// connections viewport, auto-following the tail when already at the bottom.
+func (m *Model) refreshConnViewport() {
+	if !m.connVPReady {
+		return
+	}
+	atBottom := m.connVP.AtBottom()
+	m.connVP.SetContent(m.connContent(max(m.connVP.Width, 1)))
+	if atBottom {
+		m.connVP.GotoBottom()
+	}
+}
+
+// connContent builds the full connections + latency text for the expanded view.
+func (m Model) connContent(w int) string {
+	var parts []string
+	if lat := m.latencyBody(w); lat != "" {
+		parts = append(parts, lat, m.styles.rule(w))
+	}
+	parts = append(parts, m.connsBody(w, 0))
+	return strings.Join(parts, "\n")
 }
 
 // refreshLogViewport re-wraps the (tail of the) log buffer to the viewport
@@ -230,13 +264,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Connections overlay: c/esc/q return to the dashboard.
+	// Connections overlay: c/esc/q return; everything else scrolls the viewport.
 	if m.showConns {
 		switch {
 		case key.Matches(msg, m.keys.Conns), msg.String() == "esc", msg.String() == "q":
 			m.showConns = false
+			return m, nil
+		case msg.String() == "g":
+			m.connVP.GotoTop()
+			return m, nil
+		case msg.String() == "G":
+			m.connVP.GotoBottom()
+			return m, nil
+		default:
+			var cmd tea.Cmd
+			m.connVP, cmd = m.connVP.Update(msg)
+			return m, cmd
 		}
-		return m, nil
 	}
 
 	// Logs overlay: l/esc/q return to the dashboard; everything else scrolls the

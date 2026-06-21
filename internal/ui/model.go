@@ -51,17 +51,19 @@ type Model struct {
 	procErr    string          // process-list fetch error
 
 	// presentation
-	theme     Theme
-	caps      Caps
-	glyphs    Glyphs
-	styles    Styles
-	keys      keyMap
-	help      help.Model
-	spin      spinner.Model
-	busy      bool // an enable/stop command is in flight (drives the spinner)
-	vp        viewport.Model
-	vpReady   bool
-	segCursor int // keyboard cursor on the OFF|PROXY|VPN selector (0..2)
+	theme       Theme
+	caps        Caps
+	glyphs      Glyphs
+	styles      Styles
+	keys        keyMap
+	help        help.Model
+	spin        spinner.Model
+	busy        bool           // an enable/stop command is in flight (drives the spinner)
+	vp          viewport.Model // logs viewport (scroll)
+	vpReady     bool
+	connVP      viewport.Model // connections viewport (scroll, full list)
+	connVPReady bool
+	segCursor   int // keyboard cursor on the OFF|PROXY|VPN selector (0..2)
 
 	backend Backend
 	decide  func(policy.DecideInput) policy.DecisionResult
