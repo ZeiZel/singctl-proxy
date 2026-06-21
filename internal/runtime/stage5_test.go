@@ -16,7 +16,7 @@ func TestProfileConfigBuilder_BindAndForwarder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := ProfileConfigBuilder{Profile: p}
+	b := ProfileConfigBuilder{Profiles: vless.SingleSet(p)}
 
 	proxyVPN, err := b.ProxyConfig("en0")
 	if err != nil {

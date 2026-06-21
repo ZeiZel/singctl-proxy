@@ -1,0 +1,76 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "https",
+        "tag": "fwd-dns",
+        "server": "1.1.1.1",
+        "detour": "socks-out"
+      }
+    ],
+    "final": "fwd-dns",
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": [
+        "198.18.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "auto_route": true,
+      "strict_route": true,
+      "stack": "system"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-out",
+      "server": "127.0.0.1",
+      "server_port": 1080
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "rules": [
+      {
+        "action": "sniff",
+        "timeout": "3s"
+      },
+      {
+        "action": "hijack-dns",
+        "inbound": [
+          "tun-in"
+        ],
+        "protocol": "dns"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "ip_cidr": [
+          "193.188.22.147/32"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "ip_cidr": [
+          "45.10.20.30/32"
+        ],
+        "outbound": "direct"
+      }
+    ],
+    "final": "socks-out"
+  }
+}
