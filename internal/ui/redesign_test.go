@@ -103,22 +103,17 @@ func TestSelector_WrapNavigation(t *testing.T) {
 		m, _ = step(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 		return m
 	}
-	tab := tea.KeyMsg{Type: tea.KeyTab}
-	shiftTab := tea.KeyMsg{Type: tea.KeyShiftTab}
+	// The OFF/PROXY/VPN selector is driven by ←/→ (Tab now moves the dashboard
+	// section-focus ring). Focus defaults to the selector (-1).
 	left := tea.KeyMsg{Type: tea.KeyLeft}
 	right := tea.KeyMsg{Type: tea.KeyRight}
 
 	m := mk()
 	for _, want := range []int{1, 2, 0} {
-		m, _ = step(m, tab)
+		m, _ = step(m, right)
 		if m.SegCursor() != want {
-			t.Fatalf("tab: cursor = %d, want %d", m.SegCursor(), want)
+			t.Fatalf("right: cursor = %d, want %d", m.SegCursor(), want)
 		}
-	}
-	m = mk()
-	m, _ = step(m, shiftTab)
-	if m.SegCursor() != 2 {
-		t.Errorf("shift+tab from 0 should wrap to 2, got %d", m.SegCursor())
 	}
 	m = mk()
 	m, _ = step(m, left)
@@ -129,6 +124,24 @@ func TestSelector_WrapNavigation(t *testing.T) {
 	m, _ = step(m, right)
 	if m.SegCursor() != 0 {
 		t.Errorf("right from 2 should wrap to 0, got %d", m.SegCursor())
+	}
+}
+
+func TestFocusRing_TabCyclesSectionsAndOpens(t *testing.T) {
+	m := newWithCaps(&fakeBackend{}, nil, asciiCaps()).WithLoadedProfile()
+	m, _ = step(m, tea.WindowSizeMsg{Width: 90, Height: 28})
+	if m.Focus() != -1 {
+		t.Fatalf("focus should default to the selector (-1), got %d", m.Focus())
+	}
+	// Tab moves into the section ring; first chip is Соединения (secConns=0).
+	m, _ = step(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.Focus() != secConns {
+		t.Fatalf("first Tab should focus Соединения (0), got %d", m.Focus())
+	}
+	// Enter opens the focused section.
+	m, _ = step(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.ShowingConns() {
+		t.Error("Enter on the focused Соединения chip should open the connections view")
 	}
 }
 

@@ -104,7 +104,7 @@ func (m Model) dashboardView() string {
 		// A wide СОЕДИНЕНИЯ panel spans the same total width as the two top panels.
 		fpw := min(m.width, panelMax+sideMax)
 		conns := s.panel("СОЕДИНЕНИЯ", m.dashConnsBody(fpw-4), fpw, false, true)
-		body = lipgloss.JoinVertical(lipgloss.Left, top, "", conns)
+		body = lipgloss.JoinVertical(lipgloss.Left, top, "", m.dashSectionsRow(), "", conns)
 	default:
 		bordered := !compact && lay != layoutNarrow
 		var pw, cw int
@@ -118,15 +118,43 @@ func (m Model) dashboardView() string {
 		status := s.panel("СТАТУС", m.statusBody(cw), pw, false, bordered)
 		mode := s.panel("РЕЖИМ", m.modeBody(sel, cw, !compact), pw, false, bordered)
 		if compact {
-			// Tight height: collapse connections to one line so the footer survives.
+			// Tight height: collapse connections to one line + a compact разделы
+			// hint so the footer survives.
 			body = lipgloss.JoinVertical(lipgloss.Left, status, mode,
+				m.dashSectionsLine(),
 				s.clampLine(m.dashConnsSummary(), max(m.width, 1)))
 		} else {
 			conns := s.panel("СОЕДИНЕНИЯ", m.dashConnsBody(cw), pw, false, bordered)
-			body = lipgloss.JoinVertical(lipgloss.Left, status, "", mode, "", conns)
+			body = lipgloss.JoinVertical(lipgloss.Left, status, "", mode, "", m.dashSectionsRow(), "", conns)
 		}
 	}
 	return m.frame(header, body, footer)
+}
+
+// dashSectionsRow renders the разделы chips (expandable full-screen sections).
+// The focused chip (Tab moves focus) is highlighted; Enter opens it. This makes
+// every feature discoverable from the dashboard.
+func (m Model) dashSectionsRow() string {
+	s := m.styles
+	hint := s.Subtle.Render("Tab — выбрать раздел " + s.gl.Sep + " Enter — открыть")
+	return lipgloss.JoinVertical(lipgloss.Left,
+		m.dashSectionsLine(),
+		s.clampLine(hint, max(m.width, 1)),
+	)
+}
+
+// dashSectionsLine is the one-line разделы chips row (no hint) for compact height.
+func (m Model) dashSectionsLine() string {
+	s := m.styles
+	chips := make([]string, len(dashSectionLabels))
+	for i, l := range dashSectionLabels {
+		if i == m.focus {
+			chips[i] = s.SegSelected.Render(" " + l + " ")
+		} else {
+			chips[i] = s.SegNormal.Render(" " + l + " ")
+		}
+	}
+	return s.clampLine(s.Subtle.Render("разделы: ")+strings.Join(chips, " "), max(m.width, 1))
 }
 
 // dashConnsBody is the body of the always-on dashboard СОЕДИНЕНИЯ panel: the

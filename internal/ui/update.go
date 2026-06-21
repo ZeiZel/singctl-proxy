@@ -347,44 +347,97 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Stop):
 			return m.applyMode(RunOff)
 		case key.Matches(msg, m.keys.Edit):
-			// Open the connection-strings screen: existing keys are shown masked
-			// and the field adds another (the raw key is never echoed as the
-			// placeholder, so it stays secret).
-			m.input.SetValue("")
-			if len(m.currentLinks) > 0 {
-				m.input.Placeholder = "vless://… (добавить ключ)"
-			} else {
-				m.input.Placeholder = "vless://..."
-			}
-			m.input.Focus()
-			m.screen = ScreenLink
-			m.errText = ""
-			return m, textinput.Blink
+			return m.openSection(secKeys)
 		case key.Matches(msg, m.keys.Logs):
-			m.showLogs = true
-			return m, tea.Batch(readLogsCmd(m.logPath), logsTick())
+			return m.openSection(secLogs)
 		case key.Matches(msg, m.keys.Conns):
-			m.showConns = true
-			return m, nil
+			return m.openSection(secConns)
 		case key.Matches(msg, m.keys.Proc):
-			m.procInput.SetValue("")
-			m.procInput.Focus()
-			m.showProc = true
-			m.procCursor = 0
-			m.errText = ""
-			return m, tea.Batch(textinput.Blink, listProcessesCmd(m.backend))
+			return m.openSection(secApps)
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
 			return m, nil
-		case key.Matches(msg, m.keys.Next), key.Matches(msg, m.keys.Right):
-			m.segCursor = (m.segCursor + 1) % 3
+		case key.Matches(msg, m.keys.Next):
+			m.focus = stepFocus(m.focus, +1, m.sectionCount())
 			return m, nil
-		case key.Matches(msg, m.keys.Prev), key.Matches(msg, m.keys.Left):
-			m.segCursor = (m.segCursor + 2) % 3
+		case key.Matches(msg, m.keys.Prev):
+			m.focus = stepFocus(m.focus, -1, m.sectionCount())
+			return m, nil
+		case key.Matches(msg, m.keys.Right):
+			if m.focus < 0 {
+				m.segCursor = (m.segCursor + 1) % 3
+			} else {
+				m.focus = stepFocus(m.focus, +1, m.sectionCount())
+			}
+			return m, nil
+		case key.Matches(msg, m.keys.Left):
+			if m.focus < 0 {
+				m.segCursor = (m.segCursor + 2) % 3
+			} else {
+				m.focus = stepFocus(m.focus, -1, m.sectionCount())
+			}
 			return m, nil
 		case key.Matches(msg, m.keys.Activate):
-			return m.applyMode(RunMode(m.segCursor))
+			if m.focus < 0 {
+				return m.applyMode(RunMode(m.segCursor))
+			}
+			return m.openSection(m.focus)
 		}
+	}
+	return m, nil
+}
+
+// dashboard section ring indices (the разделы chips, expandable to full screen).
+const (
+	secConns = iota
+	secLogs
+	secApps
+	secKeys
+)
+
+// dashSectionLabels are the expandable sections shown as разделы chips.
+var dashSectionLabels = []string{"Соединения", "Логи", "Приложения", "Ключи"}
+
+func (m Model) sectionCount() int { return len(dashSectionLabels) }
+
+// stepFocus advances the focus cursor over the ring [-1, 0, 1, …, n-1], where -1
+// means the OFF/PROXY/VPN selector is focused.
+func stepFocus(f, d, n int) int {
+	total := n + 1
+	idx := ((f+1+d)%total + total) % total
+	return idx - 1
+}
+
+// openSection opens the full-screen view for a разделы chip (also used by the
+// direct c/l/x/e shortcuts).
+func (m Model) openSection(idx int) (tea.Model, tea.Cmd) {
+	switch idx {
+	case secConns:
+		m.showConns = true
+		return m, nil
+	case secLogs:
+		m.showLogs = true
+		return m, tea.Batch(readLogsCmd(m.logPath), logsTick())
+	case secApps:
+		m.procInput.SetValue("")
+		m.procInput.Focus()
+		m.showProc = true
+		m.procCursor = 0
+		m.errText = ""
+		return m, tea.Batch(textinput.Blink, listProcessesCmd(m.backend))
+	case secKeys:
+		// Connection-strings screen: keys shown masked, field adds another (the
+		// raw key is never echoed as the placeholder, so it stays secret).
+		m.input.SetValue("")
+		if len(m.currentLinks) > 0 {
+			m.input.Placeholder = "vless://… (добавить ключ)"
+		} else {
+			m.input.Placeholder = "vless://..."
+		}
+		m.input.Focus()
+		m.screen = ScreenLink
+		m.errText = ""
+		return m, textinput.Blink
 	}
 	return m, nil
 }

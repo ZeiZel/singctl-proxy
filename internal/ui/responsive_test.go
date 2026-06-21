@@ -128,10 +128,10 @@ func TestSelector_EnterAppliesMode(t *testing.T) {
 	b := &fakeBackend{}
 	m := newWithCaps(b, nil, asciiCaps()).WithLoadedProfile()
 	m, _ = step(m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	// Cursor → PROXY, then activate with Enter.
-	m, _ = step(m, tea.KeyMsg{Type: tea.KeyTab}) // tab: OFF -> PROXY
+	// Cursor → PROXY (→ key; focus defaults to the selector), then Enter applies.
+	m, _ = step(m, tea.KeyMsg{Type: tea.KeyRight})
 	if m.segCursor != 1 {
-		t.Fatalf("tab should move cursor to PROXY, got %d", m.segCursor)
+		t.Fatalf("right should move cursor to PROXY, got %d", m.segCursor)
 	}
 	m, cmd := step(m, enterKey)
 	if cmd == nil {

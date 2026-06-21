@@ -64,6 +64,7 @@ type Model struct {
 	connVP      viewport.Model // connections viewport (scroll, full list)
 	connVPReady bool
 	segCursor   int // keyboard cursor on the OFF|PROXY|VPN selector (0..2)
+	focus       int // dashboard focus ring: -1 = mode selector, 0..n-1 = разделы chip
 
 	backend Backend
 	decide  func(policy.DecideInput) policy.DecisionResult
@@ -124,6 +125,7 @@ func newWithCaps(backend Backend, notes <-chan tea.Msg, caps Caps) Model {
 	return Model{
 		screen:    ScreenLink,
 		mode:      RunOff,
+		focus:     -1, // selector focused by default
 		input:     ti,
 		procInput: pi,
 		theme:     th,
@@ -219,3 +221,4 @@ func (m Model) Latency() []LatencyRow { return m.latency }
 func (m Model) LinkValue() string     { return m.input.Value() }
 func (m Model) Busy() bool            { return m.busy }
 func (m Model) SegCursor() int        { return m.segCursor }
+func (m Model) Focus() int            { return m.focus }
