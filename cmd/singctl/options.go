@@ -45,6 +45,10 @@ type options struct {
 	envFile  string     // --env-file: explicit .env path (default: ./.env if present)
 	noSave   bool       // --no-save: don't persist the link to the profile
 
+	attach bool // --attach: follow a running instance's logs
+	stop   bool // --stop: tell a running instance to shut down
+	status bool // --status: print a running instance's status
+
 	clashAPI    string // --clash-api: Clash API address (host:port); "" via --no-clash-api
 	noClash     bool   // --no-clash-api: disable the Clash API
 	clashSecret string // --clash-secret: Clash API secret (default: random)
@@ -81,6 +85,9 @@ func parseOptions(args []string, out io.Writer) (*options, error) {
 	fs.BoolVar(&o.man, "man", false, "print the man page (roff) and exit")
 	fs.StringVar(&o.envFile, "env-file", "", "load environment from this file (default: ./.env if present)")
 	fs.BoolVar(&o.noSave, "no-save", false, "do not persist the key to the profile")
+	fs.BoolVar(&o.attach, "attach", false, "follow the logs of a running singctl instance")
+	fs.BoolVar(&o.stop, "stop", false, "stop a running singctl instance")
+	fs.BoolVar(&o.status, "status", false, "print the status of a running singctl instance")
 
 	fs.StringVar(&o.clashAPI, "clash-api", defaultClashAPI, "Clash API address host:port (connection logging + latency)")
 	fs.BoolVar(&o.noClash, "no-clash-api", false, "disable the Clash API")
@@ -220,6 +227,10 @@ Flags:
                            interception; others: proxy env injected)
       --env-file <path>    load environment variables from this file
                            (default: ./.env if present)
+      --attach             follow the logs of an already-running instance
+                           (started in another tab); ctrl+c detaches
+      --stop               tell the running instance to shut down
+      --status             print the running instance's status
       --no-save            do not persist the key to ~/.config/singctl
       --man                print the man page (roff) and exit
   -v, --version            print version and exit

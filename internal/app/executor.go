@@ -362,6 +362,25 @@ func (e *Executor) Mode() policy.Mode {
 	return policy.ModeProxy
 }
 
+// StateLabel returns a short human label of the current runtime state, for the
+// control STATUS command and instance advertisement.
+func (e *Executor) StateLabel() string {
+	m := e.manager()
+	if m == nil {
+		return "off"
+	}
+	switch m.State() {
+	case runtime.StateVPN:
+		return "vpn"
+	case runtime.StateProxyOnly:
+		return "proxy"
+	case runtime.StateSuspended:
+		return "suspended"
+	default:
+		return "off"
+	}
+}
+
 // runMode maps the manager state to the UI's running state.
 func (e *Executor) runMode() ui.RunMode {
 	m := e.manager()

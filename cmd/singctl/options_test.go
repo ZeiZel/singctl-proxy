@@ -97,7 +97,7 @@ func TestApplyEnv_FillsMissingAndFlagsWin(t *testing.T) {
 }
 
 func TestUsage_MentionsEveryFlag(t *testing.T) {
-	for _, f := range []string{"--key", "--headless", "--logs", "--vpn", "--proxy", "--port", "--clash-api", "--no-clash-api", "--clash-secret", "--urltest-url", "--urltest-interval", "--urltest-tolerance", "--route-pid", "--restart-pid", "--launch", "--env-file", "--no-save", "--man", "--version", "--help", envKey, envKeys, envPort, envClashAPI, envClashSecret} {
+	for _, f := range []string{"--key", "--headless", "--logs", "--vpn", "--proxy", "--port", "--clash-api", "--no-clash-api", "--clash-secret", "--urltest-url", "--urltest-interval", "--urltest-tolerance", "--route-pid", "--restart-pid", "--launch", "--attach", "--stop", "--status", "--env-file", "--no-save", "--man", "--version", "--help", envKey, envKeys, envPort, envClashAPI, envClashSecret} {
 		if !strings.Contains(usageText, f) {
 			t.Errorf("usage text misses %s", f)
 		}

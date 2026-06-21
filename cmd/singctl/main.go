@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	_ "embed"
@@ -12,6 +13,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"os/user"
@@ -25,6 +27,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"singctl/internal/app"
+	"singctl/internal/control"
 	"singctl/internal/core"
 	"singctl/internal/monitor"
 	"singctl/internal/netstate"
@@ -43,6 +46,96 @@ var version = "dev"
 
 //go:embed singctl.1
 var manPage string
+
+// realConfigDir resolves the real user's ~/.config/singctl (works without root,
+// resolving SUDO_USER). Returns "" if it cannot be determined.
+func realConfigDir() (dir string, uid, gid int) {
+	ru, err := platform.ResolveUser(os.Getenv, user.Lookup)
+	if err != nil {
+		return "", 0, 0
+	}
+	return filepath.Join(ru.HomeDir, ".config", "singctl"), ru.Uid, ru.Gid
+}
+
+// runControlCommand handles --attach/--stop/--status against a running instance.
+// These never need root: they only read the advertisement file, the log file and
+// the control socket.
+func runControlCommand(opts *options) int {
+	dir, _, _ := realConfigDir()
+	if dir == "" {
+		fmt.Fprintln(os.Stderr, "error: cannot resolve config directory")
+		return 1
+	}
+	inst, err := control.ReadInstance(dir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error: no running singctl instance found (start one with --headless in another tab)")
+		return 1
+	}
+	if !control.IsAlive(inst.PID) {
+		fmt.Fprintf(os.Stderr, "error: instance PID %d is not running (stale advertisement)\n", inst.PID)
+		return 1
+	}
+	switch {
+	case opts.stop:
+		if err := control.Stop(inst.ControlSocket); err != nil {
+			fmt.Fprintln(os.Stderr, "error: stop:", err)
+			return 1
+		}
+		fmt.Printf("singctl: asked PID %d to stop\n", inst.PID)
+		return 0
+	case opts.status:
+		st, err := control.QueryStatus(inst.ControlSocket)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error: status:", err)
+			return 1
+		}
+		fmt.Printf("singctl: PID %d, mode %s, started %s\n", st.PID, st.Mode, st.StartedAt)
+		return 0
+	default: // --attach
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		fmt.Printf("singctl: attached to PID %d (mode %s) — tailing %s, ctrl+c to detach\n",
+			inst.PID, inst.Mode, inst.LogPath)
+		if err := tailFile(ctx, inst.LogPath); err != nil {
+			fmt.Fprintln(os.Stderr, "error: attach:", err)
+			return 1
+		}
+		return 0
+	}
+}
+
+// tailFile follows a file (like `tail -f`), printing new lines to stdout until
+// ctx is cancelled. It starts near the end so the user isn't flooded with old
+// logs.
+func tailFile(ctx context.Context, path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err == nil && fi.Size() > 4096 {
+		_, _ = f.Seek(-4096, io.SeekEnd)
+	}
+	r := bufio.NewReader(f)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+		line, err := r.ReadString('\n')
+		if len(line) > 0 {
+			fmt.Print(line)
+		}
+		if err == io.EOF {
+			time.Sleep(300 * time.Millisecond)
+			continue
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
 
 // randomSecret returns a 128-bit hex token used as the default Clash API secret
 // so the loopback API is not left open without authentication. On the vanishingly
@@ -88,6 +181,11 @@ func main() {
 		return
 	}
 
+	// Control commands target an already-running instance and need no root.
+	if opts.attach || opts.stop || opts.status {
+		os.Exit(runControlCommand(opts))
+	}
+
 	// .env (explicit path, or ./.env if present) feeds SINGCTL_KEY/SINGCTL_PORT;
 	// real environment variables win, flags win over both.
 	if opts.envFile != "" {
@@ -108,8 +206,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// A separate cancel lets the control socket (--stop from another tab) shut us
+	// down via the same path as a signal.
+	ctx, cancelRun := context.WithCancel(sigCtx)
+	defer cancelRun()
+	startedAt := time.Now().Format("2006-01-02 15:04:05")
 
 	// Read-only passive detector + physical-interface prober + orphan cleanup.
 	detector := netstate.New(netstate.NewOSRunner())
@@ -119,12 +222,13 @@ func main() {
 	notes := make(chan tea.Msg, 32)
 	executor := app.NewExecutor(core.NewFactory(), prober, routes, notes)
 	executor.SetSocksPort(opts.port)
-	if addr := opts.effectiveClashAPI(); addr != "" {
-		secret := opts.clashSecret
-		if secret == "" {
-			secret = randomSecret()
+	clashAddr := opts.effectiveClashAPI()
+	clashSecret := opts.clashSecret
+	if clashAddr != "" {
+		if clashSecret == "" {
+			clashSecret = randomSecret()
 		}
-		executor.SetClashAPI(addr, secret)
+		executor.SetClashAPI(clashAddr, clashSecret)
 	}
 	executor.SetURLTest(singbox.URLTestParams{
 		URL:       opts.urltestURL,
@@ -135,9 +239,11 @@ func main() {
 	// Persist the profile + log file under the real user's home (chowned back),
 	// and remember the last link. In headless --logs mode the log path stays
 	// empty so sing-box writes to the console instead of the file.
-	var savedLink, logPath string
+	var savedLink, logPath, configDir string
+	var realUID, realGID int
 	if ru, err := platform.ResolveUser(os.Getenv, user.Lookup); err == nil {
-		configDir := filepath.Join(ru.HomeDir, ".config", "singctl")
+		configDir = filepath.Join(ru.HomeDir, ".config", "singctl")
+		realUID, realGID = ru.Uid, ru.Gid
 		_ = os.MkdirAll(configDir, 0o755)
 		_ = os.Chown(configDir, ru.Uid, ru.Gid)
 		logPath = filepath.Join(configDir, "singbox.log")
@@ -152,6 +258,35 @@ func main() {
 	}
 	if !(opts.headless && opts.logs) {
 		executor.SetLogPath(logPath)
+	}
+
+	// Advertise this instance + serve control (attach/stop/status) so another
+	// tab can follow logs and stop it. Best-effort: failures don't block startup.
+	if configDir != "" {
+		mode := "proxy"
+		if opts.vpn {
+			mode = "vpn"
+		}
+		sockPath := filepath.Join(configDir, "control.sock")
+		srv := control.NewServer(sockPath,
+			func() control.Status {
+				return control.Status{PID: os.Getpid(), Mode: executor.StateLabel(), StartedAt: startedAt}
+			},
+			cancelRun,
+		)
+		if err := srv.Start(); err == nil {
+			_ = os.Chown(sockPath, realUID, realGID)
+			defer srv.Close()
+			inst := control.Instance{
+				PID: os.Getpid(), Mode: mode, LogPath: logPath, ControlSocket: sockPath,
+				ClashAPIAddr: clashAddr, ClashSecret: clashSecret, StartedAt: startedAt,
+			}
+			_ = control.WriteInstance(configDir, inst)
+			_ = os.Chown(control.InstancePath(configDir), realUID, realGID)
+			defer control.RemoveInstance(configDir)
+		} else {
+			fmt.Fprintln(os.Stderr, "warning: control socket unavailable:", err)
+		}
 	}
 
 	// flag/env key overrides the saved profile.
