@@ -1,6 +1,10 @@
-# Project Instructions for AI Agents
+# singctl — Project Instructions for AI Agents
 
-This file provides instructions and context for AI coding agents working on this project.
+`singctl` is a terminal-UI VLESS proxy / VPN client built on an **embedded
+sing-box core** (v1.13.12). It runs a local SOCKS/HTTP proxy and can flip a
+system-wide VPN (TUN) mode on and off, while **passively coexisting** with
+Cisco Secure Client (AnyConnect). The primary use case is routing the traffic
+of selected applications through a corporate VPN so they get outbound access.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:7510c1e2 -->
 ## Beads Issue Tracker
@@ -50,21 +54,112 @@ bd close <id>         # Complete work
 - If push fails, resolve and retry until it succeeds
 <!-- END BEADS INTEGRATION -->
 
+## MANDATORY: track every task in beads
+
+**Every change to this project MUST be tracked as a bead.** This is a hard
+project rule, not a suggestion:
+
+1. `bd init` once per clone (already done; the Dolt DB lives under `.beads/`).
+2. **Before** starting work, `bd create "<title>"` (or claim an existing one)
+   and set it `--status in_progress`.
+3. Reference the bead ID in the commit message body (e.g. `singctl-proxy-sol`).
+4. **Definition of Done** for any bead:
+   - `go test ./...` green (hermetic, runs on the stub/fake core),
+   - `go build -tags singbox ./...` compiles against the real sing-box,
+   - golden config diffs reviewed deliberately,
+   - the bead closed (`bd close <id>`).
+
+Do not use TodoWrite / TaskCreate / markdown TODO lists — beads is the single
+source of truth.
 
 ## Build & Test
 
-_Add your build and test commands here_
-
 ```bash
-# Example:
-# npm install
-# npm test
+go build ./...                      # default build (stub core, no sing-box link)
+go test ./...                       # hermetic unit + golden suite (FakeCore)
+go build -tags singbox ./...        # shipping build: links the real sing-box core
+go test ./internal/singbox -update  # regenerate golden config files (review diff!)
+make build                          # version-stamped binary (see Makefile)
 ```
+
+The default build/test path **never imports sing-box** — it links a stub core,
+so the whole suite is fast and CGO-free. Only `-tags singbox` pulls in the real
+core (`internal/core/real.go`).
+
+`singctl` must run as **root** (TUN device + route management). The TUI shows a
+preflight error otherwise.
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+Hexagonal: a pure decision/config core surrounded by injected I/O ports, with
+the only sing-box dependency isolated behind a build tag.
+
+```
+cmd/singctl            entry point: flags/env/profile precedence, wiring,
+                       headless vs TUI, embedded man page (singctl.1)
+internal/vless         parse vless:// links -> ServerProfile / ProfileSet (pure)
+internal/singbox       build sing-box JSON config as Go structs (pure; NO sing-box
+                       import). Contract = JSON, verified by testdata/*.golden.json
+internal/core          Core/Factory abstraction over a sing-box Box:
+                         real.go  (//go:build singbox) — the only sing-box import
+                         stub.go  / fakecore.go — used by default builds & tests
+internal/runtime       Manager: two-instance lifecycle (PROXY + TUN forwarder),
+                       state machine, ConfigBuilder / InterfaceProber /
+                       RouteController ports
+internal/app           Executor: composition root; implements ui.Backend; applies
+                       monitor policy decisions to the Manager
+internal/ui            Bubble Tea TUI (pure reducer); async data via notes channel
+internal/netstate      passive, read-only network/Cisco state detection
+internal/monitor       debounced event loop over netstate
+internal/policy        pure Cisco-coexistence decision engine (no I/O)
+internal/profile       persist the key(s) under the real user's ~/.config/singctl
+internal/clashapi      sing-box Clash API client + connection poller (observability)
+internal/procproxy     per-process routing (Linux cgroup/nftables) + env-launch
+                       fallback (other OSes)
+```
+
+### Two sing-box instances
+- **PROXY** (persistent): SOCKS `127.0.0.1:1080` + HTTP `127.0.0.1:2080`. In VPN
+  mode its outbounds get `bind_interface`=physical NIC so egress escapes our own
+  TUN; in proxy-only mode they ride the default route.
+- **TUN forwarder** (on-demand, VPN mode only): owns the default route via
+  `auto_route`, relays everything to the PROXY over SOCKS, hijacks DNS at the TUN
+  edge. Subnet `198.18.0.0/30` (avoids Cisco's 172.18/16).
+
+### Key invariants (do not break)
+- **`internal/singbox` stays pure** and never imports sing-box. Any config change
+  = edit the structs + regenerate goldens (`-update`) and review the diff.
+- **The only sing-box import is `internal/core/real.go` behind `//go:build
+  singbox`.** New runtime dependencies must be reachable from the default
+  (non-singbox) build via interfaces + fakes (see `core.Factory`,
+  `runtime.InterfaceProber`, `runtime.RouteController`).
+- **UI is a pure reducer.** Async data arrives via the `notes chan tea.Msg`;
+  blocking backend calls are wrapped in `tea.Cmd` (`internal/ui/commands.go`).
+  `ui.Backend` is the UI↔runtime port — extending it means updating the fakes in
+  every `internal/ui/*_test.go`.
+- **Cisco coexistence is observe-only.** Never mutate AnyConnect's routes; yield
+  (suspend) while it is connecting/active and resume after it disconnects.
+- **Platform-specific code is build-tag / file-suffix split** (`*_linux.go`,
+  `*_darwin.go`, `*_other.go`), each with a pure-Go fake for tests.
+
+## Features
+
+- **Multiple VLESS keys with automatic failover.** Pass several `--key` flags (or
+  newline-separated `SINGCTL_KEY`/`SINGCTL_KEYS`); a sing-box `urltest` group
+  latency-tests them and selects the fastest reachable server (priority follows
+  input order). Single-key configs are byte-identical to before.
+- **Enriched connection logging.** sing-box's Clash API (loopback only, random
+  secret, on by default) is polled for live connections; each is logged with the
+  **source process**, source ip:port, full destination host/ip:port, network and
+  outbound chain, and shown in a live TUI connections view.
+- **Per-process proxying by PID.** On Linux, route an already-running PID's
+  traffic through the proxy via cgroup v2 + nftables fwmark (no env needed). On
+  other OSes, `--launch -- <cmd>` spawns a child with proxy env injected.
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+- Pure packages (`vless`, `singbox`, `policy`) do no I/O and are unit-tested
+  directly; everything with I/O is behind an interface with an injectable fake.
+- Golden-file testing for all sing-box JSON; never hand-edit goldens — regenerate.
+- User-facing TUI/log strings are in Russian (match existing copy).
+- Run under `sudo`; resolve the real user via `SUDO_USER` for file ownership.
