@@ -68,6 +68,10 @@ func (r *linuxRouter) Launch(ctx context.Context, argv []string) (int, error) {
 	return pid, nil
 }
 
+func (r *linuxRouter) RestartPID(ctx context.Context, pid int) (int, error) {
+	return restartPID(ctx, pid, r.Launch)
+}
+
 func (r *linuxRouter) ListRouted() []int { return r.pids.list() }
 
 // ensureSetup creates the cgroup, nftables marking rule and policy route once.

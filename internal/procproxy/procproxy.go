@@ -10,6 +10,9 @@ package procproxy
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"syscall"
 )
 
 // ErrUnsupportedOnPlatform is returned by AddPID/RemovePID where real per-PID
@@ -26,6 +29,11 @@ type Router interface {
 	// Launch starts argv with its traffic routed through the proxy and returns
 	// the child PID.
 	Launch(ctx context.Context, argv []string) (int, error)
+	// RestartPID reads a running process's command line, terminates it, and
+	// relaunches it routed through the proxy. Best-effort: argv is recovered via
+	// ps (quoting is not preserved), so it suits simple CLI apps. Returns the new
+	// PID.
+	RestartPID(ctx context.Context, pid int) (int, error)
 	// ListRouted returns the PIDs currently routed.
 	ListRouted() []int
 	// Cleanup removes any kernel/process state created by the router.
@@ -106,6 +114,30 @@ func launchWithEnv(ctx context.Context, argv, extraEnv []string) (int, error) {
 	return startProcess(ctx, argv, extraEnv)
 }
 
+// restartPID reads a process's argv, terminates it, and relaunches it through
+// the given launch func (which applies the platform routing). Shared by every
+// Router implementation.
+func restartPID(ctx context.Context, pid int, launch func(context.Context, []string) (int, error)) (int, error) {
+	argv, err := processArgv(ctx, pid)
+	if err != nil {
+		return 0, fmt.Errorf("read argv of pid %d: %w", pid, err)
+	}
+	if len(argv) == 0 {
+		return 0, fmt.Errorf("pid %d has no command line", pid)
+	}
+	_ = terminate(pid)
+	return launch(ctx, argv)
+}
+
+// terminate sends SIGTERM to a PID (best-effort).
+func terminate(pid int) error {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return p.Signal(syscall.SIGTERM)
+}
+
 // envRouter is the fallback used on non-Linux platforms: Launch injects proxy
 // env; per-PID routing is unsupported.
 type envRouter struct {
@@ -127,4 +159,8 @@ func (r *envRouter) Launch(ctx context.Context, argv []string) (int, error) {
 	}
 	r.mu.add(pid)
 	return pid, nil
+}
+
+func (r *envRouter) RestartPID(ctx context.Context, pid int) (int, error) {
+	return restartPID(ctx, pid, r.Launch)
 }

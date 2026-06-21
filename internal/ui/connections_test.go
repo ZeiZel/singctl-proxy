@@ -179,6 +179,25 @@ func TestProcPicker_FilterByName(t *testing.T) {
 	}
 }
 
+func TestProcPicker_RestartHighlighted(t *testing.T) {
+	b := &fakeBackend{procRows: []ProcInfo{{PID: 321, Name: "codex"}}}
+	m := newWithCaps(b, nil, asciiCaps()).WithLoadedProfile()
+	m.showProc = true
+	m.procRows = b.procRows
+	// ctrl+r restarts the highlighted process.
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	if next.(Model).ShowingConns() {
+		t.Error("ctrl+r should not open connections")
+	}
+	if cmd == nil {
+		t.Fatal("expected a restart command")
+	}
+	_ = cmd()
+	if b.restartedPID != 321 {
+		t.Errorf("restarted PID = %d, want 321", b.restartedPID)
+	}
+}
+
 func TestProcResultMsg_ShowsError(t *testing.T) {
 	m := dashboardModel(t)
 	next, _ := m.Update(procResultMsg{err: errSample})

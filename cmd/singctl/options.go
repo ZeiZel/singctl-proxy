@@ -53,9 +53,10 @@ type options struct {
 	urltestInterval  string // --urltest-interval: failover probe interval
 	urltestTolerance int    // --urltest-tolerance: failover switch hysteresis (ms)
 
-	routePIDRaw stringList // --route-pid: PID(s) to route through the proxy (repeatable)
-	launch      bool       // --launch: run the trailing command through the proxy
-	launchArgv  []string   // command + args after --launch (the trailing args)
+	routePIDRaw   stringList // --route-pid: PID(s) to route through the proxy (repeatable)
+	restartPIDRaw stringList // --restart-pid: PID(s) to restart in proxy mode (repeatable)
+	launch        bool       // --launch: run the trailing command through the proxy
+	launchArgv    []string   // command + args after --launch (the trailing args)
 }
 
 // parseOptions parses args (without the program name). flag.ErrHelp is
@@ -88,6 +89,7 @@ func parseOptions(args []string, out io.Writer) (*options, error) {
 	fs.StringVar(&o.urltestInterval, "urltest-interval", "", "failover probe interval (default: 3m)")
 	fs.IntVar(&o.urltestTolerance, "urltest-tolerance", 0, "failover switch hysteresis in ms (default: 50)")
 	fs.Var(&o.routePIDRaw, "route-pid", "PID to route through the proxy (Linux; repeatable)")
+	fs.Var(&o.restartPIDRaw, "restart-pid", "PID to restart in proxy mode (repeatable)")
 	fs.BoolVar(&o.launch, "launch", false, "run the trailing command through the proxy (use: --launch -- cmd args)")
 
 	fs.Usage = func() { fmt.Fprint(out, usageText) }
@@ -148,12 +150,17 @@ func (o *options) effectiveClashAPI() string {
 }
 
 // routePIDs parses the --route-pid values into integers.
-func (o *options) routePIDs() ([]int, error) {
-	pids := make([]int, 0, len(o.routePIDRaw))
-	for _, raw := range o.routePIDRaw {
-		p, err := strconv.Atoi(strings.TrimSpace(raw))
+func (o *options) routePIDs() ([]int, error) { return parsePIDs("--route-pid", o.routePIDRaw) }
+
+// restartPIDs parses the --restart-pid values into integers.
+func (o *options) restartPIDs() ([]int, error) { return parsePIDs("--restart-pid", o.restartPIDRaw) }
+
+func parsePIDs(flag string, raw stringList) ([]int, error) {
+	pids := make([]int, 0, len(raw))
+	for _, r := range raw {
+		p, err := strconv.Atoi(strings.TrimSpace(r))
 		if err != nil || p <= 0 {
-			return nil, fmt.Errorf("--route-pid: invalid pid %q", raw)
+			return nil, fmt.Errorf("%s: invalid pid %q", flag, r)
 		}
 		pids = append(pids, p)
 	}
@@ -168,6 +175,9 @@ func (o *options) validate() error {
 		return fmt.Errorf("--launch needs a command, e.g. --launch -- curl https://...")
 	}
 	if _, err := o.routePIDs(); err != nil {
+		return err
+	}
+	if _, err := o.restartPIDs(); err != nil {
 		return err
 	}
 	// port+1 is the http listener, so 65534 is the highest usable socks port.
@@ -204,6 +214,8 @@ Flags:
       --urltest-tolerance <ms> failover switch hysteresis (default: 50)
       --route-pid <pid>    route a running process through the proxy (Linux;
                            repeatable)
+      --restart-pid <pid>  restart a running process in proxy mode (repeatable;
+                           best-effort: terminates it and relaunches via proxy)
       --launch -- <cmd>    run a command through the proxy (Linux: real
                            interception; others: proxy env injected)
       --env-file <path>    load environment variables from this file

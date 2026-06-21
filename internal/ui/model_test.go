@@ -20,6 +20,8 @@ type fakeBackend struct {
 	launchPID    int
 	procRows     []ProcInfo
 	procListErr  error
+	restartedPID int
+	restartErr   error
 }
 
 func (b *fakeBackend) LoadLink(_ context.Context, link string) error {
@@ -46,6 +48,13 @@ func (b *fakeBackend) LaunchProxied(_ context.Context, argv []string) (int, erro
 }
 func (b *fakeBackend) ListProcesses(context.Context) ([]ProcInfo, error) {
 	return b.procRows, b.procListErr
+}
+func (b *fakeBackend) RestartProxied(_ context.Context, pid int) (int, error) {
+	b.restartedPID = pid
+	if b.restartErr != nil {
+		return 0, b.restartErr
+	}
+	return pid + 1, nil
 }
 
 func rune_(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }

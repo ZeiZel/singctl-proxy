@@ -39,6 +39,17 @@ func launchProcCmd(b Backend, argv []string) tea.Cmd {
 	}
 }
 
+// restartPIDCmd restarts a running PID in proxy mode.
+func restartPIDCmd(b Backend, pid int) tea.Cmd {
+	return func() tea.Msg {
+		newPID, err := b.RestartProxied(context.Background(), pid)
+		if err != nil {
+			return procResultMsg{err: err}
+		}
+		return procResultMsg{note: fmt.Sprintf("PID %d перезапущен в proxy-режиме (новый PID %d)", pid, newPID)}
+	}
+}
+
 func loadLinkCmd(b Backend, link string) tea.Cmd {
 	return func() tea.Msg {
 		if err := b.LoadLink(context.Background(), link); err != nil {

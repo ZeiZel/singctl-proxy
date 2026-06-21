@@ -23,4 +23,7 @@ type Backend interface {
 	LaunchProxied(ctx context.Context, argv []string) (int, error)
 	// ListProcesses enumerates processes with network sockets for the picker.
 	ListProcesses(ctx context.Context) ([]ProcInfo, error)
+	// RestartProxied terminates a running PID and relaunches it through the
+	// proxy (best-effort; the only way to proxy an existing process on macOS).
+	RestartProxied(ctx context.Context, pid int) (int, error)
 }

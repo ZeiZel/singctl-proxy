@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 )
 
 // This file is the package's only OS-exec adapter (the _other.go suffix marks it
@@ -32,4 +34,18 @@ func runCommand(ctx context.Context, args []string) error {
 		return nil
 	}
 	return exec.CommandContext(ctx, args[0], args[1:]...).Run()
+}
+
+// processArgv recovers a running process's command line via ps. Quoting is not
+// preserved (best-effort), so it suits simple CLI apps. Works on macOS and Linux.
+func processArgv(ctx context.Context, pid int) ([]string, error) {
+	out, err := exec.CommandContext(ctx, "ps", "-p", strconv.Itoa(pid), "-o", "args=").Output()
+	if err != nil {
+		return nil, err
+	}
+	line := strings.TrimSpace(string(out))
+	if line == "" {
+		return nil, fmt.Errorf("pid %d not found", pid)
+	}
+	return strings.Fields(line), nil
 }

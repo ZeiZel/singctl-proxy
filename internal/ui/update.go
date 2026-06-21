@@ -199,6 +199,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.procCursor++
 			}
 			return m, nil
+		case msg.Type == tea.KeyCtrlR:
+			// Restart the highlighted process in proxy mode (best-effort; the
+			// only way to proxy an existing process on macOS).
+			fp := m.filteredProcs()
+			if len(fp) == 0 {
+				return m, nil
+			}
+			pid := fp[clampIdx(m.procCursor, len(fp))].PID
+			m.procInput.Blur()
+			m.showProc = false
+			m.status = "перезапускаю процесс в proxy-режиме…"
+			return m, restartPIDCmd(m.backend, pid)
 		case msg.String() == "enter":
 			return m.submitProc()
 		default:

@@ -419,6 +419,14 @@ func (e *Executor) LaunchProxied(ctx context.Context, argv []string) (int, error
 	return e.procRouter().Launch(ctx, argv)
 }
 
+// RestartProxied terminates a running PID and relaunches it through the proxy.
+func (e *Executor) RestartProxied(ctx context.Context, pid int) (int, error) {
+	if !e.proxyRunning() {
+		return 0, errProxyNotRunning
+	}
+	return e.procRouter().RestartPID(ctx, pid)
+}
+
 // Shutdown tears down both cores and any per-process routing state.
 func (e *Executor) Shutdown(ctx context.Context) error {
 	e.stopPoller()

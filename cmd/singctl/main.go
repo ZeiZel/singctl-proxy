@@ -251,6 +251,14 @@ func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan tea.M
 			fmt.Printf("singctl: routing PID %d through the proxy\n", pid)
 		}
 	}
+	restartPIDs, _ := opts.restartPIDs()
+	for _, pid := range restartPIDs {
+		if newPID, err := executor.RestartProxied(ctx, pid); err != nil {
+			fmt.Fprintf(os.Stderr, "restart-pid %d: %v\n", pid, err)
+		} else {
+			fmt.Printf("singctl: restarted PID %d in proxy mode (new PID %d)\n", pid, newPID)
+		}
+	}
 	if opts.launch {
 		if pid, err := executor.LaunchProxied(ctx, opts.launchArgv); err != nil {
 			fmt.Fprintf(os.Stderr, "launch: %v\n", err)

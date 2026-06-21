@@ -7,6 +7,7 @@ import "context"
 type FakeRouter struct {
 	Added     []int
 	Removed   []int
+	Restarted []int
 	Launched  [][]string
 	CleanedUp bool
 	NextPID   int
@@ -46,6 +47,19 @@ func (f *FakeRouter) Launch(_ context.Context, argv []string) (int, error) {
 	}
 	f.Routed = append(f.Routed, pid)
 	return pid, nil
+}
+
+func (f *FakeRouter) RestartPID(_ context.Context, pid int) (int, error) {
+	if f.LaunchErr != nil {
+		return 0, f.LaunchErr
+	}
+	f.Restarted = append(f.Restarted, pid)
+	newPID := f.NextPID
+	if newPID == 0 {
+		newPID = 9000 + len(f.Restarted)
+	}
+	f.Routed = append(f.Routed, newPID)
+	return newPID, nil
 }
 
 func (f *FakeRouter) ListRouted() []int { return f.Routed }

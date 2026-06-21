@@ -397,8 +397,8 @@ func (m Model) procView() string {
 	footer := s.clampLine(s.footerHints([][2]string{
 		{s.gl.ArrowsUD, "выбор"},
 		{"Enter", "проксировать"},
+		{"^R", "перезапуск"},
 		{"esc", "отмена"},
-		{"ctrl+c", "выход"},
 	}), max(m.width, 1))
 	return m.frame(header, body, footer)
 }
