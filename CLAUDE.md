@@ -125,6 +125,9 @@ internal/proclist      enumerate processes with sockets (pid/port/name) for the
 internal/control       instance advertisement (instance.json) + Unix control
                        socket; lets a second invocation attach to logs and
                        stop/status a running instance
+internal/daemon        re-exec the binary detached (setsid) for --daemon / the
+                       in-UI daemonize action; BuildArgs is pure, exec is in the
+                       daemon_other.go adapter (arch-guard compliant)
 ```
 
 ### Two sing-box instances
@@ -185,15 +188,28 @@ internal/control       instance advertisement (instance.json) + Unix control
   second invocation can `--attach` (live-tail its logs), `--status`, or `--stop`
   it — start it `--headless` in one tab and control it from another. These
   control commands run without root.
-- **Masked keys + add a second key.** The connection-strings screen shows loaded
-  keys masked (bullets + the `#name` label only) with a field to add another key
-  (joins the failover group live); the raw key is never echoed.
-- **Panel dashboard.** The dashboard surfaces functionality directly: СТАТУС +
-  РЕЖИМ panels plus an always-on СОЕДИНЕНИЯ panel (live connections + per-server
-  latency). Wide layout puts status/mode side-by-side with a full-width
-  connections panel below; compact terminals collapse it to a one-line summary.
-  The `c`/`x`/`l` overlays remain for the detailed connections / process picker /
-  logs views.
+- **Unlimited keys, labelled "Ключ N".** The connection-strings screen shows
+  loaded keys masked (bullets + the `#name` label only) with a field labelled
+  "Ключ N+1 — добавить ключ" (any number of keys join the failover group live);
+  the raw key is never echoed.
+- **Focus-expandable panel dashboard.** The dashboard shows СТАТУС + РЕЖИМ panels,
+  a разделы chip row (Соединения · Логи · Приложения · Ключи · Настройки) and a
+  height-filling СОЕДИНЕНИЯ panel. `focus` (-1 = OFF/PROXY/VPN selector, moved with
+  ←→; 0..n = chips, moved with Tab) + Enter opens the focused section full-screen;
+  `c`/`l`/`x`/`e`/`g` are direct shortcuts. Соединения and Логи are scrollable
+  viewports (↑↓/jk, g/G).
+- **App launcher.** The Приложения section (`x`) has an explicit "Запустить
+  приложение в прокси" field (Enter launches e.g. zen via the proxy), the process
+  picker (filter, ↑↓, Enter route, ^R restart), and a "Проксируются сейчас" list.
+- **In-UI settings.** The Настройки section (`g`) edits SOCKS port, Clash API
+  on/off + address, urltest url/interval/tolerance and save-profile, then
+  [Применить] reloads the core (ApplySettings) preserving the mode; [Запустить в
+  фоне] daemonizes.
+- **Daemon.** `--daemon` (or the in-UI daemonize action) re-execs a detached
+  headless background process (setsid) that keeps the proxy running after the
+  utility exits; the key comes from the saved profile (never the process table).
+  Manage it via `--status`/`--attach`/`--stop`. Needs the `with_clash_api` build
+  tag (already in the Makefile's SINGBOX_TAGS).
 
 ## Conventions & Patterns
 
