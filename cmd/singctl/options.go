@@ -73,6 +73,7 @@ type proxyModule struct {
 	vpn      bool
 	headless bool
 	logs     bool
+	daemon   bool
 	port     int
 }
 
@@ -85,6 +86,7 @@ func (m *proxyModule) Bind(fs *flag.FlagSet) {
 	fs.BoolVar(&m.headless, "headless", false, "run without the terminal UI")
 	fs.BoolVar(&m.logs, "l", false, "")
 	fs.BoolVar(&m.logs, "logs", false, "stream sing-box logs to stdout")
+	fs.BoolVar(&m.daemon, "daemon", false, "run detached in the background and exit (manage with --status/--stop)")
 }
 func (m *proxyModule) applyEnv(getenv func(string) string) error {
 	if m.port == 0 {
@@ -278,6 +280,14 @@ func (c *cli) applyEnv(getenv func(string) string) error {
 func (c *cli) validate() error {
 	if err := c.proxy.validate(); err != nil {
 		return err
+	}
+	if c.proxy.daemon {
+		if c.ctl.attach || c.ctl.stop || c.ctl.status {
+			return fmt.Errorf("--daemon cannot be combined with --attach/--stop/--status")
+		}
+		if c.keys.noSave {
+			return fmt.Errorf("--daemon needs a saved key (the background process loads it); drop --no-save")
+		}
 	}
 	return c.proc.validate()
 }

@@ -29,6 +29,7 @@ import (
 	"singctl/internal/app"
 	"singctl/internal/control"
 	"singctl/internal/core"
+	"singctl/internal/daemon"
 	"singctl/internal/monitor"
 	"singctl/internal/netstate"
 	"singctl/internal/platform"
@@ -241,6 +242,7 @@ func main() {
 	// empty so sing-box writes to the console instead of the file.
 	var savedLink, logPath, configDir string
 	var realUID, realGID int
+	var store *profile.Store
 	if ru, err := platform.ResolveUser(os.Getenv, user.Lookup); err == nil {
 		configDir = filepath.Join(ru.HomeDir, ".config", "singctl")
 		realUID, realGID = ru.Uid, ru.Gid
@@ -248,7 +250,7 @@ func main() {
 		_ = os.Chown(configDir, ru.Uid, ru.Gid)
 		logPath = filepath.Join(configDir, "singbox.log")
 
-		store := profile.NewStore(profile.OSFS{}, ru.HomeDir, ru.Uid, ru.Gid)
+		store = profile.NewStore(profile.OSFS{}, ru.HomeDir, ru.Uid, ru.Gid)
 		if !c.keys.noSave {
 			executor.SetSaver(store.Save)
 		}
@@ -260,13 +262,49 @@ func main() {
 		executor.SetLogPath(logPath)
 	}
 
+	// flag/env key overrides the saved profile.
+	initialLink := strings.TrimSpace(c.keys.combined())
+	if initialLink == "" {
+		initialLink = savedLink
+	}
+	mode := "proxy"
+	if c.proxy.vpn {
+		mode = "vpn"
+	}
+
+	// --daemon (parent): persist the key, re-exec a detached headless child, exit.
+	// Runs BEFORE advertising so the exiting parent never clobbers the child's
+	// instance.json / control socket. The child (SINGCTL_DAEMON_CHILD=1) skips this.
+	if c.proxy.daemon && !daemon.IsChild() {
+		if initialLink == "" {
+			fmt.Fprintln(os.Stderr, "error: --daemon needs a key (--key, $SINGCTL_KEY, or a saved profile)")
+			os.Exit(1)
+		}
+		if store != nil {
+			_ = store.Save(initialLink) // the child loads the key from the profile
+		}
+		if configDir != "" {
+			if inst, err := control.ReadInstance(configDir); err == nil && control.IsAlive(inst.PID) {
+				fmt.Fprintf(os.Stderr, "error: a singctl instance is already running (PID %d) — stop it first: singctl --stop\n", inst.PID)
+				os.Exit(1)
+			}
+		}
+		if err := daemon.Spawn(daemon.Config{
+			Mode: mode, Port: c.proxy.port, NoClash: c.obs.noClash,
+			ClashAddr: c.obs.clashAPI, ClashSecret: clashSecret,
+			URLTestURL: c.obs.urltestURL, URLTestInterval: c.obs.urltestInterval,
+			URLTestTolerance: c.obs.urltestTolerance, LogPath: logPath,
+		}); err != nil {
+			fmt.Fprintln(os.Stderr, "error: start daemon:", err)
+			os.Exit(1)
+		}
+		fmt.Println("singctl: daemon запущен в фоне — управление через --status / --attach / --stop")
+		return
+	}
+
 	// Advertise this instance + serve control (attach/stop/status) so another
 	// tab can follow logs and stop it. Best-effort: failures don't block startup.
 	if configDir != "" {
-		mode := "proxy"
-		if c.proxy.vpn {
-			mode = "vpn"
-		}
 		sockPath := filepath.Join(configDir, "control.sock")
 		srv := control.NewServer(sockPath,
 			func() control.Status {
@@ -287,12 +325,6 @@ func main() {
 		} else {
 			fmt.Fprintln(os.Stderr, "warning: control socket unavailable:", err)
 		}
-	}
-
-	// flag/env key overrides the saved profile.
-	initialLink := strings.TrimSpace(c.keys.combined())
-	if initialLink == "" {
-		initialLink = savedLink
 	}
 
 	// Monitor: event-driven (PF_ROUTE) + 2s polling fallback, debounce 2.

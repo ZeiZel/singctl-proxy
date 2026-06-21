@@ -40,6 +40,12 @@ Enable VPN (TUN) mode on start.
 .BR \-p ", " \-\-proxy
 Enable proxy mode on start.
 .TP
+.B \-\-daemon
+Run detached in the background and exit, so the proxy keeps running after the
+terminal closes. Re-execs singctl headless with setsid; the key is loaded from
+the saved profile. Manage the background process with
+.BR \-\-status ", " \-\-attach " and " \-\-stop .
+.TP
 .BI \-\-port " n"
 Local SOCKS port (HTTP proxy listens on port+1; defaults: 1080/2080).
 .TP
