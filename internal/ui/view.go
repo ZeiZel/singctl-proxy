@@ -333,36 +333,64 @@ func (m Model) connsView() string {
 
 	w := max(m.width, 1)
 	var rows []string
-	// Latency table for the failover group (only meaningful with data).
-	if len(m.latency) > 0 {
-		rows = append(rows, s.Subtle.Render("серверы:"))
-		for _, r := range m.latency {
-			marker := "  "
-			if r.Selected || r.Tag == m.latencySel {
-				marker = s.colored(s.th.Accent, s.gl.DotOn+" ")
-			}
-			rows = append(rows, s.clampLine(marker+r.Tag+"  "+delayText(r.Delay), w))
-		}
-		rows = append(rows, s.rule(w))
+	if lat := m.latencyBody(w); lat != "" {
+		rows = append(rows, lat, s.rule(w))
 	}
-
-	if len(m.conns) == 0 {
-		rows = append(rows, s.Subtle.Render("(нет активных соединений)"))
-	} else {
-		for _, c := range m.conns {
-			proc := c.Process
-			if proc == "" {
-				proc = s.gl.Dash
-			}
-			line := fmt.Sprintf("%s  %s %s %s  [%s]", proc, c.Source, s.gl.ArrowR, c.Dest, c.Network)
-			if c.Chain != "" {
-				line += "  " + s.Subtle.Render(c.Chain)
-			}
-			rows = append(rows, s.clampLine(line, w))
-		}
-	}
+	rows = append(rows, m.connsBody(w, 0)) // 0 = no row cap in the full overlay
 	body := strings.Join(rows, "\n")
 	return m.frame(header, body, footer)
+}
+
+// latencyBody renders the failover group's per-server latency list (selected
+// server marked). Returns "" when there is no latency data. Shared by the conns
+// overlay and the dashboard panel.
+func (m Model) latencyBody(w int) string {
+	if len(m.latency) == 0 {
+		return ""
+	}
+	s := m.styles
+	rows := []string{s.Subtle.Render("серверы:")}
+	for _, r := range m.latency {
+		marker := "  "
+		if r.Selected || r.Tag == m.latencySel {
+			marker = s.colored(s.th.Accent, s.gl.DotOn+" ")
+		}
+		rows = append(rows, s.clampLine(marker+r.Tag+"  "+delayText(r.Delay), w))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// connsBody renders the live connection list (process → destination [network]
+// via chain), each line clamped to w. limit>0 caps the number of rows shown
+// (with a "…ещё N" tail); limit<=0 shows all. Shared by the conns overlay and
+// the dashboard panel.
+func (m Model) connsBody(w, limit int) string {
+	s := m.styles
+	if len(m.conns) == 0 {
+		return s.Subtle.Render("(нет активных соединений)")
+	}
+	shown := m.conns
+	hidden := 0
+	if limit > 0 && len(shown) > limit {
+		hidden = len(shown) - limit
+		shown = shown[:limit]
+	}
+	rows := make([]string, 0, len(shown)+1)
+	for _, c := range shown {
+		proc := c.Process
+		if proc == "" {
+			proc = s.gl.Dash
+		}
+		line := fmt.Sprintf("%s  %s %s %s  [%s]", proc, c.Source, s.gl.ArrowR, c.Dest, c.Network)
+		if c.Chain != "" {
+			line += "  " + s.Subtle.Render(c.Chain)
+		}
+		rows = append(rows, s.clampLine(line, w))
+	}
+	if hidden > 0 {
+		rows = append(rows, s.Subtle.Render(fmt.Sprintf("…ещё %d", hidden)))
+	}
+	return strings.Join(rows, "\n")
 }
 
 // --- per-process routing prompt ---
