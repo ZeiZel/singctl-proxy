@@ -15,4 +15,10 @@ type Backend interface {
 	EnableProxy(ctx context.Context) error
 	EnableVPN(ctx context.Context) error
 	Stop(ctx context.Context) error
+	// RoutePID routes an already-running process's traffic through the proxy
+	// (Linux only; an error is surfaced on other platforms).
+	RoutePID(ctx context.Context, pid int) error
+	// LaunchProxied starts a command with its traffic routed through the proxy
+	// and returns the child PID.
+	LaunchProxied(ctx context.Context, argv []string) (int, error)
 }

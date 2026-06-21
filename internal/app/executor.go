@@ -18,6 +18,7 @@ import (
 	"singctl/internal/core"
 	"singctl/internal/monitor"
 	"singctl/internal/policy"
+	"singctl/internal/procproxy"
 	"singctl/internal/runtime"
 	"singctl/internal/singbox"
 	"singctl/internal/types"
@@ -49,6 +50,9 @@ type Executor struct {
 
 	pollMu     sync.Mutex
 	pollCancel context.CancelFunc
+
+	routerOnce sync.Once
+	router     procproxy.Router
 }
 
 // SetLogPath redirects sing-box logs to a file (keeps them out of the TUI).
@@ -355,9 +359,53 @@ func (e *Executor) runMode() ui.RunMode {
 	}
 }
 
-// Shutdown tears down both cores.
+// --- per-process proxying (ui.Backend) ---
+
+// proxyRunning reports whether the proxy listeners are up (required before
+// routing a process through them).
+func (e *Executor) proxyRunning() bool {
+	m := e.manager()
+	return m != nil && m.State() != runtime.StateStopped
+}
+
+// procRouter lazily builds the platform per-PID router, pinned to the proxy's
+// actual local ports.
+func (e *Executor) procRouter() procproxy.Router {
+	e.routerOnce.Do(func() {
+		socks, http := 1080, 2080
+		if e.ports.Socks != 0 {
+			socks, http = e.ports.Socks, e.ports.HTTP
+		}
+		e.router = procproxy.NewRouter(procproxy.Config{
+			SocksAddr: fmt.Sprintf("127.0.0.1:%d", socks),
+			HTTPAddr:  fmt.Sprintf("127.0.0.1:%d", http),
+		})
+	})
+	return e.router
+}
+
+// RoutePID routes an already-running PID's traffic through the proxy.
+func (e *Executor) RoutePID(ctx context.Context, pid int) error {
+	if !e.proxyRunning() {
+		return errProxyNotRunning
+	}
+	return e.procRouter().AddPID(ctx, pid)
+}
+
+// LaunchProxied starts a command with its traffic routed through the proxy.
+func (e *Executor) LaunchProxied(ctx context.Context, argv []string) (int, error) {
+	if !e.proxyRunning() {
+		return 0, errProxyNotRunning
+	}
+	return e.procRouter().Launch(ctx, argv)
+}
+
+// Shutdown tears down both cores and any per-process routing state.
 func (e *Executor) Shutdown(ctx context.Context) error {
 	e.stopPoller()
+	if e.router != nil {
+		_ = e.router.Cleanup()
+	}
 	if m := e.manager(); m != nil {
 		return m.Shutdown(ctx)
 	}

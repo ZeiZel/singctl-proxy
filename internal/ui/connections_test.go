@@ -1,11 +1,14 @@
 package ui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+var errSample = errors.New("sample error")
 
 func dashboardModel(t *testing.T) Model {
 	t.Helper()
@@ -75,5 +78,59 @@ func TestConnsView_EmptyState(t *testing.T) {
 	out := m.View()
 	if !strings.Contains(out, "нет активных соединений") {
 		t.Errorf("expected empty-state text, got:\n%s", out)
+	}
+}
+
+func TestProcPrompt_RoutePID(t *testing.T) {
+	b := &fakeBackend{}
+	m := newWithCaps(b, nil, asciiCaps()).WithLoadedProfile()
+	m.width, m.height = 100, 30
+	m.relayout()
+
+	// 'x' opens the process prompt.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	m = next.(Model)
+	if !m.showProc {
+		t.Fatal("'x' should open the process prompt")
+	}
+	// Type a PID and submit → RoutePID called.
+	m.procInput.SetValue("12345")
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.showProc {
+		t.Error("submitting should close the prompt")
+	}
+	if cmd == nil {
+		t.Fatal("expected a command from submit")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatal("route command produced no message")
+	}
+	if b.routedPID != 12345 {
+		t.Errorf("RoutePID got %d, want 12345", b.routedPID)
+	}
+}
+
+func TestProcPrompt_LaunchCommand(t *testing.T) {
+	b := &fakeBackend{}
+	m := newWithCaps(b, nil, asciiCaps()).WithLoadedProfile()
+	m.showProc = true
+	m.procInput.SetValue("curl https://example.com")
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_ = next
+	if cmd == nil {
+		t.Fatal("expected launch command")
+	}
+	_ = cmd()
+	if len(b.launchedArgv) != 2 || b.launchedArgv[0] != "curl" {
+		t.Errorf("LaunchProxied argv = %v, want [curl https://example.com]", b.launchedArgv)
+	}
+}
+
+func TestProcResultMsg_ShowsError(t *testing.T) {
+	m := dashboardModel(t)
+	next, _ := m.Update(procResultMsg{err: errSample})
+	if got := next.(Model).ErrText(); got != errSample.Error() {
+		t.Errorf("errText = %q, want %q", got, errSample.Error())
 	}
 }

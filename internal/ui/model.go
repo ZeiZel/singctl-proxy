@@ -43,6 +43,9 @@ type Model struct {
 	latency    []LatencyRow // per-server failover latencies
 	latencySel string       // currently-selected server tag
 
+	showProc  bool            // per-process routing prompt open
+	procInput textinput.Model // PID or command to route
+
 	// presentation
 	theme     Theme
 	caps      Caps
@@ -83,6 +86,14 @@ func newWithCaps(backend Backend, notes <-chan tea.Msg, caps Caps) Model {
 	ti.Focus()
 	ti.Width = 48
 
+	pi := textinput.New()
+	pi.Placeholder = "PID или команда (напр. 12345 или: curl https://...)"
+	pi.Prompt = gl.Prompt
+	pi.PromptStyle = caps.R.NewStyle().Foreground(th.Accent)
+	pi.PlaceholderStyle = caps.R.NewStyle().Foreground(th.Subtle)
+	pi.Cursor.Style = caps.R.NewStyle().Foreground(th.Accent)
+	pi.Width = 48
+
 	keyStyle := caps.R.NewStyle().Foreground(th.Accent)
 	descStyle := caps.R.NewStyle().Foreground(th.Muted)
 	sepStyle := caps.R.NewStyle().Foreground(th.Subtle)
@@ -105,19 +116,20 @@ func newWithCaps(backend Backend, notes <-chan tea.Msg, caps Caps) Model {
 	sp.Style = caps.R.NewStyle().Foreground(th.Accent)
 
 	return Model{
-		screen:  ScreenLink,
-		mode:    RunOff,
-		input:   ti,
-		theme:   th,
-		caps:    caps,
-		glyphs:  gl,
-		styles:  styles,
-		keys:    defaultKeys(gl),
-		help:    hp,
-		spin:    sp,
-		backend: backend,
-		decide:  policy.Decide,
-		notes:   notes,
+		screen:    ScreenLink,
+		mode:      RunOff,
+		input:     ti,
+		procInput: pi,
+		theme:     th,
+		caps:      caps,
+		glyphs:    gl,
+		styles:    styles,
+		keys:      defaultKeys(gl),
+		help:      hp,
+		spin:      sp,
+		backend:   backend,
+		decide:    policy.Decide,
+		notes:     notes,
 	}
 }
 

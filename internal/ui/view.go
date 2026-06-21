@@ -21,6 +21,9 @@ func (m Model) View() string {
 	if layoutFor(m.width, m.height) == layoutTooSmall {
 		return m.tooSmallView()
 	}
+	if m.showProc {
+		return m.procView()
+	}
 	if m.showConns {
 		return m.connsView()
 	}
@@ -330,6 +333,37 @@ func (m Model) connsView() string {
 		}
 	}
 	body := strings.Join(rows, "\n")
+	return m.frame(header, body, footer)
+}
+
+// --- per-process routing prompt ---
+
+func (m Model) procView() string {
+	s := m.styles
+	lay := layoutFor(m.width, m.height)
+	header := m.topBar("singctl "+s.gl.Dash+" проксировать процесс", "")
+
+	var box string
+	if lay == layoutNarrow {
+		box = s.clampLine(m.procInput.View(), max(m.width, 1))
+	} else {
+		bw := min(m.width-2, 64)
+		box = s.Panel.Width(max(bw-2, 1)).Render(m.procInput.View())
+	}
+	subW := max(m.width-2, 1)
+	hint := "Введите PID запущенного процесса (Linux) или команду для запуска " +
+		"через прокси. На macOS поддерживается только запуск команды."
+	rows := []string{box, "", s.Muted.Render(wrap(hint, subW))}
+	if m.errText != "" {
+		rows = append(rows, "", s.Err.Render(wrap(s.gl.Warn+" "+m.errText, subW)))
+	}
+	body := lipgloss.JoinVertical(lipgloss.Left, rows...)
+
+	footer := s.clampLine(s.footerHints([][2]string{
+		{"Enter", "проксировать"},
+		{"esc", "отмена"},
+		{"ctrl+c", "выход"},
+	}), max(m.width, 1))
 	return m.frame(header, body, footer)
 }
 

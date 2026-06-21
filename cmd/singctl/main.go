@@ -241,6 +241,24 @@ func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan tea.M
 	fmt.Printf("singctl %s: %s mode up — socks 127.0.0.1:%d, http 127.0.0.1:%d (ctrl+c to stop)\n",
 		version, mode, socks, socks+1)
 
+	// Route requested PIDs and/or launch a proxied command (best-effort; errors
+	// are reported but do not abort the running proxy).
+	pids, _ := opts.routePIDs()
+	for _, pid := range pids {
+		if err := executor.RoutePID(ctx, pid); err != nil {
+			fmt.Fprintf(os.Stderr, "route-pid %d: %v\n", pid, err)
+		} else {
+			fmt.Printf("singctl: routing PID %d through the proxy\n", pid)
+		}
+	}
+	if opts.launch {
+		if pid, err := executor.LaunchProxied(ctx, opts.launchArgv); err != nil {
+			fmt.Fprintf(os.Stderr, "launch: %v\n", err)
+		} else {
+			fmt.Printf("singctl: launched PID %d through the proxy\n", pid)
+		}
+	}
+
 	// Drain executor/monitor notes; surface mode changes and notices.
 	for {
 		select {

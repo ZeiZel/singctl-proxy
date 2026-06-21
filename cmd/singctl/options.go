@@ -52,6 +52,10 @@ type options struct {
 	urltestURL       string // --urltest-url: failover probe URL
 	urltestInterval  string // --urltest-interval: failover probe interval
 	urltestTolerance int    // --urltest-tolerance: failover switch hysteresis (ms)
+
+	routePIDRaw stringList // --route-pid: PID(s) to route through the proxy (repeatable)
+	launch      bool       // --launch: run the trailing command through the proxy
+	launchArgv  []string   // command + args after --launch (the trailing args)
 }
 
 // parseOptions parses args (without the program name). flag.ErrHelp is
@@ -83,13 +87,18 @@ func parseOptions(args []string, out io.Writer) (*options, error) {
 	fs.StringVar(&o.urltestURL, "urltest-url", "", "failover probe URL (default: gstatic generate_204)")
 	fs.StringVar(&o.urltestInterval, "urltest-interval", "", "failover probe interval (default: 3m)")
 	fs.IntVar(&o.urltestTolerance, "urltest-tolerance", 0, "failover switch hysteresis in ms (default: 50)")
+	fs.Var(&o.routePIDRaw, "route-pid", "PID to route through the proxy (Linux; repeatable)")
+	fs.BoolVar(&o.launch, "launch", false, "run the trailing command through the proxy (use: --launch -- cmd args)")
 
 	fs.Usage = func() { fmt.Fprint(out, usageText) }
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
-	if narg := fs.NArg(); narg > 0 {
-		return nil, fmt.Errorf("unexpected argument %q (see --help)", fs.Arg(0))
+	// Trailing args after the flags (e.g. after `--launch --`) form the command
+	// to launch. They are only allowed together with --launch.
+	o.launchArgv = fs.Args()
+	if !o.launch && len(o.launchArgv) > 0 {
+		return nil, fmt.Errorf("unexpected argument %q (see --help)", o.launchArgv[0])
 	}
 	return o, o.validate()
 }
@@ -138,9 +147,28 @@ func (o *options) effectiveClashAPI() string {
 	return o.clashAPI
 }
 
+// routePIDs parses the --route-pid values into integers.
+func (o *options) routePIDs() ([]int, error) {
+	pids := make([]int, 0, len(o.routePIDRaw))
+	for _, raw := range o.routePIDRaw {
+		p, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil || p <= 0 {
+			return nil, fmt.Errorf("--route-pid: invalid pid %q", raw)
+		}
+		pids = append(pids, p)
+	}
+	return pids, nil
+}
+
 func (o *options) validate() error {
 	if o.vpn && o.proxy {
 		return fmt.Errorf("--vpn and --proxy are mutually exclusive")
+	}
+	if o.launch && len(o.launchArgv) == 0 {
+		return fmt.Errorf("--launch needs a command, e.g. --launch -- curl https://...")
+	}
+	if _, err := o.routePIDs(); err != nil {
+		return err
 	}
 	// port+1 is the http listener, so 65534 is the highest usable socks port.
 	if o.port != 0 && (o.port < 1 || o.port > 65534) {
@@ -174,6 +202,10 @@ Flags:
       --urltest-url <url>  failover probe URL (default: gstatic generate_204)
       --urltest-interval <d>  failover probe interval (default: 3m)
       --urltest-tolerance <ms> failover switch hysteresis (default: 50)
+      --route-pid <pid>    route a running process through the proxy (Linux;
+                           repeatable)
+      --launch -- <cmd>    run a command through the proxy (Linux: real
+                           interception; others: proxy env injected)
       --env-file <path>    load environment variables from this file
                            (default: ./.env if present)
       --no-save            do not persist the key to ~/.config/singctl

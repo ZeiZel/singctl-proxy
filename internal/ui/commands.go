@@ -3,11 +3,33 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// routePIDCmd routes an already-running PID through the proxy.
+func routePIDCmd(b Backend, pid int) tea.Cmd {
+	return func() tea.Msg {
+		if err := b.RoutePID(context.Background(), pid); err != nil {
+			return procResultMsg{err: err}
+		}
+		return procResultMsg{note: fmt.Sprintf("PID %d проксируется", pid)}
+	}
+}
+
+// launchProcCmd starts a command with its traffic routed through the proxy.
+func launchProcCmd(b Backend, argv []string) tea.Cmd {
+	return func() tea.Msg {
+		pid, err := b.LaunchProxied(context.Background(), argv)
+		if err != nil {
+			return procResultMsg{err: err}
+		}
+		return procResultMsg{note: fmt.Sprintf("запущен PID %d через прокси", pid)}
+	}
+}
 
 func loadLinkCmd(b Backend, link string) tea.Cmd {
 	return func() tea.Msg {

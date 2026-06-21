@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -103,6 +104,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(readLogsCmd(m.logPath), logsTick())
 		}
 		return m, nil
+
+	case procResultMsg:
+		if msg.err != nil {
+			m.errText = msg.err.Error()
+			m.status = ""
+		} else {
+			m.errText = ""
+			m.status = msg.note
+		}
+		return m, nil
 	}
 
 	if m.screen == ScreenLink {
@@ -157,6 +168,35 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
+	}
+
+	// Process-routing prompt: esc cancels; enter submits a PID (digits) or a
+	// command line to launch through the proxy.
+	if m.showProc {
+		switch msg.String() {
+		case "esc":
+			m.showProc = false
+			m.procInput.Blur()
+			return m, nil
+		case "enter":
+			raw := strings.TrimSpace(m.procInput.Value())
+			m.procInput.SetValue("")
+			m.procInput.Blur()
+			m.showProc = false
+			if raw == "" {
+				return m, nil
+			}
+			if pid, err := strconv.Atoi(raw); err == nil {
+				m.status = "проксирую процесс…"
+				return m, routePIDCmd(m.backend, pid)
+			}
+			m.status = "запускаю процесс…"
+			return m, launchProcCmd(m.backend, strings.Fields(raw))
+		default:
+			var cmd tea.Cmd
+			m.procInput, cmd = m.procInput.Update(msg)
+			return m, cmd
+		}
 	}
 
 	// Connections overlay: c/esc/q return to the dashboard.
@@ -243,6 +283,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Conns):
 			m.showConns = true
 			return m, nil
+		case key.Matches(msg, m.keys.Proc):
+			m.procInput.Focus()
+			m.showProc = true
+			m.errText = ""
+			return m, textinput.Blink
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
 			return m, nil

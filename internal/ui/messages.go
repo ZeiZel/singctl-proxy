@@ -73,3 +73,7 @@ type stoppedMsg struct{}
 type errMsg struct{ err error }
 type logsMsg struct{ content string }
 type logsTickMsg struct{}
+type procResultMsg struct {
+	note string
+	err  error
+}
