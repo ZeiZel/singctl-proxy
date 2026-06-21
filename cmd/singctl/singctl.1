@@ -43,6 +43,37 @@ Enable proxy mode on start.
 .BI \-\-port " n"
 Local SOCKS port (HTTP proxy listens on port+1; defaults: 1080/2080).
 .TP
+.BI \-\-clash\-api " host:port"
+Address of sing-box's Clash API, used for enriched connection logging (source
+process, full destination, outbound chain) and per-server latency. Bound to
+loopback with a random secret. Default: 127.0.0.1:9090.
+.TP
+.B \-\-no\-clash\-api
+Disable the Clash API (no connection logging or latency metrics).
+.TP
+.BI \-\-clash\-secret " s"
+Clash API secret. Default: a random token generated per run.
+.TP
+.BI \-\-urltest\-url " url"
+Probe URL used to latency-test servers for failover. Default: gstatic
+generate_204.
+.TP
+.BI \-\-urltest\-interval " d"
+How often servers are re-probed (e.g. 3m). Default: 3m.
+.TP
+.BI \-\-urltest\-tolerance " ms"
+Latency hysteresis before switching the active server. Default: 50.
+.TP
+.BI \-\-route\-pid " pid"
+Route an already-running process's traffic through the proxy. Linux only
+(cgroup v2 + nftables); repeatable. Requires VPN mode (the TUN must be up).
+.TP
+.B \-\-launch " \-\- cmd args..."
+Run a command with its traffic routed through the proxy. On Linux this uses real
+interception; on other platforms it injects proxy environment variables
+(HTTP_PROXY/HTTPS_PROXY/ALL_PROXY) into the child, which only covers env-aware
+applications.
+.TP
 .BI \-\-env\-file " path"
 Load environment variables from this file (default: ./.env if present).
 .TP
@@ -64,12 +95,25 @@ VLESS key, used when
 .B \-\-key
 is not given. May contain several newline-separated links.
 .TP
+.B SINGCTL_KEYS
+Several newline/semicolon-separated VLESS keys for failover.
+.TP
 .B SINGCTL_PORT
 SOCKS port, used when
 .B \-\-port
 is not given.
+.TP
+.B SINGCTL_CLASH_API
+Clash API address, used when
+.B \-\-clash\-api
+is left at its default.
+.TP
+.B SINGCTL_CLASH_SECRET
+Clash API secret, used when
+.B \-\-clash\-secret
+is unset.
 .PP
-Both variables can also be placed in a .env file in the working directory.
+These variables can also be placed in a .env file in the working directory.
 .SH FILES
 .TP
 .B ~/.config/singctl/profile.txt
