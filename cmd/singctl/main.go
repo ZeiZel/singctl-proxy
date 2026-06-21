@@ -35,6 +35,7 @@ import (
 	"singctl/internal/netstate"
 	"singctl/internal/platform"
 	"singctl/internal/profile"
+	"singctl/internal/remote"
 	"singctl/internal/runtime"
 	"singctl/internal/singbox"
 	"singctl/internal/types"
@@ -57,6 +58,95 @@ func realConfigDir() (dir string, uid, gid int) {
 		return "", 0, 0
 	}
 	return filepath.Join(ru.HomeDir, ".config", "singctl"), ru.Uid, ru.Gid
+}
+
+// startupAction is what a normal launch should do given a possibly-running peer.
+type startupAction int
+
+const (
+	actLocal          startupAction = iota // start our own cores (needs root)
+	actRemoteTUI                           // attach: TUI driving the running instance
+	actRemoteHeadless                      // attach: apply mode/settings via socket, exit
+)
+
+// decideStartup is pure (unit-tested). The just-spawned daemon child and an
+// explicit --daemon always run locally; with no live peer we start cores;
+// otherwise we attach (headless → one-shot, else TUI).
+func decideStartup(alive, headless, daemonFlag, isChild bool) startupAction {
+	if daemonFlag || isChild || !alive {
+		return actLocal
+	}
+	if headless {
+		return actRemoteHeadless
+	}
+	return actRemoteTUI
+}
+
+// runRemoteTUI attaches the TUI to a running instance over its control socket.
+func runRemoteTUI(inst control.Instance, c *cli) int {
+	notes := make(chan tea.Msg, 32)
+	socks := c.proxy.port
+	rb := remote.New(inst, socks, notes)
+	defer rb.Close()
+	if seed, err := rb.Settings(); err == nil {
+		if socks == 0 {
+			socks = seed.SocksPort
+		}
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	model := ui.New(rb, notes).WithLogPath(inst.LogPath).WithAttached(inst.PID).WithLoadedProfile()
+	if seed, err := rb.Settings(); err == nil {
+		model = model.WithSettings(seed)
+	}
+	if st, err := rb.Status(); err == nil {
+		model = model.WithDisplayMode(modeFromLabel(st.Mode))
+	}
+	model = model.WithCurrentLinks(rb.CurrentLinks())
+
+	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx))
+	go func() { <-ctx.Done(); program.Quit() }()
+	if _, err := program.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "ui error:", err)
+		return 1
+	}
+	return 0
+}
+
+// runRemoteHeadless applies the requested mode to a running instance and exits.
+func runRemoteHeadless(inst control.Instance, c *cli) int {
+	rb := remote.New(inst, c.proxy.port, nil)
+	defer rb.Close()
+	ctx := context.Background()
+	switch {
+	case c.proxy.vpn:
+		if err := rb.EnableVPN(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
+	case c.proxy.proxy:
+		if err := rb.EnableProxy(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
+	}
+	if st, err := rb.Status(); err == nil {
+		fmt.Printf("singctl: инстанс PID %d, режим %s\n", st.PID, st.Mode)
+	}
+	return 0
+}
+
+func modeFromLabel(s string) ui.RunMode {
+	switch s {
+	case "vpn":
+		return ui.RunVPN
+	case "proxy", "suspended":
+		return ui.RunProxy
+	default:
+		return ui.RunOff
+	}
 }
 
 // runControlCommand handles --attach/--stop/--status against a running instance.
@@ -244,6 +334,23 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+
+	// If a live instance is already running, attach to it instead of starting our
+	// own cores (which would crash on "address already in use"). This needs no root.
+	var inst control.Instance
+	alive := false
+	if dir, _, _ := realConfigDir(); dir != "" {
+		if i, err := control.ReadInstance(dir); err == nil && control.IsAlive(i.PID) {
+			inst, alive = i, true
+		}
+	}
+	switch decideStartup(alive, c.proxy.headless, c.proxy.daemon, daemon.IsChild()) {
+	case actRemoteTUI:
+		os.Exit(runRemoteTUI(inst, c))
+	case actRemoteHeadless:
+		os.Exit(runRemoteHeadless(inst, c))
+	}
+	// actLocal: start our own cores (needs root).
 
 	if err := requireRoot(goruntime.GOOS, os.Geteuid()); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -447,6 +554,9 @@ func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan tea.M
 		mode, enable = "VPN", executor.EnableVPN
 	}
 	if err := enable(ctx); err != nil {
+		if strings.Contains(err.Error(), "address already in use") {
+			return fmt.Errorf("enable %s: %w — другой инстанс уже запущен; используйте --attach/--status/--stop", strings.ToLower(mode), err)
+		}
 		return fmt.Errorf("enable %s: %w", strings.ToLower(mode), err)
 	}
 	socks := c.proxy.port
