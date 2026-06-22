@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 )
@@ -56,6 +57,12 @@ type Config struct {
 	// Ignored when the current process is not root (the child already runs as the
 	// invoking user) or when Uid is 0.
 	LaunchUser *LaunchUser
+
+	// Output, when non-nil, captures launched children's stdout/stderr line by
+	// line (instead of inheriting singctl's stdio) so a TUI can stream each
+	// proxied app's own logs. When nil the child inherits the current process's
+	// stdio (headless --launch is unchanged).
+	Output OutputSink
 }
 
 // LaunchUser is the real (non-root) user a launched child should run as.
@@ -161,13 +168,68 @@ func proxyEnv(socksAddr, httpAddr string) []string {
 	}
 }
 
+// chromiumApps are the executable base names (lower-cased, .app/.exe stripped) of
+// Chromium/Electron-based apps that honour --proxy-server. These ignore the
+// HTTP[S]_PROXY/ALL_PROXY env vars, so env injection alone never routes them;
+// passing --proxy-server is the only way to proxy them from the launch path.
+var chromiumApps = map[string]bool{
+	"cursor":        true,
+	"code":          true,
+	"vscode":        true,
+	"chrome":        true,
+	"google chrome": true,
+	"chromium":      true,
+	"brave":         true,
+	"zen":           true,
+	"electron":      true,
+	"slack":         true,
+	"discord":       true,
+}
+
+// chromiumProxyArgs returns argv with a --proxy-server flag appended when argv[0]
+// names a known Chromium/Electron app and no --proxy-server is already present.
+// Otherwise argv is returned unchanged. Pure (no I/O), so it is unit-tested.
+// socksAddr is a "host:port" SOCKS address (Config.SocksAddr).
+func chromiumProxyArgs(argv []string, socksAddr string) []string {
+	if len(argv) == 0 || socksAddr == "" {
+		return argv
+	}
+	if !chromiumApps[appLabel(argv[0])] {
+		return argv
+	}
+	for _, a := range argv[1:] {
+		if a == "--proxy-server" || strings.HasPrefix(a, "--proxy-server=") {
+			return argv // honour an explicit user-supplied proxy
+		}
+	}
+	out := make([]string, len(argv), len(argv)+1)
+	copy(out, argv)
+	return append(out, "--proxy-server=socks5://"+socksAddr)
+}
+
+// appLabel derives a short display label from a command token (an executable
+// path or argv[0]): filepath.Base, then strip a trailing .app or .exe suffix,
+// lower-cased. Pure, so it is unit-tested and shared by the Chromium preset and
+// the output sink. Returns "" for an empty input.
+func appLabel(arg string) string {
+	if arg == "" {
+		return ""
+	}
+	base := strings.ToLower(filepath.Base(arg))
+	base = strings.TrimSuffix(base, ".app")
+	base = strings.TrimSuffix(base, ".exe")
+	return base
+}
+
 // launchWithEnv starts argv with extraEnv appended to the current environment
-// and returns the child PID. Process spawning itself lives in the exec adapter.
-func launchWithEnv(ctx context.Context, argv, extraEnv []string, user *LaunchUser) (int, error) {
+// and returns the child PID. When sink is non-nil the child's stdout/stderr are
+// captured line by line (tagged with app); when nil the child inherits the
+// current process's stdio. Process spawning itself lives in the exec adapter.
+func launchWithEnv(ctx context.Context, argv, extraEnv []string, user *LaunchUser, sink OutputSink) (int, error) {
 	if len(argv) == 0 {
 		return 0, errors.New("empty command")
 	}
-	return startProcess(ctx, argv, extraEnv, user)
+	return startProcess(ctx, argv, extraEnv, user, sink)
 }
 
 // restartPID reads a process's argv, terminates it, and relaunches it through
@@ -225,7 +287,8 @@ func (r *envRouter) Cleanup() error                       { return nil }
 func (r *envRouter) ListRouted() []int                    { return r.mu.list() }
 
 func (r *envRouter) Launch(ctx context.Context, argv []string) (int, error) {
-	pid, err := launchWithEnv(ctx, argv, proxyEnv(r.cfg.SocksAddr, r.cfg.HTTPAddr), r.cfg.LaunchUser)
+	argv = chromiumProxyArgs(argv, r.cfg.SocksAddr)
+	pid, err := launchWithEnv(ctx, argv, proxyEnv(r.cfg.SocksAddr, r.cfg.HTTPAddr), r.cfg.LaunchUser, r.cfg.Output)
 	if err != nil {
 		return 0, err
 	}

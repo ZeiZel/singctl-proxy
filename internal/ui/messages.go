@@ -37,6 +37,25 @@ type StatusMsg struct {
 	Note string
 }
 
+// ConsoleMsg carries one line of stdout/stderr captured from a proxied app and
+// pushed into the UI's notes channel by the executor/remote backend. The UI
+// appends it to its console ring (see internal/ui/console.go); nothing is read
+// back through the Backend so the reducer stays pure.
+type ConsoleMsg struct {
+	PID    int
+	App    string
+	Stream string // "stdout" / "stderr" / "exit"
+	Text   string
+}
+
+// ActionMsg records a user-facing event the UI did not itself initiate (e.g. a
+// Cisco auto-suspend) for the action log. Level is one of ActInfo/ActOk/
+// ActWarn/ActErr (see internal/ui/actionlog.go).
+type ActionMsg struct {
+	Level int
+	Text  string
+}
+
 // ConnRow is one live connection for the connections view (already formatted by
 // the executor from the Clash API, so the UI stays decoupled from clashapi).
 type ConnRow struct {

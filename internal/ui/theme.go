@@ -141,6 +141,9 @@ type Styles struct {
 	SegNormal   lipgloss.Style // an inactive segment
 	SegDisabled lipgloss.Style // a blocked segment (VPN while Cisco active)
 
+	Button       lipgloss.Style // an idle clickable action-bar pill (Seg look)
+	ButtonActive lipgloss.Style // the active/selected action-bar pill
+
 	Help lipgloss.Style
 }
 
@@ -150,6 +153,7 @@ func NewStyles(c Caps, th Theme, gl Glyphs) Styles {
 	ns := c.R.NewStyle
 	panel := ns().Border(gl.Border).BorderForeground(th.Border).Padding(0, 1)
 	seg := ns().Padding(0, 2)
+	btn := ns().Padding(0, 1)
 	return Styles{
 		r:  c.R,
 		th: th,
@@ -170,6 +174,9 @@ func NewStyles(c Caps, th Theme, gl Glyphs) Styles {
 		SegSelected: seg.Background(th.Accent).Foreground(th.OnAccent).Bold(true),
 		SegNormal:   seg.Foreground(th.Muted),
 		SegDisabled: seg.Faint(true).Foreground(th.Subtle),
+
+		Button:       btn.Border(gl.Border, false, true).BorderForeground(th.Border).Foreground(th.Text),
+		ButtonActive: btn.Border(gl.Border, false, true).BorderForeground(th.BorderActive).Background(th.Accent).Foreground(th.OnAccent).Bold(true),
 
 		Help: ns().Foreground(th.Subtle),
 	}

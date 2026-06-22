@@ -76,10 +76,10 @@ func TestResolveExecutable(t *testing.T) {
 func TestLaunchWithEnv_SetsEnv(t *testing.T) {
 	// Launch `env` and capture: hard to read child stdout here, so just assert it
 	// starts and the empty-argv guard works.
-	if _, err := launchWithEnv(context.Background(), nil, nil, nil); err == nil {
+	if _, err := launchWithEnv(context.Background(), nil, nil, nil, nil); err == nil {
 		t.Error("empty argv must error")
 	}
-	pid, err := launchWithEnv(context.Background(), []string{"true"}, proxyEnv("127.0.0.1:1080", "127.0.0.1:2080"), nil)
+	pid, err := launchWithEnv(context.Background(), []string{"true"}, proxyEnv("127.0.0.1:1080", "127.0.0.1:2080"), nil, nil)
 	if err != nil || pid <= 0 {
 		t.Fatalf("launchWithEnv true: pid=%d err=%v", pid, err)
 	}

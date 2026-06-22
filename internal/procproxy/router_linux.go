@@ -60,8 +60,11 @@ func (r *linuxRouter) Launch(ctx context.Context, argv []string) (int, error) {
 		return 0, err
 	}
 	// Launch without env (real interception handles routing), then move the
-	// child into the routed cgroup.
-	pid, err := launchWithEnv(ctx, argv, nil, r.cfg.LaunchUser)
+	// child into the routed cgroup. Output is still captured (sink) and the
+	// Chromium preset still applies, since Chromium/Electron apps ignore the env
+	// vars and the cgroup move is orthogonal.
+	argv = chromiumProxyArgs(argv, r.cfg.SocksAddr)
+	pid, err := launchWithEnv(ctx, argv, nil, r.cfg.LaunchUser, r.cfg.Output)
 	if err != nil {
 		return 0, err
 	}

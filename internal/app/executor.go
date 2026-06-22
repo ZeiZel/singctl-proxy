@@ -403,6 +403,9 @@ func (e *Executor) Apply(ctx context.Context, ev monitor.Event) {
 	}
 	if note := noteFor(stop, refresh); note != "" {
 		e.push(ctx, ui.StatusMsg{Mode: e.runMode(), Note: note})
+		// The UI never initiates these (Cisco auto-suspend / reconnect), so also
+		// surface them in the action log: a suspend is a warning, a resume is info.
+		e.pushNonBlocking(ui.ActionMsg{Level: actionLevelFor(stop, refresh), Text: note})
 	}
 	e.PushDisplay(ctx, ev.NetState)
 }
@@ -480,6 +483,9 @@ func (e *Executor) procRouter() procproxy.Router {
 			SocksAddr:  fmt.Sprintf("127.0.0.1:%d", socks),
 			HTTPAddr:   fmt.Sprintf("127.0.0.1:%d", http),
 			LaunchUser: e.launchUser,
+			Output: procproxy.SinkFunc(func(l procproxy.OutputLine) {
+				e.pushNonBlocking(ui.ConsoleMsg{PID: l.PID, App: l.App, Stream: l.Stream, Text: l.Text})
+			}),
 		})
 		e.routerBuilt = true
 	}
@@ -654,6 +660,18 @@ func (e *Executor) push(ctx context.Context, msg tea.Msg) {
 	case e.notes <- msg:
 	case <-ctx.Done():
 	}
+}
+
+// actionLevelFor maps a Cisco-coexistence transition to an action-log level:
+// suspending (yielding to Cisco) is a warning, resuming/reconnecting is info.
+func actionLevelFor(stop, refresh bool) int {
+	if stop {
+		return ui.ActWarn
+	}
+	if refresh {
+		return ui.ActInfo
+	}
+	return ui.ActInfo
 }
 
 func noteFor(stop, refresh bool) string {

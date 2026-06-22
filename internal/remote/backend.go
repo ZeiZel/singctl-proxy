@@ -148,6 +148,9 @@ func (b *Backend) procRouter() procproxy.Router {
 			SocksAddr:  fmt.Sprintf("127.0.0.1:%d", b.socksPort),
 			HTTPAddr:   fmt.Sprintf("127.0.0.1:%d", b.socksPort+1),
 			LaunchUser: b.launchUser,
+			Output: procproxy.SinkFunc(func(l procproxy.OutputLine) {
+				b.push(ui.ConsoleMsg{PID: l.PID, App: l.App, Stream: l.Stream, Text: l.Text})
+			}),
 		})
 	})
 	return b.router

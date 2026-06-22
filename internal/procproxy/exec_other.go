@@ -1,14 +1,17 @@
 package procproxy
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // This file is the package's only OS-exec adapter (the _other.go suffix marks it
@@ -26,14 +29,31 @@ import (
 // apps like Zen — which refuse to run as root in a user's session — start
 // correctly. When not root the child already runs as the invoking user and the
 // drop is skipped.
-func startProcess(ctx context.Context, argv, extraEnv []string, user *LaunchUser) (int, error) {
+func startProcess(ctx context.Context, argv, extraEnv []string, user *LaunchUser, sink OutputSink) (int, error) {
 	bin, err := resolveExecutable(argv[0])
 	if err != nil {
 		return 0, fmt.Errorf("launch %s: %w", argv[0], err)
 	}
 	cmd := exec.CommandContext(ctx, bin, argv[1:]...)
 	env := append(os.Environ(), extraEnv...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+
+	// Wire stdio BEFORE Start() so that, when we later drop to the real user via
+	// SysProcAttr.Credential, the child still inherits the pipe write-end fds.
+	// With a sink we capture stdout/stderr line by line and detach stdin (the TUI
+	// owns the terminal); without one we inherit the current process's stdio so
+	// headless --launch is unchanged.
+	var outPipe, errPipe io.ReadCloser
+	if sink != nil {
+		cmd.Stdin = nil
+		if outPipe, err = cmd.StdoutPipe(); err != nil {
+			return 0, fmt.Errorf("launch %s: %w", argv[0], err)
+		}
+		if errPipe, err = cmd.StderrPipe(); err != nil {
+			return 0, fmt.Errorf("launch %s: %w", argv[0], err)
+		}
+	} else {
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	}
 
 	if user != nil && user.Uid > 0 && os.Geteuid() == 0 {
 		env = applyUserEnv(env, user)
@@ -48,8 +68,41 @@ func startProcess(ctx context.Context, argv, extraEnv []string, user *LaunchUser
 		return 0, fmt.Errorf("launch %s: %w", argv[0], err)
 	}
 	pid := cmd.Process.Pid
-	go func() { _ = cmd.Wait() }()
+	app := appLabel(bin)
+
+	if sink != nil {
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); scanStream(outPipe, sink, pid, app, "out") }()
+		go func() { defer wg.Done(); scanStream(errPipe, sink, pid, app, "err") }()
+		go func() {
+			wg.Wait() // drain both pipes before Wait closes them
+			err := cmd.Wait()
+			sink.Line(OutputLine{PID: pid, App: app, Stream: "err", Text: exitText(err)})
+		}()
+	} else {
+		go func() { _ = cmd.Wait() }()
+	}
 	return pid, nil
+}
+
+// scanStream reads r line by line and emits each line to sink tagged with pid/app
+// and stream ("out"/"err"). The scanner buffer is raised to scannerBufMax so long
+// lines (Chromium/Electron logs) are not dropped. Runs in its own goroutine.
+func scanStream(r io.Reader, sink OutputSink, pid int, app, stream string) {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), scannerBufMax)
+	for sc.Scan() {
+		sink.Line(OutputLine{PID: pid, App: app, Stream: stream, Text: sc.Text()})
+	}
+}
+
+// exitText formats the synthetic "process finished" line emitted after Wait.
+func exitText(err error) string {
+	if err == nil {
+		return "[процесс завершён]"
+	}
+	return fmt.Sprintf("[процесс завершён: %v]", err)
 }
 
 // resolveExecutable turns a command token into an executable path: an explicit

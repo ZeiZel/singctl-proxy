@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"runtime"
+	"strings"
+
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -82,6 +85,18 @@ type Model struct {
 	connVPReady bool
 	segCursor   int // keyboard cursor on the OFF|PROXY|VPN selector (0..2)
 	focus       int // dashboard focus ring: -1 = mode selector, 0..n-1 = разделы chip
+
+	// pane-grid dashboard (spy-control style). pane is the focused pane; expanded
+	// promotes it to a full-screen renderer. console/actions are UI-side rings fed
+	// by ConsoleMsg/ActionMsg pushed through the notes channel (reducer stays pure).
+	pane           int
+	expanded       bool
+	console        *consoleBuf
+	actions        *actionLog
+	consoleVP      viewport.Model // консоль приложений viewport (scroll)
+	consoleVPReady bool
+	consoleFilter  int  // per-app console filter PID (0 = «Все», show every app)
+	isDarwin       bool // drives macOS-specific hints in the (pure) view
 
 	backend Backend
 	decide  func(policy.DecideInput) policy.DecisionResult
@@ -169,7 +184,7 @@ func newWithCaps(backend Backend, notes <-chan tea.Msg, caps Caps) Model {
 		caps:        caps,
 		glyphs:      gl,
 		styles:      styles,
-		keys:        defaultKeys(gl),
+		keys:        defaultKeys(gl, runtime.GOOS == "darwin"),
 		help:        hp,
 		spin:        sp,
 		prog:        pr,
@@ -179,6 +194,28 @@ func newWithCaps(backend Backend, notes <-chan tea.Msg, caps Caps) Model {
 		notes:       notes,
 		setForm:     settingsForm{edit: se},
 		zm:          zone.New(),
+		console:     newConsoleBuf(),
+		actions:     newActionLog(),
+		isDarwin:    runtime.GOOS == "darwin",
+	}
+}
+
+// refreshConsoleViewport re-renders the console ring into the console viewport,
+// auto-following the tail when the user is already at the bottom. Mirrors
+// refreshLogViewport. The active per-app filter (m.consoleFilter; 0 = «Все»)
+// selects which app's output is shown.
+func (m *Model) refreshConsoleViewport() {
+	if !m.consoleVPReady {
+		return
+	}
+	atBottom := m.consoleVP.AtBottom()
+	content := m.console.render(m.styles, max(m.consoleVP.Width, 1), 0, m.consoleFilter)
+	if strings.TrimSpace(content) == "" {
+		content = m.styles.Subtle.Render("(вывод приложений появится после запуска)")
+	}
+	m.consoleVP.SetContent(content)
+	if atBottom {
+		m.consoleVP.GotoBottom()
 	}
 }
 

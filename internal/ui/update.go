@@ -54,6 +54,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, listen(m.notes)
 
+	case ConsoleMsg:
+		m.console.append(consoleEntry{PID: msg.PID, App: msg.App, Stream: msg.Stream, Text: msg.Text})
+		m.refreshConsoleViewport()
+		return m, listen(m.notes)
+
+	case ActionMsg:
+		m.actions.add(msg.Level, msg.Text)
+		return m, listen(m.notes)
+
 	case ConnectionsMsg:
 		m.conns = msg.Rows
 		m.refreshConnViewport()
@@ -93,6 +102,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errText = ""
 		m.segCursor = int(RunProxy)
 		m.status = "PROXY запущен"
+		m.actions.add(ActOk, "PROXY запущен")
 		return m, nil
 
 	case vpnEnabledMsg:
@@ -101,6 +111,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errText = ""
 		m.segCursor = int(RunVPN)
 		m.status = "VPN запущен"
+		m.actions.add(ActOk, "VPN запущен")
 		return m, nil
 
 	case stoppedMsg:
@@ -109,12 +120,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errText = ""
 		m.segCursor = int(RunOff)
 		m.status = "остановлено"
+		m.actions.add(ActOk, "остановлено")
 		return m, nil
 
 	case errMsg:
 		m.busy = false
 		m.status = "" // drop the stale "…" activity line; show only the error
 		m.errText = msg.err.Error()
+		m.actions.add(ActErr, msg.err.Error())
 		return m, nil
 
 	case logsMsg:
@@ -132,9 +145,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.errText = msg.err.Error()
 			m.status = ""
+			m.actions.add(ActErr, msg.err.Error())
 		} else {
 			m.errText = ""
 			m.status = msg.note
+			m.actions.add(ActOk, msg.note)
 			if msg.pid > 0 {
 				m.routedPIDs = appendUnique(m.routedPIDs, msg.pid)
 			}
@@ -269,6 +284,8 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.vp, cmd = m.vp.Update(msg)
 		case m.showConns:
 			m.connVP, cmd = m.connVP.Update(msg)
+		case m.expanded && m.pane == paneConsole && m.consoleVPReady:
+			m.consoleVP, cmd = m.consoleVP.Update(msg)
 		}
 		return m, cmd
 	}
@@ -299,6 +316,44 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case !m.showLogs && !m.showConns && m.screen == ScreenDashboard:
+		// Expanded console: per-app filter chips isolate one app's output.
+		if m.expanded && m.pane == paneConsole {
+			if m.zm.Get(zoneConPID(0)).InBounds(msg) {
+				m.consoleFilter = 0
+				m.refreshConsoleViewport()
+				return m, nil
+			}
+			for _, pid := range m.console.pids() {
+				if m.zm.Get(zoneConPID(pid)).InBounds(msg) {
+					m.consoleFilter = pid
+					m.refreshConsoleViewport()
+					return m, nil
+				}
+			}
+		}
+		// Action-button bar: hit-test buttons BEFORE panes so a button click
+		// (rendered inside paneStatus) never doubles as pane focus/expand.
+		for _, spec := range m.actionButtons() {
+			if m.zm.Get(spec.id).InBounds(msg) {
+				return spec.fire(m)
+			}
+		}
+		// Pane grid: click an already-focused pane to expand/collapse it,
+		// click another pane to focus it.
+		for i := 0; i < paneCount; i++ {
+			if m.zm.Get(zonePane(i)).InBounds(msg) {
+				if i == m.pane {
+					if m.expanded {
+						return m.collapsePane()
+					}
+					return m.expandPane()
+				}
+				m.pane = i
+				return m, nil
+			}
+		}
+		// Legacy разделы chips / mode segments (still marked by the old dashboard
+		// renderer and inside expanded views).
 		for i := 0; i < m.sectionCount(); i++ {
 			if m.zm.Get(zoneSection(i)).InBounds(msg) {
 				m.focus = i
@@ -331,6 +386,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.String() == "esc":
 			m.showProc = false
+			m.expanded = false
 			m.launchInput.Blur()
 			m.procInput.Blur()
 			return m, nil
@@ -394,6 +450,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, m.keys.Conns), msg.String() == "esc", msg.String() == "q":
 			m.showConns = false
+			m.expanded = false
 			return m, nil
 		case msg.String() == "g":
 			m.connVP.GotoTop()
@@ -414,6 +471,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, m.keys.Logs), msg.String() == "esc", msg.String() == "q":
 			m.showLogs = false
+			m.expanded = false
 			return m, nil
 		case msg.String() == "g":
 			m.vp.GotoTop()
@@ -479,27 +537,39 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Edit):
 			return m.openSection(secKeys)
 		case key.Matches(msg, m.keys.Logs):
+			m.pane = paneSingbox
 			return m.openSection(secLogs)
 		case key.Matches(msg, m.keys.Conns):
+			m.pane = paneConns
 			return m.openSection(secConns)
 		case key.Matches(msg, m.keys.Proc):
+			m.pane = paneApps
 			return m.openSection(secApps)
 		case key.Matches(msg, m.keys.Settings):
+			m.pane = paneSettings
 			return m.openSection(secSettings)
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
 			return m, nil
+		case key.Matches(msg, m.keys.Collapse):
+			if m.expanded {
+				return m.collapsePane()
+			}
+			return m, nil
 		case key.Matches(msg, m.keys.Next):
 			m.focus = stepFocus(m.focus, +1, m.sectionCount())
+			m.syncPaneToFocus()
 			return m, nil
 		case key.Matches(msg, m.keys.Prev):
 			m.focus = stepFocus(m.focus, -1, m.sectionCount())
+			m.syncPaneToFocus()
 			return m, nil
 		case key.Matches(msg, m.keys.Right):
 			if m.focus < 0 {
 				m.segCursor = (m.segCursor + 1) % 3
 			} else {
 				m.focus = stepFocus(m.focus, +1, m.sectionCount())
+				m.syncPaneToFocus()
 			}
 			return m, nil
 		case key.Matches(msg, m.keys.Left):
@@ -507,13 +577,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.segCursor = (m.segCursor + 2) % 3
 			} else {
 				m.focus = stepFocus(m.focus, -1, m.sectionCount())
+				m.syncPaneToFocus()
 			}
 			return m, nil
 		case key.Matches(msg, m.keys.Activate):
 			if m.focus < 0 {
 				return m.applyMode(RunMode(m.segCursor))
 			}
-			return m.openSection(m.focus)
+			m.pane = sectionPane(m.focus)
+			return m.expandSection(m.focus)
+		case key.Matches(msg, m.keys.Expand):
+			return m.expandPane()
 		}
 	}
 	return m, nil
@@ -539,6 +613,11 @@ func stepFocus(f, d, n int) int {
 	total := n + 1
 	idx := ((f+1+d)%total + total) % total
 	return idx - 1
+}
+
+// stepPane advances the focused pane index around the [0, paneCount) ring (wrap).
+func stepPane(p, d int) int {
+	return ((p+d)%paneCount + paneCount) % paneCount
 }
 
 // openSection opens the full-screen view for a разделы chip (also used by the
@@ -613,6 +692,7 @@ func (m Model) handleSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q":
 		m.showSettings = false
+		m.expanded = false
 		return m, nil
 	case "up", "k":
 		if f.focus > 0 {
@@ -664,12 +744,15 @@ func (m Model) applyMode(target RunMode) (tea.Model, tea.Cmd) {
 	case RunProxy:
 		m.busy = true
 		m.status = "запуск PROXY…"
+		m.actions.add(ActInfo, "переключение в PROXY…")
 		return m, enableProxyCmd(m.backend)
 	case RunVPN:
+		m.actions.add(ActInfo, "переключение в VPN…")
 		return m.requestVPN()
 	default: // RunOff
 		m.busy = true
 		m.status = "остановка…"
+		m.actions.add(ActInfo, "остановка…")
 		return m, stopCmd(m.backend)
 	}
 }

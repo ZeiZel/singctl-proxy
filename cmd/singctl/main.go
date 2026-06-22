@@ -20,6 +20,7 @@ import (
 	"os/user"
 	"path/filepath"
 	goruntime "runtime"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -156,9 +157,26 @@ func decideStartup(alive, headless, daemonFlag, isChild bool) startupAction {
 	return actRemoteTUI
 }
 
+// runProgram runs a Bubble Tea program with a panic guard so an unexpected panic
+// in the reducer/render loop never crashes singctl with a raw stack dump over a
+// corrupted terminal. Bubble Tea already restores the terminal on panic; this
+// turns the panic into a clean error + a diagnostic on stderr. recover() is
+// permitted here (the composition root) — never in Update/View.
+func runProgram(p *tea.Program) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintln(os.Stderr, "singctl: восстановление после паники:", r)
+			os.Stderr.Write(debug.Stack())
+			err = fmt.Errorf("внутренняя ошибка: %v", r)
+		}
+	}()
+	_, err = p.Run()
+	return err
+}
+
 // runRemoteTUI attaches the TUI to a running instance over its control socket.
 func runRemoteTUI(inst control.Instance, c *cli) int {
-	notes := make(chan tea.Msg, 32)
+	notes := make(chan tea.Msg, 256) // large buffer absorbs chatty Electron console output; pushNonBlocking drops on backpressure
 	rb := remote.New(inst, c.proxy.port, notes)
 	rb.SetLaunchUser(resolveLaunchUser()) // if the attach client runs under sudo, drop launches to the real user
 	defer rb.Close()
@@ -177,7 +195,7 @@ func runRemoteTUI(inst control.Instance, c *cli) int {
 
 	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 	go func() { <-ctx.Done(); program.Quit() }()
-	if _, err := program.Run(); err != nil {
+	if err := runProgram(program); err != nil {
 		fmt.Fprintln(os.Stderr, "ui error:", err)
 		return 1
 	}
@@ -444,7 +462,7 @@ func main() {
 	prober := runtime.NewNetProber(detector)
 	routes := runtime.NewOSRouteController()
 
-	notes := make(chan tea.Msg, 32)
+	notes := make(chan tea.Msg, 256) // large buffer absorbs chatty Electron console output; pushNonBlocking drops on backpressure
 	executor := app.NewExecutor(core.NewFactory(), prober, routes, notes)
 	executor.SetSocksPort(c.proxy.port)
 	executor.SetLaunchUser(resolveLaunchUser()) // drop proxied app launches to the real user (sudo)
@@ -610,7 +628,7 @@ func main() {
 		program.Quit()
 	}()
 
-	if _, err := program.Run(); err != nil {
+	if err := runProgram(program); err != nil {
 		fmt.Fprintln(os.Stderr, "ui error:", err)
 	}
 

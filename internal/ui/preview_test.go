@@ -36,9 +36,37 @@ func TestPreview(t *testing.T) {
 		fmt.Println(strings.Repeat("=", w))
 	}
 
+	// withConsole seeds the console ring + action log via the reducer (the same
+	// path the executor uses), so previews exercise the КОНСОЛЬ ПРИЛОЖЕНИЙ pane
+	// and the ДЕЙСТВИЯ footer with real content rather than empty placeholders.
+	withConsole := func(prep func(Model) Model) func(Model) Model {
+		return func(m Model) Model {
+			m = prep(m)
+			for _, msg := range []tea.Msg{
+				ActionMsg{Level: ActInfo, Text: "переключение в PROXY…"},
+				ActionMsg{Level: ActOk, Text: "PROXY запущен"},
+				ConsoleMsg{PID: 4242, App: "zen", Stream: "stdout", Text: "Gecko started, profile loaded"},
+				ConsoleMsg{PID: 4242, App: "zen", Stream: "stderr", Text: "[warn] using SOCKS proxy 127.0.0.1:1080"},
+				ConsoleMsg{PID: 7777, App: "cursor", Stream: "stdout", Text: "Cursor: connecting via --proxy-server"},
+				ActionMsg{Level: ActWarn, Text: "Cisco активен — VPN приостановлен"},
+				ConsoleMsg{PID: 4242, App: "zen", Stream: "exit", Text: "[exited: status 0]"},
+			} {
+				m, _ = step(m, msg)
+			}
+			return m
+		}
+	}
+
 	render("dashboard narrow", 40, 20, func(m Model) Model { m.phys = "en0"; return m })
-	render("dashboard medium", 70, 22, func(m Model) Model { m.phys = "en0"; m.mode = RunProxy; m.status = "PROXY запущен"; return m })
-	render("dashboard wide", 104, 26, func(m Model) Model { m.phys = "en0"; m.mode = RunVPN; m.status = "VPN запущен"; return m })
+	render("dashboard medium", 70, 22, withConsole(func(m Model) Model { m.phys = "en0"; m.mode = RunProxy; m.status = "PROXY запущен"; return m }))
+	render("dashboard wide", 104, 26, withConsole(func(m Model) Model { m.phys = "en0"; m.mode = RunVPN; m.status = "VPN запущен"; return m }))
+	render("console expanded", 104, 26, withConsole(func(m Model) Model {
+		m.phys = "en0"
+		m.mode = RunProxy
+		m.pane = paneConsole
+		tm, _ := m.expandPane()
+		return tm.(Model)
+	}))
 	render("dashboard cisco active", 70, 22, func(m Model) Model { m.phys = "en0"; m.cisco = true; m.segCursor = 2; return m })
 	render("dashboard compact height", 80, 14, func(m Model) Model { m.phys = "en0"; m.mode = RunProxy; return m })
 	render("link input", 70, 16, func(m Model) Model { m.screen = ScreenLink; m.input.Focus(); return m })

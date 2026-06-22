@@ -45,7 +45,7 @@ func (m Model) screenView() string {
 	case ScreenLink:
 		return m.linkView()
 	default:
-		return m.dashboardView()
+		return m.gridView()
 	}
 }
 
@@ -545,10 +545,16 @@ func (m Model) procView() string {
 		s.PanelTitle.Render("Запустить приложение в прокси"),
 		m.inputBox(m.launchInput, m.appFocus == 0),
 		s.Muted.Render(wrap("Введите имя или путь приложения и нажмите Enter — оно запустится с трафиком через прокси (напр. zen).", subW)),
+	}
+	if m.isDarwin {
+		rows = append(rows, s.Subtle.Render(wrap(
+			"Cursor: добавьте --proxy-server=socks5://127.0.0.1:1080 (для Chromium-приложений). Подробнее: docs/macos.md", subW)))
+	}
+	rows = append(rows,
 		s.rule(subW),
 		s.PanelTitle.Render("Проксировать запущенный процесс"),
 		m.inputBox(m.procInput, m.appFocus == 1),
-	}
+	)
 
 	// Process picker list (filtered).
 	fp := m.filteredProcs()
