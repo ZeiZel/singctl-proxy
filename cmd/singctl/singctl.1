@@ -162,5 +162,12 @@ sing-box log output (TUI mode).
 singctl must run as root: creating the TUN device and managing routes requires
 privileges. Re-run with
 .BR sudo .
+.PP
+Applications started or restarted through the proxy
+.RB ( \-\-launch ", " \-\-restart\-pid ,
+or the in-UI picker) are dropped back to the invoking user (resolved via
+.BR SUDO_USER )
+rather than inheriting root, so GUI apps that refuse to run as root in a user's
+session (e.g. Zen) start correctly.
 .SH SEE ALSO
 sing-box(1)

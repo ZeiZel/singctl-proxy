@@ -38,6 +38,7 @@ type Backend struct {
 
 	routerOnce sync.Once
 	router     procproxy.Router
+	launchUser *procproxy.LaunchUser
 	listerOnce sync.Once
 	lister     proclist.Lister
 
@@ -133,13 +134,20 @@ func (b *Backend) Daemonize(context.Context) error {
 
 func (b *Backend) StopDaemon(context.Context) error { return control.Stop(b.sock) }
 
+// SetLaunchUser records the real (non-root) user that locally launched/restarted
+// children should run as (relevant only if the attach client itself runs under
+// sudo). Must be called before the first routing action (the router is built
+// lazily, once).
+func (b *Backend) SetLaunchUser(u *procproxy.LaunchUser) { b.launchUser = u }
+
 // --- ui.Backend: per-process routing runs LOCALLY toward the daemon's port ---
 
 func (b *Backend) procRouter() procproxy.Router {
 	b.routerOnce.Do(func() {
 		b.router = procproxy.NewRouter(procproxy.Config{
-			SocksAddr: fmt.Sprintf("127.0.0.1:%d", b.socksPort),
-			HTTPAddr:  fmt.Sprintf("127.0.0.1:%d", b.socksPort+1),
+			SocksAddr:  fmt.Sprintf("127.0.0.1:%d", b.socksPort),
+			HTTPAddr:   fmt.Sprintf("127.0.0.1:%d", b.socksPort+1),
+			LaunchUser: b.launchUser,
 		})
 	})
 	return b.router

@@ -20,14 +20,30 @@ import (
 // returns the child PID, reaping it in the background so it never zombies. argv[0]
 // is resolved against $PATH and, on macOS, against installed .app bundles, so a
 // bare app name ("zen") works even though GUI apps aren't on $PATH.
-func startProcess(ctx context.Context, argv, extraEnv []string) (int, error) {
+//
+// singctl runs as root (sudo). When user is set and this process is root, the
+// child is dropped to that user's uid/gid and its HOME/USER env is fixed, so GUI
+// apps like Zen — which refuse to run as root in a user's session — start
+// correctly. When not root the child already runs as the invoking user and the
+// drop is skipped.
+func startProcess(ctx context.Context, argv, extraEnv []string, user *LaunchUser) (int, error) {
 	bin, err := resolveExecutable(argv[0])
 	if err != nil {
 		return 0, fmt.Errorf("launch %s: %w", argv[0], err)
 	}
 	cmd := exec.CommandContext(ctx, bin, argv[1:]...)
-	cmd.Env = append(os.Environ(), extraEnv...)
+	env := append(os.Environ(), extraEnv...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+
+	if user != nil && user.Uid > 0 && os.Geteuid() == 0 {
+		env = applyUserEnv(env, user)
+		if user.Home != "" {
+			cmd.Dir = user.Home // start in the user's home, not root's cwd
+		}
+		cmd.SysProcAttr = userSysProcAttr(user.Uid, user.Gid)
+	}
+	cmd.Env = env
+
 	if err := cmd.Start(); err != nil {
 		return 0, fmt.Errorf("launch %s: %w", argv[0], err)
 	}

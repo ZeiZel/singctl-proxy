@@ -61,6 +61,7 @@ type Executor struct {
 	urltest     singbox.URLTestParams
 	router      procproxy.Router
 	routerBuilt bool
+	launchUser  *procproxy.LaunchUser // real user to drop launched children to (sudo)
 
 	pollMu     sync.Mutex
 	pollCancel context.CancelFunc
@@ -123,6 +124,15 @@ func (e *Executor) SetSocksPort(port int) {
 		return
 	}
 	e.ports = singbox.Ports{Socks: port, HTTP: port + 1}
+}
+
+// SetLaunchUser records the real (non-root) user that processes launched/restarted
+// through the proxy should run as, so GUI apps don't inherit root under sudo.
+// Takes effect on the next router build.
+func (e *Executor) SetLaunchUser(u *procproxy.LaunchUser) {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	e.launchUser = u
 }
 
 func NewExecutor(f core.Factory, p runtime.InterfaceProber, r runtime.RouteController, notes chan tea.Msg) *Executor {
@@ -467,8 +477,9 @@ func (e *Executor) procRouter() procproxy.Router {
 			socks, http = e.ports.Socks, e.ports.HTTP
 		}
 		e.router = procproxy.NewRouter(procproxy.Config{
-			SocksAddr: fmt.Sprintf("127.0.0.1:%d", socks),
-			HTTPAddr:  fmt.Sprintf("127.0.0.1:%d", http),
+			SocksAddr:  fmt.Sprintf("127.0.0.1:%d", socks),
+			HTTPAddr:   fmt.Sprintf("127.0.0.1:%d", http),
+			LaunchUser: e.launchUser,
 		})
 		e.routerBuilt = true
 	}

@@ -61,7 +61,7 @@ func (r *linuxRouter) Launch(ctx context.Context, argv []string) (int, error) {
 	}
 	// Launch without env (real interception handles routing), then move the
 	// child into the routed cgroup.
-	pid, err := launchWithEnv(ctx, argv, nil)
+	pid, err := launchWithEnv(ctx, argv, nil, r.cfg.LaunchUser)
 	if err != nil {
 		return 0, err
 	}

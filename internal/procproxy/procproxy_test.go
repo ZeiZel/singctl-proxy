@@ -76,13 +76,64 @@ func TestResolveExecutable(t *testing.T) {
 func TestLaunchWithEnv_SetsEnv(t *testing.T) {
 	// Launch `env` and capture: hard to read child stdout here, so just assert it
 	// starts and the empty-argv guard works.
-	if _, err := launchWithEnv(context.Background(), nil, nil); err == nil {
+	if _, err := launchWithEnv(context.Background(), nil, nil, nil); err == nil {
 		t.Error("empty argv must error")
 	}
-	pid, err := launchWithEnv(context.Background(), []string{"true"}, proxyEnv("127.0.0.1:1080", "127.0.0.1:2080"))
+	pid, err := launchWithEnv(context.Background(), []string{"true"}, proxyEnv("127.0.0.1:1080", "127.0.0.1:2080"), nil)
 	if err != nil || pid <= 0 {
 		t.Fatalf("launchWithEnv true: pid=%d err=%v", pid, err)
 	}
+}
+
+func TestApplyUserEnv(t *testing.T) {
+	// nil user is a no-op.
+	in := []string{"PATH=/bin", "HOME=/root"}
+	if got := applyUserEnv(in, nil); !equalStr(got, in) {
+		t.Errorf("nil user changed env: %v", got)
+	}
+
+	u := &LaunchUser{Uid: 501, Gid: 20, Name: "alice", Home: "/Users/alice"}
+	env := []string{
+		"PATH=/bin",
+		"HOME=/var/root",
+		"USER=root",
+		"LOGNAME=root",
+		"SUDO_USER=alice",
+		"SUDO_UID=501",
+		"SUDO_COMMAND=/usr/local/bin/singctl",
+	}
+	got := applyUserEnv(env, u)
+	want := map[string]string{
+		"PATH":    "/bin",
+		"HOME":    "/Users/alice",
+		"USER":    "alice",
+		"LOGNAME": "alice",
+	}
+	gotMap := map[string]string{}
+	for _, kv := range got {
+		k, v, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(k, "SUDO_") {
+			t.Errorf("sudo var leaked into child env: %s", kv)
+		}
+		gotMap[k] = v
+	}
+	for k, v := range want {
+		if gotMap[k] != v {
+			t.Errorf("env[%s] = %q, want %q", k, gotMap[k], v)
+		}
+	}
+}
+
+func equalStr(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestFakeRouter(t *testing.T) {

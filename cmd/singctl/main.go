@@ -35,6 +35,7 @@ import (
 	"singctl/internal/monitor"
 	"singctl/internal/netstate"
 	"singctl/internal/platform"
+	"singctl/internal/procproxy"
 	"singctl/internal/profile"
 	"singctl/internal/remote"
 	"singctl/internal/runtime"
@@ -69,6 +70,22 @@ func realConfigDir() (dir string, uid, gid int) {
 		}
 	}
 	return filepath.Join(home, ".config", "singctl"), -1, -1
+}
+
+// resolveLaunchUser returns the real (non-root) user that apps launched/restarted
+// through the proxy should run as. singctl runs as root (sudo); GUI apps like Zen
+// refuse to run as root in a user's session, so we drop launched children back to
+// this user. Returns nil when we aren't root or no real user resolves (then the
+// child already runs as the invoking user).
+func resolveLaunchUser() *procproxy.LaunchUser {
+	if os.Geteuid() != 0 {
+		return nil
+	}
+	ru, err := platform.ResolveUser(os.Getenv, user.Lookup)
+	if err != nil || ru.Uid <= 0 {
+		return nil
+	}
+	return &procproxy.LaunchUser{Uid: ru.Uid, Gid: ru.Gid, Name: ru.Username, Home: ru.HomeDir}
 }
 
 // waitForInstance polls for a live advertised instance whose PID differs from
@@ -143,6 +160,7 @@ func decideStartup(alive, headless, daemonFlag, isChild bool) startupAction {
 func runRemoteTUI(inst control.Instance, c *cli) int {
 	notes := make(chan tea.Msg, 32)
 	rb := remote.New(inst, c.proxy.port, notes)
+	rb.SetLaunchUser(resolveLaunchUser()) // if the attach client runs under sudo, drop launches to the real user
 	defer rb.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -429,6 +447,7 @@ func main() {
 	notes := make(chan tea.Msg, 32)
 	executor := app.NewExecutor(core.NewFactory(), prober, routes, notes)
 	executor.SetSocksPort(c.proxy.port)
+	executor.SetLaunchUser(resolveLaunchUser()) // drop proxied app launches to the real user (sudo)
 	clashAddr := c.obs.effectiveClashAPI()
 	clashSecret := c.obs.clashSecret
 	if clashAddr != "" {

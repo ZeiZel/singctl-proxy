@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 )
 
@@ -47,6 +48,63 @@ type Config struct {
 	Table      int    // Linux: policy-routing table id
 	CgroupRoot string // Linux: cgroup v2 mount (default /sys/fs/cgroup)
 	CgroupName string // Linux: cgroup leaf name
+
+	// LaunchUser, when non-nil, is the unprivileged user that launched children
+	// should run as. singctl runs as root (sudo) to manage the TUN/routes, but
+	// GUI apps (e.g. Zen) refuse to run as root in a user's session, so when this
+	// process is root we drop the child to this user and fix its HOME/USER env.
+	// Ignored when the current process is not root (the child already runs as the
+	// invoking user) or when Uid is 0.
+	LaunchUser *LaunchUser
+}
+
+// LaunchUser is the real (non-root) user a launched child should run as.
+type LaunchUser struct {
+	Uid  int
+	Gid  int
+	Name string
+	Home string
+}
+
+// sudoEnvVars are the sudo bookkeeping variables stripped from a child's
+// environment when we drop privileges, so the app sees a clean user session.
+var sudoEnvVars = []string{"SUDO_USER", "SUDO_UID", "SUDO_GID", "SUDO_COMMAND"}
+
+// applyUserEnv rewrites env so a child launched as u sees a coherent user
+// session: HOME/USER/LOGNAME point at u and sudo's bookkeeping vars are removed.
+// Pure; existing assignments are overwritten in place (order preserved).
+func applyUserEnv(env []string, u *LaunchUser) []string {
+	if u == nil {
+		return env
+	}
+	overrides := map[string]string{
+		"HOME":    u.Home,
+		"USER":    u.Name,
+		"LOGNAME": u.Name,
+	}
+	out := make([]string, 0, len(env)+len(overrides))
+	seen := map[string]bool{}
+next:
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		for _, drop := range sudoEnvVars {
+			if key == drop {
+				continue next
+			}
+		}
+		if v, ok := overrides[key]; ok {
+			out = append(out, key+"="+v)
+			seen[key] = true
+			continue
+		}
+		out = append(out, kv)
+	}
+	for key, v := range overrides {
+		if !seen[key] && v != "" {
+			out = append(out, key+"="+v)
+		}
+	}
+	return out
 }
 
 // Default values mirror the proxy's historical ports and the forwarder TUN
@@ -105,11 +163,11 @@ func proxyEnv(socksAddr, httpAddr string) []string {
 
 // launchWithEnv starts argv with extraEnv appended to the current environment
 // and returns the child PID. Process spawning itself lives in the exec adapter.
-func launchWithEnv(ctx context.Context, argv, extraEnv []string) (int, error) {
+func launchWithEnv(ctx context.Context, argv, extraEnv []string, user *LaunchUser) (int, error) {
 	if len(argv) == 0 {
 		return 0, errors.New("empty command")
 	}
-	return startProcess(ctx, argv, extraEnv)
+	return startProcess(ctx, argv, extraEnv, user)
 }
 
 // restartPID reads a process's argv, terminates it, and relaunches it through
@@ -167,7 +225,7 @@ func (r *envRouter) Cleanup() error                       { return nil }
 func (r *envRouter) ListRouted() []int                    { return r.mu.list() }
 
 func (r *envRouter) Launch(ctx context.Context, argv []string) (int, error) {
-	pid, err := launchWithEnv(ctx, argv, proxyEnv(r.cfg.SocksAddr, r.cfg.HTTPAddr))
+	pid, err := launchWithEnv(ctx, argv, proxyEnv(r.cfg.SocksAddr, r.cfg.HTTPAddr), r.cfg.LaunchUser)
 	if err != nil {
 		return 0, err
 	}
