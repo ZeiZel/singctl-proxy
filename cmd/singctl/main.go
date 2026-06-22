@@ -25,6 +25,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/joho/godotenv"
 
 	"singctl/internal/app"
@@ -82,6 +83,29 @@ func waitForInstance(dir string, notPID int, timeout time.Duration) bool {
 		time.Sleep(150 * time.Millisecond)
 	}
 	return false
+}
+
+// confirm shows a huh yes/no prompt for a destructive action. It returns true
+// when skip is set (--yes), or when there's no interactive terminal (so scripts
+// aren't blocked — the caller is expected to have passed --yes for automation,
+// but a non-TTY shouldn't hang). Otherwise it asks and returns the choice.
+func confirm(title, desc string, skip bool) bool {
+	if skip {
+		return true
+	}
+	ok := false
+	err := huh.NewConfirm().
+		Title(title).
+		Description(desc).
+		Affirmative("Да").
+		Negative("Отмена").
+		Value(&ok).
+		Run()
+	if err != nil {
+		// No TTY / aborted → treat as "no" so we never act without consent.
+		return false
+	}
+	return ok
 }
 
 // chownTo chowns a path back to the invoking user, or does nothing when there is
@@ -196,6 +220,11 @@ func runControlCommand(c *cli) int {
 	}
 	switch {
 	case c.ctl.stop:
+		if !confirm(fmt.Sprintf("Остановить singctl (PID %d)?", inst.PID),
+			"Прокси перестанет работать.", c.root.yes) {
+			fmt.Println("отменено")
+			return 0
+		}
 		if err := control.Stop(inst.ControlSocket); err != nil {
 			fmt.Fprintln(os.Stderr, "error: stop:", err)
 			return 1
@@ -613,6 +642,11 @@ func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan tea.M
 	}
 	restartPIDs, _ := c.proc.restartPIDs()
 	for _, pid := range restartPIDs {
+		if !confirm(fmt.Sprintf("Перезапустить PID %d в proxy-режиме?", pid),
+			"Процесс будет завершён и запущен заново с прокси-окружением.", c.root.yes) {
+			fmt.Printf("restart-pid %d: отменено\n", pid)
+			continue
+		}
 		if newPID, err := executor.RestartProxied(ctx, pid); err != nil {
 			fmt.Fprintf(os.Stderr, "restart-pid %d: %v\n", pid, err)
 		} else {

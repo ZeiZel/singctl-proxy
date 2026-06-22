@@ -194,6 +194,7 @@ type rootModule struct {
 	version bool
 	man     bool
 	envFile string
+	yes     bool
 }
 
 func (m *rootModule) Descriptor() feature.Descriptor {
@@ -202,6 +203,7 @@ func (m *rootModule) Descriptor() feature.Descriptor {
 		Flags: []feature.FlagSpec{
 			{Names: []string{"v", "version"}, Usage: "показать версию и выйти"},
 			{Names: []string{"man"}, Usage: "напечатать man-страницу и выйти"},
+			{Names: []string{"y", "yes"}, Usage: "не спрашивать подтверждение для опасных действий (--stop/--restart-pid)"},
 			{Names: []string{"env-file"}, Placeholder: "<path>", Usage: "загрузить переменные окружения из файла (по умолчанию ./.env)"},
 		},
 	}
@@ -210,6 +212,8 @@ func (m *rootModule) Bind(fs *flag.FlagSet) {
 	fs.BoolVar(&m.version, "v", false, "")
 	fs.BoolVar(&m.version, "version", false, "print version and exit")
 	fs.BoolVar(&m.man, "man", false, "print the man page (roff) and exit")
+	fs.BoolVar(&m.yes, "y", false, "")
+	fs.BoolVar(&m.yes, "yes", false, "skip confirmation prompts for destructive actions")
 	fs.StringVar(&m.envFile, "env-file", "", "load environment from this file (default: ./.env if present)")
 }
 
