@@ -34,11 +34,16 @@ func TestConfig_Defaults(t *testing.T) {
 	}
 }
 
-func TestEnvRouter_LaunchAndUnsupported(t *testing.T) {
+func TestEnvRouter_LaunchAndRoute(t *testing.T) {
 	r := newEnvRouter(Config{})
-	// AddPID/RemovePID are unsupported on the fallback.
-	if err := r.AddPID(context.Background(), 1); err != ErrUnsupportedOnPlatform {
-		t.Errorf("AddPID err = %v, want ErrUnsupportedOnPlatform", err)
+	// RemovePID is a no-op off Linux (a restarted process can't be un-routed).
+	if err := r.RemovePID(context.Background(), 1); err != nil {
+		t.Errorf("RemovePID should be a no-op, got %v", err)
+	}
+	// AddPID restarts the process in proxy mode: with a bogus PID, argv recovery
+	// (ps) fails, so it errors rather than claiming success.
+	if err := r.AddPID(context.Background(), 1<<30); err == nil {
+		t.Error("AddPID on a nonexistent PID should fail (argv recovery)")
 	}
 	// Launch runs a real, harmless command and records the PID.
 	pid, err := r.Launch(context.Background(), []string{"true"})
@@ -50,6 +55,21 @@ func TestEnvRouter_LaunchAndUnsupported(t *testing.T) {
 	}
 	if len(r.ListRouted()) != 1 {
 		t.Errorf("ListRouted = %v, want one entry", r.ListRouted())
+	}
+}
+
+func TestResolveExecutable(t *testing.T) {
+	// An explicit path is returned as-is.
+	if got, err := resolveExecutable("/bin/sh"); err != nil || got != "/bin/sh" {
+		t.Errorf("resolveExecutable(/bin/sh) = %q, %v", got, err)
+	}
+	// A PATH command resolves to its absolute path.
+	if got, err := resolveExecutable("sh"); err != nil || got == "" {
+		t.Errorf("resolveExecutable(sh) = %q, %v", got, err)
+	}
+	// A bogus name errors clearly.
+	if _, err := resolveExecutable("definitely-not-a-real-binary-xyz"); err == nil {
+		t.Error("unknown command should error")
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -15,9 +17,15 @@ import (
 // exec-free and unit-testable.
 
 // startProcess starts argv with extraEnv appended to the current environment and
-// returns the child PID, reaping it in the background so it never zombies.
+// returns the child PID, reaping it in the background so it never zombies. argv[0]
+// is resolved against $PATH and, on macOS, against installed .app bundles, so a
+// bare app name ("zen") works even though GUI apps aren't on $PATH.
 func startProcess(ctx context.Context, argv, extraEnv []string) (int, error) {
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	bin, err := resolveExecutable(argv[0])
+	if err != nil {
+		return 0, fmt.Errorf("launch %s: %w", argv[0], err)
+	}
+	cmd := exec.CommandContext(ctx, bin, argv[1:]...)
 	cmd.Env = append(os.Environ(), extraEnv...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -26,6 +34,77 @@ func startProcess(ctx context.Context, argv, extraEnv []string) (int, error) {
 	pid := cmd.Process.Pid
 	go func() { _ = cmd.Wait() }()
 	return pid, nil
+}
+
+// resolveExecutable turns a command token into an executable path: an explicit
+// path is used as-is; otherwise $PATH is searched, then (on macOS) the installed
+// application bundles, so "zen" resolves to Zen.app's binary.
+func resolveExecutable(name string) (string, error) {
+	if strings.ContainsRune(name, os.PathSeparator) {
+		return name, nil
+	}
+	if p, err := exec.LookPath(name); err == nil {
+		return p, nil
+	}
+	if runtime.GOOS == "darwin" {
+		if p := findMacAppExe(name); p != "" {
+			return p, nil
+		}
+		return "", fmt.Errorf("%q не найдено в $PATH и среди приложений (укажите полный путь или выберите запущенный процесс)", name)
+	}
+	return "", fmt.Errorf("%q: executable file not found in $PATH", name)
+}
+
+// findMacAppExe locates the executable inside a macOS .app bundle matching name
+// (case-insensitive, with or without the .app suffix). Returns "" when not found.
+func findMacAppExe(name string) string {
+	dirs := []string{"/Applications", "/System/Applications"}
+	if home, err := os.UserHomeDir(); err == nil {
+		dirs = append(dirs, filepath.Join(home, "Applications"))
+	}
+	want := strings.ToLower(name)
+	if !strings.HasSuffix(want, ".app") {
+		want += ".app"
+	}
+	for _, d := range dirs {
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if strings.ToLower(e.Name()) == want {
+				return macBundleExe(filepath.Join(d, e.Name()))
+			}
+		}
+	}
+	return ""
+}
+
+// macBundleExe returns the executable inside <app>/Contents/MacOS — preferring
+// the entry matching the bundle name, else the first regular file.
+func macBundleExe(appPath string) string {
+	macos := filepath.Join(appPath, "Contents", "MacOS")
+	entries, err := os.ReadDir(macos)
+	if err != nil {
+		return ""
+	}
+	base := strings.TrimSuffix(filepath.Base(appPath), ".app")
+	var first string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if first == "" {
+			first = e.Name()
+		}
+		if strings.EqualFold(e.Name(), base) {
+			return filepath.Join(macos, e.Name())
+		}
+	}
+	if first != "" {
+		return filepath.Join(macos, first)
+	}
+	return ""
 }
 
 // runCommand runs a command to completion (drives nft/ip in the Linux router).

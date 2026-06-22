@@ -15,14 +15,12 @@ import (
 	"syscall"
 )
 
-// ErrUnsupportedOnPlatform is returned by AddPID/RemovePID where real per-PID
-// interception is not available (everything except Linux).
-var ErrUnsupportedOnPlatform = errors.New("per-PID routing is only supported on Linux; use --launch to start a process with proxy env instead")
-
 // Router routes selected processes through the proxy. Implementations are
-// platform-specific (see NewRouter).
+// platform-specific (see NewRouter). On Linux AddPID does real per-PID
+// interception; off Linux it restarts the process in proxy mode (env injection).
 type Router interface {
-	// AddPID routes an already-running process's traffic through the proxy.
+	// AddPID routes an already-running process's traffic through the proxy
+	// (Linux), or restarts it in proxy mode (other platforms).
 	AddPID(ctx context.Context, pid int) error
 	// RemovePID stops routing a process.
 	RemovePID(ctx context.Context, pid int) error
@@ -138,8 +136,10 @@ func terminate(pid int) error {
 	return p.Signal(syscall.SIGTERM)
 }
 
-// envRouter is the fallback used on non-Linux platforms: Launch injects proxy
-// env; per-PID routing is unsupported.
+// envRouter is the fallback used on non-Linux platforms (e.g. macOS): there is no
+// kernel per-PID interception, so routing a selected process means RESTARTING it
+// in proxy mode (recover its argv, terminate it, relaunch with proxy env), and
+// Launch starts a new child with proxy env.
 type envRouter struct {
 	cfg Config
 	mu  muList
@@ -147,8 +147,15 @@ type envRouter struct {
 
 func newEnvRouter(cfg Config) *envRouter { return &envRouter{cfg: cfg.withDefaults()} }
 
-func (r *envRouter) AddPID(context.Context, int) error    { return ErrUnsupportedOnPlatform }
-func (r *envRouter) RemovePID(context.Context, int) error { return ErrUnsupportedOnPlatform }
+// AddPID restarts the process in proxy mode (the only way to route an existing
+// process off Linux).
+func (r *envRouter) AddPID(ctx context.Context, pid int) error {
+	_, err := restartPID(ctx, pid, r.Launch)
+	return err
+}
+
+// RemovePID is a no-op off Linux: a restarted process can't be cleanly un-routed.
+func (r *envRouter) RemovePID(context.Context, int) error { return nil }
 func (r *envRouter) Cleanup() error                       { return nil }
 func (r *envRouter) ListRouted() []int                    { return r.mu.list() }
 
