@@ -42,7 +42,7 @@ func (s Styles) panel(title, body string, width int, active, bordered bool) stri
 // cursor is the keyboard position; disabled greys a segment (VPN while Cisco is
 // active). The whole control sits in a focused-coloured box so it reads as the
 // active widget.
-func (s Styles) segmented(opts []string, selected, cursor int, disabled map[int]bool, vertical bool) string {
+func (s Styles) segmented(opts []string, selected, cursor int, disabled map[int]bool, vertical bool, mark func(i int, seg string) string) string {
 	// A filled/blank radio marker prefixes every segment so the running mode
 	// reads even with no colour (the accent fill alone vanishes under NO_COLOR /
 	// ascii). DotOn and a same-width blank keep the columns aligned.
@@ -71,6 +71,9 @@ func (s Styles) segmented(opts []string, selected, cursor int, disabled map[int]
 			}
 		}
 		segs[i] = st.Render(txt)
+		if mark != nil {
+			segs[i] = mark(i, segs[i]) // clickable zone (bubblezone)
+		}
 	}
 	joined := lipgloss.JoinHorizontal(lipgloss.Center, segs...)
 	if vertical {

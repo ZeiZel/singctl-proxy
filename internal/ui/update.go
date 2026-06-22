@@ -23,6 +23,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
@@ -252,6 +255,63 @@ func (m *Model) refreshLogViewport() {
 	if atBottom {
 		m.vp.GotoBottom()
 	}
+}
+
+// handleMouse routes mouse events: wheel scrolls the active scrollable overlay;
+// a left click on a bubblezone-marked region (разделы chip, mode segment, picker
+// row, settings row) acts on it.
+func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// Wheel: forward to the active viewport (it handles scrolling natively).
+	if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+		var cmd tea.Cmd
+		switch {
+		case m.showLogs:
+			m.vp, cmd = m.vp.Update(msg)
+		case m.showConns:
+			m.connVP, cmd = m.connVP.Update(msg)
+		}
+		return m, cmd
+	}
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
+	if m.modal != "" {
+		m.modal = ""
+		return m, nil
+	}
+	switch {
+	case m.showProc:
+		for i := range m.filteredProcs() {
+			if m.zm.Get(zoneProc(i)).InBounds(msg) {
+				m.appFocus = 1
+				m.procInput.Focus()
+				m.launchInput.Blur()
+				m.procCursor = i
+				return m, nil
+			}
+		}
+	case m.showSettings:
+		for i := range m.settingsFieldsFor() {
+			if m.zm.Get(zoneSetting(i)).InBounds(msg) {
+				m.setForm.focus = i
+				m.setForm.editing = false
+				return m, nil
+			}
+		}
+	case !m.showLogs && !m.showConns && m.screen == ScreenDashboard:
+		for i := 0; i < m.sectionCount(); i++ {
+			if m.zm.Get(zoneSection(i)).InBounds(msg) {
+				m.focus = i
+				return m.openSection(i)
+			}
+		}
+		for i := 0; i < 3; i++ {
+			if m.zm.Get(zoneMode(i)).InBounds(msg) {
+				return m.applyMode(RunMode(i))
+			}
+		}
+	}
+	return m, nil
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

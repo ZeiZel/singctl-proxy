@@ -15,6 +15,12 @@ func (m Model) View() string {
 	if m.width == 0 {
 		return ""
 	}
+	// bubblezone Scan strips the (zero-width) zone markers and records bounds for
+	// mouse hit-testing; it wraps every screen so clicks work everywhere.
+	return m.zm.Scan(m.screenView())
+}
+
+func (m Model) screenView() string {
 	// The Cisco warning is the most important thing on screen and has its own
 	// fits-any-width renderer, so it wins even over the too-small fallback.
 	if m.modal != "" {
@@ -119,7 +125,8 @@ func (m Model) dashboardView() string {
 		disabled[2] = true
 	}
 	vertical := lay == layoutNarrow
-	sel := s.segmented(opts, int(m.mode), m.segCursor, disabled, vertical)
+	sel := s.segmented(opts, int(m.mode), m.segCursor, disabled, vertical,
+		func(i int, seg string) string { return m.zm.Mark(zoneMode(i), seg) })
 
 	var body string
 	switch {
@@ -176,14 +183,19 @@ func (m Model) dashSectionsLine() string {
 	s := m.styles
 	chips := make([]string, len(dashSectionLabels))
 	for i, l := range dashSectionLabels {
+		chip := s.SegNormal.Render(" " + l + " ")
 		if i == m.focus {
-			chips[i] = s.SegSelected.Render(" " + l + " ")
-		} else {
-			chips[i] = s.SegNormal.Render(" " + l + " ")
+			chip = s.SegSelected.Render(" " + l + " ")
 		}
+		chips[i] = m.zm.Mark(zoneSection(i), chip) // clickable
 	}
 	return s.clampLine(s.Subtle.Render("разделы: ")+strings.Join(chips, " "), max(m.width, 1))
 }
+
+func zoneSection(i int) string { return "sec-" + strconv.Itoa(i) }
+func zoneMode(i int) string    { return "mode-" + strconv.Itoa(i) }
+func zoneProc(i int) string    { return "proc-" + strconv.Itoa(i) }
+func zoneSetting(i int) string { return "set-" + strconv.Itoa(i) }
 
 // dashConnsBody is the body of the always-on dashboard СОЕДИНЕНИЯ panel: the
 // per-server latency list (when present) above a live-connection list capped to
@@ -559,7 +571,7 @@ func (m Model) procView() string {
 			if p.Ports != "" {
 				label += "  " + s.Subtle.Render(p.Ports)
 			}
-			rows = append(rows, s.clampLine(marker+label, subW))
+			rows = append(rows, m.zm.Mark(zoneProc(i), s.clampLine(marker+label, subW)))
 		}
 		if len(fp) > maxRows {
 			rows = append(rows, s.Subtle.Render(fmt.Sprintf("…ещё %d", len(fp)-maxRows)))
@@ -628,7 +640,7 @@ func (m Model) settingsView() string {
 			}
 			line = marker + s.kv(f.label, val, labelW)
 		}
-		rows = append(rows, s.clampLine(line, w))
+		rows = append(rows, m.zm.Mark(zoneSetting(i), s.clampLine(line, w)))
 	}
 	if m.errText != "" {
 		rows = append(rows, "", s.Err.Render(wrap(s.gl.Warn+" "+m.errText, max(w-2, 1))))

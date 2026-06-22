@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/harmonica"
+	zone "github.com/lrstanley/bubblezone"
 
 	"singctl/internal/policy"
 )
@@ -85,6 +86,7 @@ type Model struct {
 	backend Backend
 	decide  func(policy.DecideInput) policy.DecisionResult
 	notes   <-chan tea.Msg
+	zm      *zone.Manager // bubblezone: mouse hit-testing
 }
 
 // New builds the initial model on the link-input screen. notes is the channel of
@@ -176,6 +178,7 @@ func newWithCaps(backend Backend, notes <-chan tea.Msg, caps Caps) Model {
 		decide:      policy.Decide,
 		notes:       notes,
 		setForm:     settingsForm{edit: se},
+		zm:          zone.New(),
 	}
 }
 

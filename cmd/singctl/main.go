@@ -157,7 +157,7 @@ func runRemoteTUI(inst control.Instance, c *cli) int {
 	}
 	model = model.WithCurrentLinks(rb.CurrentLinks())
 
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx))
+	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 	go func() { <-ctx.Done(); program.Quit() }()
 	if _, err := program.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "ui error:", err)
@@ -585,7 +585,7 @@ func main() {
 	}
 	// WithAltScreen clears the terminal (alternate buffer) so earlier commands
 	// aren't visible above the UI.
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx))
+	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 	go func() {
 		<-ctx.Done()
 		program.Quit()
