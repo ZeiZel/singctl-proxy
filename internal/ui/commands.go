@@ -41,6 +41,11 @@ func stopDaemonCmd(b Backend) tea.Cmd {
 	}
 }
 
+// frameCmd schedules the next animation frame (~25 fps).
+func frameCmd() tea.Cmd {
+	return tea.Tick(40*time.Millisecond, func(time.Time) tea.Msg { return frameMsg{} })
+}
+
 // listProcessesCmd fetches the process list for the picker.
 func listProcessesCmd(b Backend) tea.Cmd {
 	return func() tea.Msg {

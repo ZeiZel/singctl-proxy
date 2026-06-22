@@ -28,6 +28,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
 
+	case frameMsg:
+		// Spring the header activity gauge toward 1 while busy, 0 when idle.
+		target := 0.0
+		if m.busy {
+			target = 1.0
+		}
+		m.animPos, m.animVel = m.spring.Update(m.animPos, m.animVel, target)
+		return m, frameCmd()
+
 	case NetStateMsg:
 		m.cisco = msg.Cisco
 		m.phys = msg.PhysIface

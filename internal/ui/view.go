@@ -106,6 +106,10 @@ func (m Model) dashboardView() string {
 		}
 		right = s.colored(s.th.Accent, fmt.Sprintf("%s attached PID %d", arrow, m.attachedPID)) + "  " + right
 	}
+	// Spring-eased activity gauge while a mode toggle is in flight (harmonica).
+	if m.animPos > 0.02 {
+		right = m.prog.ViewAs(clampF(m.animPos, 0, 1)) + "  " + right
+	}
 	header := m.topBar("singctl", right)
 	footer := s.clampBlock(m.help.View(m.keys), max(m.width, 1))
 
@@ -709,6 +713,16 @@ func (s Styles) footerHints(pairs [][2]string) string {
 }
 
 // --- small helpers ---
+
+func clampF(v, lo, hi float64) float64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
 
 func orEmpty(s, fallback string) string {
 	if s == "" {

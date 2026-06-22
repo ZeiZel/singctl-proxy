@@ -2,10 +2,12 @@ package ui
 
 import (
 	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/harmonica"
 
 	"singctl/internal/policy"
 )
@@ -68,8 +70,12 @@ type Model struct {
 	keys        keyMap
 	help        help.Model
 	spin        spinner.Model
-	busy        bool           // an enable/stop command is in flight (drives the spinner)
-	vp          viewport.Model // logs viewport (scroll)
+	busy        bool             // an enable/stop command is in flight (drives the spinner)
+	prog        progress.Model   // header activity gauge
+	spring      harmonica.Spring // spring easing the gauge toward busy/idle
+	animPos     float64          // current gauge fill (0..1)
+	animVel     float64          // spring velocity
+	vp          viewport.Model   // logs viewport (scroll)
 	vpReady     bool
 	connVP      viewport.Model // connections viewport (scroll, full list)
 	connVPReady bool
@@ -146,6 +152,10 @@ func newWithCaps(backend Backend, notes <-chan tea.Msg, caps Caps) Model {
 	}
 	sp.Style = caps.R.NewStyle().Foreground(th.Accent)
 
+	pr := progress.New(progress.WithSolidFill("#7AA2F7"), progress.WithoutPercentage())
+	pr.Width = 16
+	spring := harmonica.NewSpring(harmonica.FPS(25), 6.0, 0.5)
+
 	return Model{
 		screen:      ScreenLink,
 		mode:        RunOff,
@@ -160,6 +170,8 @@ func newWithCaps(backend Backend, notes <-chan tea.Msg, caps Caps) Model {
 		keys:        defaultKeys(gl),
 		help:        hp,
 		spin:        sp,
+		prog:        pr,
+		spring:      spring,
 		backend:     backend,
 		decide:      policy.Decide,
 		notes:       notes,
@@ -241,7 +253,7 @@ func (m Model) WithLogsOpen() Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{textinput.Blink, m.spin.Tick, listen(m.notes)}
+	cmds := []tea.Cmd{textinput.Blink, m.spin.Tick, frameCmd(), listen(m.notes)}
 	switch m.autoMode {
 	case RunProxy:
 		cmds = append(cmds, enableProxyCmd(m.backend))
