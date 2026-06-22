@@ -653,7 +653,7 @@ func (m Model) submitProc() (tea.Model, tea.Cmd) {
 	m.procInput.SetValue("")
 	m.showProc = false
 
-	if pid, err := strconv.Atoi(raw); err == nil && raw != "" {
+	if pid, err := strconv.Atoi(raw); err == nil && pid > 0 {
 		m.status = "проксирую процесс…"
 		return m, routePIDCmd(m.backend, pid)
 	}

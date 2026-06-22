@@ -43,22 +43,27 @@ type Executor struct {
 	routes  runtime.RouteController
 	notes   chan tea.Msg
 
-	mu      sync.Mutex
-	mgr     *runtime.Manager
-	links   []string // raw VLESS links currently loaded (priority order)
-	save    func(string) error
-	logPath string
-	ports   singbox.Ports
+	mu    sync.Mutex
+	mgr   *runtime.Manager
+	links []string // raw VLESS links currently loaded (priority order)
 
+	// cfgMu guards all the tunables + the per-process router + the log file.
+	// Separate from mu (which guards mgr/links) so the control socket, monitor
+	// and UI can read/write config concurrently without racing or deadlocking
+	// against LoadLink. Never hold cfgMu and mu at the same time.
+	cfgMu       sync.Mutex
+	save        func(string) error
+	logPath     string
+	logFile     *os.File
+	ports       singbox.Ports
 	clashAddr   string
 	clashSecret string
 	urltest     singbox.URLTestParams
+	router      procproxy.Router
+	routerBuilt bool
 
 	pollMu     sync.Mutex
 	pollCancel context.CancelFunc
-
-	routerOnce sync.Once
-	router     procproxy.Router
 
 	listerOnce sync.Once
 	lister     proclist.Lister
@@ -80,23 +85,39 @@ func (e *Executor) ListProcesses(ctx context.Context) ([]ui.ProcInfo, error) {
 }
 
 // SetLogPath redirects sing-box logs to a file (keeps them out of the TUI).
-func (e *Executor) SetLogPath(path string) { e.logPath = path }
+func (e *Executor) SetLogPath(path string) {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	if path != e.logPath && e.logFile != nil {
+		_ = e.logFile.Close()
+		e.logFile = nil
+	}
+	e.logPath = path
+}
 
 // SetClashAPI enables the sing-box Clash API on the given "host:port" with the
 // given secret (empty addr disables it). Takes effect on the next LoadLink.
 func (e *Executor) SetClashAPI(addr, secret string) {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
 	e.clashAddr = addr
 	e.clashSecret = secret
 }
 
 // SetURLTest tunes the multi-server failover group (probe URL / interval /
 // tolerance). The zero value uses sensible defaults.
-func (e *Executor) SetURLTest(u singbox.URLTestParams) { e.urltest = u }
+func (e *Executor) SetURLTest(u singbox.URLTestParams) {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	e.urltest = u
+}
 
 // SetSocksPort overrides the proxy's local socks port (the http port follows
 // at port+1). 0 keeps the defaults (socks 1080, http 2080). Takes effect on
 // the next LoadLink.
 func (e *Executor) SetSocksPort(port int) {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
 	if port == 0 {
 		e.ports = singbox.Ports{}
 		return
@@ -110,7 +131,11 @@ func NewExecutor(f core.Factory, p runtime.InterfaceProber, r runtime.RouteContr
 
 // SetSaver registers an optional persistence hook called after a successful
 // StartProxy (best-effort).
-func (e *Executor) SetSaver(fn func(string) error) { e.save = fn }
+func (e *Executor) SetSaver(fn func(string) error) {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	e.save = fn
+}
 
 // --- ui.Backend ---
 
@@ -126,13 +151,18 @@ func (e *Executor) LoadLink(ctx context.Context, link string) error {
 	if old := e.manager(); old != nil {
 		_ = old.Shutdown(ctx)
 	}
+	// Snapshot the tunables under cfgMu (never held across mgr work / mu).
+	e.cfgMu.Lock()
 	builder := runtime.ProfileConfigBuilder{
 		Profiles: set,
 		LogPath:  e.logPath,
 		Ports:    e.ports,
-		ClashAPI: e.clashAPIConfig(),
+		ClashAPI: clashAPIConfig(e.clashAddr, e.clashSecret),
 		URLTest:  e.urltest,
 	}
+	save := e.save
+	e.cfgMu.Unlock()
+
 	mgr := runtime.NewManager(e.factory, builder, e.prober, e.routes)
 	links := make([]string, 0, set.Len())
 	for _, p := range set.Profiles {
@@ -142,8 +172,8 @@ func (e *Executor) LoadLink(ctx context.Context, link string) error {
 	e.mgr = mgr
 	e.links = links
 	e.mu.Unlock()
-	if e.save != nil {
-		_ = e.save(link)
+	if save != nil {
+		_ = save(link)
 	}
 	return nil
 }
@@ -178,11 +208,12 @@ func (e *Executor) AddLink(ctx context.Context, link string) error {
 }
 
 // clashAPIConfig returns the sing-box Clash API config, or nil if disabled.
-func (e *Executor) clashAPIConfig() *singbox.ClashAPI {
-	if e.clashAddr == "" {
+// Pure (caller holds cfgMu and supplies the snapshot).
+func clashAPIConfig(addr, secret string) *singbox.ClashAPI {
+	if addr == "" {
 		return nil
 	}
-	return &singbox.ClashAPI{ExternalController: e.clashAddr, Secret: e.clashSecret}
+	return &singbox.ClashAPI{ExternalController: addr, Secret: secret}
 }
 
 // EnableProxy starts (or switches to) proxy-only mode.
@@ -235,7 +266,10 @@ func (e *Executor) Stop(ctx context.Context) error {
 // startPoller launches the Clash API poller (idempotent; no-op when the Clash
 // API is disabled). Enriched connection lines are appended to the log sink.
 func (e *Executor) startPoller() {
-	if e.clashAddr == "" {
+	e.cfgMu.Lock()
+	addr, secret := e.clashAddr, e.clashSecret
+	e.cfgMu.Unlock()
+	if addr == "" {
 		return
 	}
 	e.pollMu.Lock()
@@ -246,7 +280,7 @@ func (e *Executor) startPoller() {
 	ctx, cancel := context.WithCancel(context.Background())
 	e.pollCancel = cancel
 	poller := &clashapi.Poller{
-		Client:   clashapi.NewClient(e.clashAddr, e.clashSecret),
+		Client:   clashapi.NewClient(addr, secret),
 		Interval: pollInterval,
 		Resolve:  clashapi.NewProcessResolver(),
 		Sink: clashapi.Sink{
@@ -299,16 +333,20 @@ func (e *Executor) stopPoller() {
 // sing-box log: the log file in TUI/non-interactive mode, or stdout when logs
 // are streamed (headless --logs, logPath == "").
 func (e *Executor) appendLog(line string) {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
 	if e.logPath == "" {
 		fmt.Fprintln(os.Stdout, line)
 		return
 	}
-	f, err := os.OpenFile(e.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return
+	if e.logFile == nil {
+		f, err := os.OpenFile(e.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return
+		}
+		e.logFile = f // kept open for the process lifetime (no per-line fd churn)
 	}
-	defer f.Close()
-	fmt.Fprintln(f, line)
+	fmt.Fprintln(e.logFile, line)
 }
 
 // --- monitor integration ---
@@ -421,7 +459,9 @@ func (e *Executor) proxyRunning() bool {
 // procRouter lazily builds the platform per-PID router, pinned to the proxy's
 // actual local ports.
 func (e *Executor) procRouter() procproxy.Router {
-	e.routerOnce.Do(func() {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	if !e.routerBuilt {
 		socks, http := 1080, 2080
 		if e.ports.Socks != 0 {
 			socks, http = e.ports.Socks, e.ports.HTTP
@@ -430,7 +470,8 @@ func (e *Executor) procRouter() procproxy.Router {
 			SocksAddr: fmt.Sprintf("127.0.0.1:%d", socks),
 			HTTPAddr:  fmt.Sprintf("127.0.0.1:%d", http),
 		})
-	})
+		e.routerBuilt = true
+	}
 	return e.router
 }
 
@@ -461,8 +502,8 @@ func (e *Executor) RestartProxied(ctx context.Context, pid int) (int, error) {
 // CurrentSettings returns the live tunables as a ui.Settings (the inverse of
 // ApplySettings) so a remote client / SETTINGS-GET can seed its form.
 func (e *Executor) CurrentSettings() ui.Settings {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
 	return ui.Settings{
 		SocksPort:        e.ports.Socks,
 		ClashEnabled:     e.clashAddr != "",
@@ -479,7 +520,9 @@ func (e *Executor) CurrentSettings() ui.Settings {
 func (e *Executor) ApplySettings(ctx context.Context, s ui.Settings) error {
 	e.SetSocksPort(s.SocksPort)
 	if s.ClashEnabled {
+		e.cfgMu.Lock()
 		secret := e.clashSecret
+		e.cfgMu.Unlock()
 		if secret == "" {
 			secret = randomHex()
 		}
@@ -515,14 +558,15 @@ func (e *Executor) Daemonize(_ context.Context) error {
 	if len(links) == 0 {
 		return errNoProxy
 	}
-	if e.save != nil {
-		_ = e.save(strings.Join(links, "\n"))
-	}
 	mode := "proxy"
 	if e.StateLabel() == "vpn" {
 		mode = "vpn"
 	}
-	return daemon.Spawn(daemon.Config{
+	e.cfgMu.Lock()
+	if e.save != nil {
+		_ = e.save(strings.Join(links, "\n"))
+	}
+	cfg := daemon.Config{
 		Mode:             mode,
 		Port:             e.ports.Socks,
 		NoClash:          e.clashAddr == "",
@@ -532,7 +576,9 @@ func (e *Executor) Daemonize(_ context.Context) error {
 		URLTestInterval:  e.urltest.Interval,
 		URLTestTolerance: e.urltest.Tolerance,
 		LogPath:          e.logPath,
-	})
+	}
+	e.cfgMu.Unlock()
+	return daemon.Spawn(cfg)
 }
 
 // StopDaemon is part of ui.Backend but only meaningful for a remote (attached)
@@ -545,11 +591,13 @@ func (e *Executor) StopDaemon(context.Context) error {
 // resetRouter tears down the per-process router so the next route uses fresh
 // settings (e.g. a changed socks port).
 func (e *Executor) resetRouter() {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
 	if e.router != nil {
 		_ = e.router.Cleanup()
 	}
 	e.router = nil
-	e.routerOnce = sync.Once{}
+	e.routerBuilt = false
 }
 
 // randomHex returns a 128-bit hex token (Clash API secret when enabling it from
@@ -565,9 +613,16 @@ func randomHex() string {
 // Shutdown tears down both cores and any per-process routing state.
 func (e *Executor) Shutdown(ctx context.Context) error {
 	e.stopPoller()
+	e.cfgMu.Lock()
 	if e.router != nil {
 		_ = e.router.Cleanup()
+		e.router, e.routerBuilt = nil, false
 	}
+	if e.logFile != nil {
+		_ = e.logFile.Close()
+		e.logFile = nil
+	}
+	e.cfgMu.Unlock()
 	if m := e.manager(); m != nil {
 		return m.Shutdown(ctx)
 	}

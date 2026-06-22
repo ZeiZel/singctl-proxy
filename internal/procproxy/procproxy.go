@@ -116,6 +116,9 @@ func launchWithEnv(ctx context.Context, argv, extraEnv []string) (int, error) {
 // the given launch func (which applies the platform routing). Shared by every
 // Router implementation.
 func restartPID(ctx context.Context, pid int, launch func(context.Context, []string) (int, error)) (int, error) {
+	if pid <= 0 {
+		return 0, fmt.Errorf("invalid pid %d", pid)
+	}
 	argv, err := processArgv(ctx, pid)
 	if err != nil {
 		return 0, fmt.Errorf("read argv of pid %d: %w", pid, err)
@@ -127,8 +130,12 @@ func restartPID(ctx context.Context, pid int, launch func(context.Context, []str
 	return launch(ctx, argv)
 }
 
-// terminate sends SIGTERM to a PID (best-effort).
+// terminate sends SIGTERM to a single PID (best-effort). pid must be > 0: a
+// non-positive pid would signal the whole process group (killing singctl).
 func terminate(pid int) error {
+	if pid <= 0 {
+		return fmt.Errorf("refusing to signal non-positive pid %d", pid)
+	}
 	p, err := os.FindProcess(pid)
 	if err != nil {
 		return err

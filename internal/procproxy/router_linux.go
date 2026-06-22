@@ -30,6 +30,9 @@ func (r *linuxRouter) cgroupDir() string {
 }
 
 func (r *linuxRouter) AddPID(ctx context.Context, pid int) error {
+	if pid <= 0 {
+		return fmt.Errorf("invalid pid %d", pid)
+	}
 	if err := r.ensureSetup(ctx); err != nil {
 		return err
 	}

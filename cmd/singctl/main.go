@@ -50,14 +50,47 @@ var version = "dev"
 //go:embed singctl.1
 var manPage string
 
-// realConfigDir resolves the real user's ~/.config/singctl (works without root,
-// resolving SUDO_USER). Returns "" if it cannot be determined.
+// realConfigDir resolves the config dir + the uid/gid to chown files back to.
+// Under sudo it uses the invoking user's ~/.config/singctl (so files aren't
+// left root-owned); run directly as root (or any euid) it falls back to the
+// current user's home, so the instance advertisement + control socket — and thus
+// attach/--stop and the second-launch bind-crash protection — keep working.
+// uid/gid are -1 when no chown-back is needed (we already are that user).
 func realConfigDir() (dir string, uid, gid int) {
-	ru, err := platform.ResolveUser(os.Getenv, user.Lookup)
-	if err != nil {
-		return "", 0, 0
+	if ru, err := platform.ResolveUser(os.Getenv, user.Lookup); err == nil {
+		return filepath.Join(ru.HomeDir, ".config", "singctl"), ru.Uid, ru.Gid
 	}
-	return filepath.Join(ru.HomeDir, ".config", "singctl"), ru.Uid, ru.Gid
+	// No SUDO_USER (plain root or a normal non-sudo run): use this process's home.
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		if home = os.Getenv("HOME"); home == "" {
+			return "", -1, -1
+		}
+	}
+	return filepath.Join(home, ".config", "singctl"), -1, -1
+}
+
+// waitForInstance polls for a live advertised instance whose PID differs from
+// notPID (the spawning parent), up to timeout. Reports whether the daemon child
+// came up.
+func waitForInstance(dir string, notPID int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if inst, err := control.ReadInstance(dir); err == nil && inst.PID != notPID && control.IsAlive(inst.PID) {
+			return true
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	return false
+}
+
+// chownTo chowns a path back to the invoking user, or does nothing when there is
+// no separate user to restore ownership to (uid < 0).
+func chownTo(path string, uid, gid int) {
+	if uid < 0 {
+		return
+	}
+	_ = os.Chown(path, uid, gid)
 }
 
 // startupAction is what a normal launch should do given a possibly-running peer.
@@ -85,14 +118,8 @@ func decideStartup(alive, headless, daemonFlag, isChild bool) startupAction {
 // runRemoteTUI attaches the TUI to a running instance over its control socket.
 func runRemoteTUI(inst control.Instance, c *cli) int {
 	notes := make(chan tea.Msg, 32)
-	socks := c.proxy.port
-	rb := remote.New(inst, socks, notes)
+	rb := remote.New(inst, c.proxy.port, notes)
 	defer rb.Close()
-	if seed, err := rb.Settings(); err == nil {
-		if socks == 0 {
-			socks = seed.SocksPort
-		}
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -390,23 +417,24 @@ func main() {
 	// Persist the profile + log file under the real user's home (chowned back),
 	// and remember the last link. In headless --logs mode the log path stays
 	// empty so sing-box writes to the console instead of the file.
-	var savedLink, logPath, configDir string
-	var realUID, realGID int
+	var savedLink, logPath string
 	var store *profile.Store
-	if ru, err := platform.ResolveUser(os.Getenv, user.Lookup); err == nil {
-		configDir = filepath.Join(ru.HomeDir, ".config", "singctl")
-		realUID, realGID = ru.Uid, ru.Gid
+	configDir, realUID, realGID := realConfigDir()
+	if configDir != "" {
+		homeDir := filepath.Dir(filepath.Dir(configDir)) // <home>/.config/singctl → <home>
 		_ = os.MkdirAll(configDir, 0o755)
-		_ = os.Chown(configDir, ru.Uid, ru.Gid)
+		chownTo(configDir, realUID, realGID)
 		logPath = filepath.Join(configDir, "singbox.log")
 
-		store = profile.NewStore(profile.OSFS{}, ru.HomeDir, ru.Uid, ru.Gid)
+		store = profile.NewStore(profile.OSFS{}, homeDir, realUID, realGID)
 		if !c.keys.noSave {
 			executor.SetSaver(store.Save)
 		}
 		if l, err := store.Load(); err == nil {
 			savedLink = l
 		}
+	} else {
+		fmt.Fprintln(os.Stderr, "warning: cannot resolve a config directory — attach/--stop and instance discovery are disabled")
 	}
 	if !(c.proxy.headless && c.proxy.logs) {
 		executor.SetLogPath(logPath)
@@ -448,6 +476,13 @@ func main() {
 			fmt.Fprintln(os.Stderr, "error: start daemon:", err)
 			os.Exit(1)
 		}
+		// Wait for the child to actually come up (it advertises instance.json once
+		// its cores are running). If it never appears, report failure instead of a
+		// misleading success — the child likely failed to bind or load the key.
+		if configDir != "" && !waitForInstance(configDir, os.Getpid(), 5*time.Second) {
+			fmt.Fprintln(os.Stderr, "error: daemon did not come up — check the log:", logPath)
+			os.Exit(1)
+		}
 		fmt.Println("singctl: daemon запущен в фоне — управление через --status / --attach / --stop")
 		return
 	}
@@ -459,14 +494,14 @@ func main() {
 		srv := control.NewServer(sockPath)
 		registerControl(srv, executor, cancelRun, startedAt)
 		if err := srv.Start(); err == nil {
-			_ = os.Chown(sockPath, realUID, realGID)
+			chownTo(sockPath, realUID, realGID)
 			defer srv.Close()
 			inst := control.Instance{
 				PID: os.Getpid(), Mode: mode, LogPath: logPath, ControlSocket: sockPath,
 				ClashAPIAddr: clashAddr, ClashSecret: clashSecret, StartedAt: startedAt,
 			}
 			_ = control.WriteInstance(configDir, inst)
-			_ = os.Chown(control.InstancePath(configDir), realUID, realGID)
+			chownTo(control.InstancePath(configDir), realUID, realGID)
 			defer control.RemoveInstance(configDir)
 		} else {
 			fmt.Fprintln(os.Stderr, "warning: control socket unavailable:", err)
