@@ -50,3 +50,40 @@ func TestMarkHex(t *testing.T) {
 		t.Errorf("markHex(457) = %q, want 0x1c9", got)
 	}
 }
+
+func TestDescendantsOf_WholeSubtree(t *testing.T) {
+	// 100 -> {200, 300}; 200 -> {201, 202}; 300 -> {301}; 999 unrelated.
+	ppid := map[int]int{
+		200: 100, 300: 100,
+		201: 200, 202: 200,
+		301: 300,
+		999: 1,
+	}
+	got := map[int]bool{}
+	for _, p := range descendantsOf(100, ppid) {
+		got[p] = true
+	}
+	for _, want := range []int{200, 300, 201, 202, 301} {
+		if !got[want] {
+			t.Errorf("descendantsOf(100) missing %d; got %v", want, got)
+		}
+	}
+	if got[100] {
+		t.Error("descendantsOf must exclude the root itself")
+	}
+	if got[999] {
+		t.Error("descendantsOf included an unrelated process")
+	}
+}
+
+func TestDescendantsOf_CycleSafe(t *testing.T) {
+	// Pathological cycle 1->2->1 must not loop forever.
+	ppid := map[int]int{2: 1, 1: 2, 3: 1}
+	_ = descendantsOf(1, ppid) // must terminate
+}
+
+func TestStatPPID_Parsing(t *testing.T) {
+	if got := parseStatLine("4242 (Cursor Helper (GPU)) S 4240 4242 ..."); got != 4240 {
+		t.Errorf("ppid = %d, want 4240", got)
+	}
+}

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  singctl system VPN LaunchDaemon.
+
+  Runs `singctl --headless --vpn` in the foreground (NOT `--daemon`: launchd is
+  the supervisor, so the process must stay attached, not self-detach). The key
+  comes from the saved profile under the real user's ~/.config/singctl, so save
+  a key once interactively before enabling this daemon (see docs/macos.md).
+
+  Installed to /Library/LaunchDaemons/com.singctl.proxy.plist by
+  scripts/install-macos.sh (`make install`). KeepAlive restarts it if it dies;
+  ThrottleInterval avoids a tight restart loop when no key is configured yet.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.singctl.proxy</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/singctl</string>
+        <string>--headless</string>
+        <string>--vpn</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/singctl.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/var/log/singctl.log</string>
+</dict>
+</plist>

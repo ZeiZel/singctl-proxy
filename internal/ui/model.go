@@ -60,6 +60,7 @@ type Model struct {
 	routedPIDs  []int           // PIDs currently routed/launched through the proxy
 
 	showSettings bool         // Настройки section open
+	showConsole  bool         // Консоль приложений section open
 	settings     Settings     // last-applied settings (seeded from the CLI)
 	setForm      settingsForm // editing state for the Настройки section
 
@@ -84,13 +85,13 @@ type Model struct {
 	connVP      viewport.Model // connections viewport (scroll, full list)
 	connVPReady bool
 	segCursor   int // keyboard cursor on the OFF|PROXY|VPN selector (0..2)
-	focus       int // dashboard focus ring: -1 = mode selector, 0..n-1 = разделы chip
 
-	// pane-grid dashboard (spy-control style). pane is the focused pane; expanded
-	// promotes it to a full-screen renderer. console/actions are UI-side rings fed
-	// by ConsoleMsg/ActionMsg pushed through the notes channel (reducer stays pure).
-	pane           int
-	expanded       bool
+	// sidebar dashboard. section is the highlighted left-nav item (navMode..navKeys);
+	// pressing Enter/→ on it opens the matching section full-screen (sets a show*
+	// flag). navMode is the resting "Режим" home where ←→ move the OFF/PROXY/VPN
+	// selector and Enter applies it. console/actions are UI-side rings fed by
+	// ConsoleMsg/ActionMsg pushed through the notes channel (reducer stays pure).
+	section        int
 	console        *consoleBuf
 	actions        *actionLog
 	consoleVP      viewport.Model // консоль приложений viewport (scroll)
@@ -176,7 +177,7 @@ func newWithCaps(backend Backend, notes <-chan tea.Msg, caps Caps) Model {
 	return Model{
 		screen:      ScreenLink,
 		mode:        RunOff,
-		focus:       -1, // selector focused by default
+		section:     navMode, // the "Режим" home is focused by default
 		input:       ti,
 		procInput:   pi,
 		launchInput: li,
@@ -322,7 +323,8 @@ func (m Model) Latency() []LatencyRow   { return m.latency }
 func (m Model) LinkValue() string       { return m.input.Value() }
 func (m Model) Busy() bool              { return m.busy }
 func (m Model) SegCursor() int          { return m.segCursor }
-func (m Model) Focus() int              { return m.focus }
+func (m Model) Section() int            { return m.section }
+func (m Model) ShowingConsole() bool    { return m.showConsole }
 func (m Model) RoutedPIDs() []int       { return m.routedPIDs }
 func (m Model) ShowingSettings() bool   { return m.showSettings }
 func (m Model) DraftSettings() Settings { return m.setForm.draft }

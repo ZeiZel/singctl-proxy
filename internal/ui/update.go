@@ -284,7 +284,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.vp, cmd = m.vp.Update(msg)
 		case m.showConns:
 			m.connVP, cmd = m.connVP.Update(msg)
-		case m.expanded && m.pane == paneConsole && m.consoleVPReady:
+		case m.showConsole && m.consoleVPReady:
 			m.consoleVP, cmd = m.consoleVP.Update(msg)
 		}
 		return m, cmd
@@ -315,54 +315,36 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-	case !m.showLogs && !m.showConns && m.screen == ScreenDashboard:
-		// Expanded console: per-app filter chips isolate one app's output.
-		if m.expanded && m.pane == paneConsole {
-			if m.zm.Get(zoneConPID(0)).InBounds(msg) {
-				m.consoleFilter = 0
+	case m.showConsole:
+		// Per-app filter chips isolate one app's output.
+		if m.zm.Get(zoneConPID(0)).InBounds(msg) {
+			m.consoleFilter = 0
+			m.refreshConsoleViewport()
+			return m, nil
+		}
+		for _, pid := range m.console.pids() {
+			if m.zm.Get(zoneConPID(pid)).InBounds(msg) {
+				m.consoleFilter = pid
 				m.refreshConsoleViewport()
 				return m, nil
 			}
-			for _, pid := range m.console.pids() {
-				if m.zm.Get(zoneConPID(pid)).InBounds(msg) {
-					m.consoleFilter = pid
-					m.refreshConsoleViewport()
-					return m, nil
-				}
-			}
 		}
-		// Action-button bar: hit-test buttons BEFORE panes so a button click
-		// (rendered inside paneStatus) never doubles as pane focus/expand.
-		for _, spec := range m.actionButtons() {
-			if m.zm.Get(spec.id).InBounds(msg) {
-				return spec.fire(m)
-			}
-		}
-		// Pane grid: click an already-focused pane to expand/collapse it,
-		// click another pane to focus it.
-		for i := 0; i < paneCount; i++ {
-			if m.zm.Get(zonePane(i)).InBounds(msg) {
-				if i == m.pane {
-					if m.expanded {
-						return m.collapsePane()
-					}
-					return m.expandPane()
-				}
-				m.pane = i
-				return m, nil
-			}
-		}
-		// Legacy разделы chips / mode segments (still marked by the old dashboard
-		// renderer and inside expanded views).
-		for i := 0; i < m.sectionCount(); i++ {
-			if m.zm.Get(zoneSection(i)).InBounds(msg) {
-				m.focus = i
-				return m.openSection(i)
-			}
-		}
+	case !m.showLogs && !m.showConns && m.screen == ScreenDashboard:
+		// OFF/PROXY/VPN selector segments.
 		for i := 0; i < 3; i++ {
 			if m.zm.Get(zoneMode(i)).InBounds(msg) {
 				return m.applyMode(RunMode(i))
+			}
+		}
+		// Sidebar nav: click an already-selected item to open it; click another
+		// to select it (a second click then opens — mirrors the keyboard).
+		for i := 0; i < navCount; i++ {
+			if m.zm.Get(zoneNav(i)).InBounds(msg) {
+				if i == m.section {
+					return m.openNav(i)
+				}
+				m.section = i
+				return m, nil
 			}
 		}
 	}
@@ -386,7 +368,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.String() == "esc":
 			m.showProc = false
-			m.expanded = false
 			m.launchInput.Blur()
 			m.procInput.Blur()
 			return m, nil
@@ -422,15 +403,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "перезапускаю процесс в proxy-режиме…"
 			return m, restartPIDCmd(m.backend, pid)
 		case msg.String() == "enter":
-			if m.appFocus == 0 { // launch an application by command
-				v := strings.TrimSpace(m.launchInput.Value())
-				if v == "" {
-					return m, nil
+			// Launch field with text → launch it. Otherwise (filter field, or an
+			// empty launch field) → route the highlighted/typed process, so the
+			// picker list is always actionable regardless of which field is focused.
+			if m.appFocus == 0 {
+				if v := strings.TrimSpace(m.launchInput.Value()); v != "" {
+					m.launchInput.SetValue("")
+					m.showProc = false
+					m.status = "запускаю приложение через прокси…"
+					return m, launchProcCmd(m.backend, strings.Fields(v))
 				}
-				m.launchInput.SetValue("")
-				m.showProc = false
-				m.status = "запускаю приложение через прокси…"
-				return m, launchProcCmd(m.backend, strings.Fields(v))
 			}
 			return m.submitProc() // route the highlighted/typed PID
 		default:
@@ -445,12 +427,37 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Console overlay (Консоль приложений): esc/q return; g/G jump; else scroll.
+	if m.showConsole {
+		switch {
+		case msg.String() == "esc", msg.String() == "q":
+			m.showConsole = false
+			return m, nil
+		case msg.String() == "g":
+			if m.consoleVPReady {
+				m.consoleVP.GotoTop()
+			}
+			return m, nil
+		case msg.String() == "G":
+			if m.consoleVPReady {
+				m.consoleVP.GotoBottom()
+			}
+			return m, nil
+		default:
+			if m.consoleVPReady {
+				var cmd tea.Cmd
+				m.consoleVP, cmd = m.consoleVP.Update(msg)
+				return m, cmd
+			}
+			return m, nil
+		}
+	}
+
 	// Connections overlay: c/esc/q return; everything else scrolls the viewport.
 	if m.showConns {
 		switch {
 		case key.Matches(msg, m.keys.Conns), msg.String() == "esc", msg.String() == "q":
 			m.showConns = false
-			m.expanded = false
 			return m, nil
 		case msg.String() == "g":
 			m.connVP.GotoTop()
@@ -471,7 +478,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, m.keys.Logs), msg.String() == "esc", msg.String() == "q":
 			m.showLogs = false
-			m.expanded = false
 			return m, nil
 		case msg.String() == "g":
 			m.vp.GotoTop()
@@ -535,65 +541,56 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Stop):
 			return m.applyMode(RunOff)
 		case key.Matches(msg, m.keys.Edit):
-			return m.openSection(secKeys)
+			return m.openNav(navKeys)
 		case key.Matches(msg, m.keys.Logs):
-			m.pane = paneSingbox
-			return m.openSection(secLogs)
+			return m.openNav(navLogs)
 		case key.Matches(msg, m.keys.Conns):
-			m.pane = paneConns
-			return m.openSection(secConns)
+			return m.openNav(navConns)
 		case key.Matches(msg, m.keys.Proc):
-			m.pane = paneApps
-			return m.openSection(secApps)
+			return m.openNav(navApps)
 		case key.Matches(msg, m.keys.Settings):
-			m.pane = paneSettings
-			return m.openSection(secSettings)
+			return m.openNav(navSettings)
+		case key.Matches(msg, m.keys.Expand): // 'o' → console
+			return m.openNav(navConsole)
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
 			return m, nil
-		case key.Matches(msg, m.keys.Collapse):
-			if m.expanded {
-				return m.collapsePane()
+		case key.Matches(msg, m.keys.Jump):
+			n := int(msg.Runes[0] - '1') // '1'..'7' → 0..6
+			if n >= 0 && n < navCount {
+				return m.openNav(n)
 			}
 			return m, nil
-		case key.Matches(msg, m.keys.Next):
-			m.focus = stepFocus(m.focus, +1, m.sectionCount())
-			m.syncPaneToFocus()
+		case key.Matches(msg, m.keys.Down), key.Matches(msg, m.keys.Next):
+			m.section = stepNav(m.section, +1)
 			return m, nil
-		case key.Matches(msg, m.keys.Prev):
-			m.focus = stepFocus(m.focus, -1, m.sectionCount())
-			m.syncPaneToFocus()
+		case key.Matches(msg, m.keys.Up), key.Matches(msg, m.keys.Prev):
+			m.section = stepNav(m.section, -1)
 			return m, nil
 		case key.Matches(msg, m.keys.Right):
-			if m.focus < 0 {
+			// On the Режим home, → advances the OFF/PROXY/VPN cursor; on any other
+			// section, → opens it (like Enter).
+			if m.section == navMode {
 				m.segCursor = (m.segCursor + 1) % 3
-			} else {
-				m.focus = stepFocus(m.focus, +1, m.sectionCount())
-				m.syncPaneToFocus()
+				return m, nil
 			}
-			return m, nil
+			return m.openNav(m.section)
 		case key.Matches(msg, m.keys.Left):
-			if m.focus < 0 {
+			if m.section == navMode {
 				m.segCursor = (m.segCursor + 2) % 3
-			} else {
-				m.focus = stepFocus(m.focus, -1, m.sectionCount())
-				m.syncPaneToFocus()
 			}
 			return m, nil
 		case key.Matches(msg, m.keys.Activate):
-			if m.focus < 0 {
+			if m.section == navMode {
 				return m.applyMode(RunMode(m.segCursor))
 			}
-			m.pane = sectionPane(m.focus)
-			return m.expandSection(m.focus)
-		case key.Matches(msg, m.keys.Expand):
-			return m.expandPane()
+			return m.openNav(m.section)
 		}
 	}
 	return m, nil
 }
 
-// dashboard section ring indices (the разделы chips, expandable to full screen).
+// dashboard section indices, reused by openSection and the nav→section mapping.
 const (
 	secConns = iota
 	secLogs
@@ -602,26 +599,8 @@ const (
 	secSettings
 )
 
-// dashSectionLabels are the expandable sections shown as разделы chips.
-var dashSectionLabels = []string{"Соединения", "Логи", "Приложения", "Ключи", "Настройки"}
-
-func (m Model) sectionCount() int { return len(dashSectionLabels) }
-
-// stepFocus advances the focus cursor over the ring [-1, 0, 1, …, n-1], where -1
-// means the OFF/PROXY/VPN selector is focused.
-func stepFocus(f, d, n int) int {
-	total := n + 1
-	idx := ((f+1+d)%total + total) % total
-	return idx - 1
-}
-
-// stepPane advances the focused pane index around the [0, paneCount) ring (wrap).
-func stepPane(p, d int) int {
-	return ((p+d)%paneCount + paneCount) % paneCount
-}
-
-// openSection opens the full-screen view for a разделы chip (also used by the
-// direct c/l/x/e shortcuts).
+// openSection opens the full-screen overlay for a section (also used by openNav
+// and the direct c/l/x/e/g shortcuts).
 func (m Model) openSection(idx int) (tea.Model, tea.Cmd) {
 	switch idx {
 	case secConns:
@@ -692,7 +671,6 @@ func (m Model) handleSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q":
 		m.showSettings = false
-		m.expanded = false
 		return m, nil
 	case "up", "k":
 		if f.focus > 0 {

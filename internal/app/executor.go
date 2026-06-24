@@ -80,7 +80,7 @@ func (e *Executor) ListProcesses(ctx context.Context) ([]ui.ProcInfo, error) {
 	}
 	rows := make([]ui.ProcInfo, 0, len(procs))
 	for _, p := range procs {
-		rows = append(rows, ui.ProcInfo{PID: p.PID, Name: p.Name, Ports: p.PortsString()})
+		rows = append(rows, ui.ProcInfo{PID: p.PID, Name: p.Name, Ports: p.PortsString(), Children: p.Children})
 	}
 	return rows, nil
 }

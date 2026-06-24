@@ -73,6 +73,7 @@ func TestConsoleBuf_RenderFilterByPID(t *testing.T) {
 // (collapsed) КОНСОЛЬ pane tagged "[app pid]".
 func TestConsoleMsg_AppendRendersTagged(t *testing.T) {
 	m := newWithCaps(&fakeBackend{}, nil, asciiCaps()).WithLoadedProfile()
+	m.section = navConsole // its preview fills the content pane
 	m, _ = step(m, tea.WindowSizeMsg{Width: 110, Height: 40})
 	m, _ = step(m, ConsoleMsg{PID: 1234, App: "sleep", Stream: "stdout", Text: "tick"})
 	if n := len(m.console.lines); n != 1 {
@@ -206,23 +207,23 @@ func TestButtons_SectionFireOpensOverlay(t *testing.T) {
 	cases := []struct {
 		id    string
 		check func(Model) bool
-		pane  int
+		nav   int
 	}{
-		{"btn-logs", func(m Model) bool { return m.showLogs }, paneSingbox},
-		{"btn-conns", func(m Model) bool { return m.showConns }, paneConns},
-		{"btn-apps", func(m Model) bool { return m.showProc }, paneApps},
-		{"btn-settings", func(m Model) bool { return m.showSettings }, paneSettings},
-		{"btn-console", func(m Model) bool { return m.expanded && m.pane == paneConsole }, paneConsole},
+		{"btn-logs", func(m Model) bool { return m.showLogs }, navLogs},
+		{"btn-conns", func(m Model) bool { return m.showConns }, navConns},
+		{"btn-apps", func(m Model) bool { return m.showProc }, navApps},
+		{"btn-settings", func(m Model) bool { return m.showSettings }, navSettings},
+		{"btn-console", func(m Model) bool { return m.showConsole }, navConsole},
 	}
 	for _, tc := range cases {
 		m := New(&fakeBackend{}, nil).WithLoadedProfile()
 		m, _ = step(m, tea.WindowSizeMsg{Width: 110, Height: 32})
 		m, _ = fireButton(t, m, tc.id)
 		if !tc.check(m) {
-			t.Errorf("%s: fire did not open the expected overlay (pane=%d expanded=%v)", tc.id, m.pane, m.expanded)
+			t.Errorf("%s: fire did not open the expected overlay (section=%d)", tc.id, m.section)
 		}
-		if m.pane != tc.pane {
-			t.Errorf("%s: fire should focus pane %d, got %d", tc.id, tc.pane, m.pane)
+		if m.section != tc.nav {
+			t.Errorf("%s: fire should select nav %d, got %d", tc.id, tc.nav, m.section)
 		}
 	}
 }
@@ -278,18 +279,18 @@ func TestButtons_ModeActiveHighlight(t *testing.T) {
 	}
 }
 
-// The button pills are bubblezone-marked so handleMouse can hit-test them before
-// the pane grid; clicking ПРОКСИ runs the same path as the key shortcut.
-func TestButtons_ZonesMarkedAndClickFires(t *testing.T) {
+// The OFF/PROXY/VPN selector segments are bubblezone-marked so handleMouse can
+// hit-test them; clicking ПРОКСИ runs the same path as the key shortcut.
+func TestSelector_ZonesMarkedAndClickFires(t *testing.T) {
 	b := &fakeBackend{}
 	m := New(b, nil).WithLoadedProfile()
 	m, _ = step(m, tea.WindowSizeMsg{Width: 120, Height: 36})
-	// Sanity: the button pill is rendered with its zone marker.
-	z := waitZone(m, "btn-mode-1")
+	// Sanity: the ПРОКСИ segment is rendered with its zone marker.
+	z := waitZone(m, zoneMode(1))
 	if z.IsZero() {
-		t.Fatal("btn-mode-1 zone should be marked in the action bar")
+		t.Fatal("the ПРОКСИ selector segment should be zone-marked")
 	}
-	m, cmd := clickZone(t, m, "btn-mode-1")
+	m, cmd := clickZone(t, m, zoneMode(1))
 	if m.segCursor != 1 {
 		t.Errorf("clicking ПРОКСИ should move the selector to PROXY, got %d", m.segCursor)
 	}

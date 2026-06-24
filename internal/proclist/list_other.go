@@ -10,4 +10,4 @@ func NewLister() Lister { return emptyLister{} }
 
 type emptyLister struct{}
 
-func (emptyLister) List(context.Context) ([]Process, error) { return nil, nil }
+func (emptyLister) List(context.Context) ([]App, error) { return nil, nil }

@@ -41,11 +41,14 @@ func (m Model) screenView() string {
 	if m.showSettings {
 		return m.settingsView()
 	}
+	if m.showConsole {
+		return m.consoleView()
+	}
 	switch m.screen {
 	case ScreenLink:
 		return m.linkView()
 	default:
-		return m.gridView()
+		return m.dashboardView()
 	}
 }
 
@@ -97,102 +100,8 @@ func (m Model) titlePill(title string) string {
 	return s.Title.Render(title)
 }
 
-// --- dashboard ---
+// --- dashboard zones ---
 
-func (m Model) dashboardView() string {
-	s := m.styles
-	lay := layoutFor(m.width, m.height)
-	compact := m.height < 20 // tight height: drop borders/spacers so nothing is clipped
-
-	right := s.modeBadge(m.mode)
-	if m.attached {
-		arrow := "↔"
-		if !m.caps.Unicode {
-			arrow = "<->"
-		}
-		right = s.colored(s.th.Accent, fmt.Sprintf("%s attached PID %d", arrow, m.attachedPID)) + "  " + right
-	}
-	// Spring-eased activity gauge while a mode toggle is in flight (harmonica).
-	if m.animPos > 0.02 {
-		right = m.prog.ViewAs(clampF(m.animPos, 0, 1)) + "  " + right
-	}
-	header := m.topBar("singctl", right)
-	footer := s.clampBlock(m.help.View(m.keys), max(m.width, 1))
-
-	opts := []string{"ВЫКЛ", "ПРОКСИ", "VPN"}
-	disabled := map[int]bool{}
-	if m.cisco {
-		disabled[2] = true
-	}
-	vertical := lay == layoutNarrow
-	sel := s.segmented(opts, int(m.mode), m.segCursor, disabled, vertical,
-		func(i int, seg string) string { return m.zm.Mark(zoneMode(i), seg) })
-
-	var body string
-	switch {
-	case lay == layoutWide && !compact:
-		pw := min((m.width-2)/2, sideMax)
-		cw := pw - 4
-		status := s.panel("СТАТУС", m.statusBody(cw), pw, false, true)
-		mode := s.panel("РЕЖИМ", m.modeBody(sel, cw, true), pw, false, true)
-		top := lipgloss.JoinHorizontal(lipgloss.Top, status, "  ", mode)
-		// A wide СОЕДИНЕНИЯ panel spans the same total width as the two top panels.
-		fpw := min(m.width, panelMax+sideMax)
-		conns := s.panel("СОЕДИНЕНИЯ", m.dashConnsBody(fpw-4), fpw, false, true)
-		body = lipgloss.JoinVertical(lipgloss.Left, top, "", m.dashSectionsRow(), "", conns)
-	default:
-		bordered := !compact && lay != layoutNarrow
-		var pw, cw int
-		if bordered {
-			pw = min(m.width, panelMax)
-			cw = pw - 4
-		} else {
-			pw = m.width
-			cw = max(m.width-1, 1)
-		}
-		status := s.panel("СТАТУС", m.statusBody(cw), pw, false, bordered)
-		mode := s.panel("РЕЖИМ", m.modeBody(sel, cw, !compact), pw, false, bordered)
-		if compact {
-			// Tight height: collapse connections to one line + a compact разделы
-			// hint so the footer survives.
-			body = lipgloss.JoinVertical(lipgloss.Left, status, mode,
-				m.dashSectionsLine(),
-				s.clampLine(m.dashConnsSummary(), max(m.width, 1)))
-		} else {
-			conns := s.panel("СОЕДИНЕНИЯ", m.dashConnsBody(cw), pw, false, bordered)
-			body = lipgloss.JoinVertical(lipgloss.Left, status, "", mode, "", m.dashSectionsRow(), "", conns)
-		}
-	}
-	return m.frame(header, body, footer)
-}
-
-// dashSectionsRow renders the разделы chips (expandable full-screen sections).
-// The focused chip (Tab moves focus) is highlighted; Enter opens it. This makes
-// every feature discoverable from the dashboard.
-func (m Model) dashSectionsRow() string {
-	s := m.styles
-	hint := s.Subtle.Render("Tab — выбрать раздел " + s.gl.Sep + " Enter — открыть")
-	return lipgloss.JoinVertical(lipgloss.Left,
-		m.dashSectionsLine(),
-		s.clampLine(hint, max(m.width, 1)),
-	)
-}
-
-// dashSectionsLine is the one-line разделы chips row (no hint) for compact height.
-func (m Model) dashSectionsLine() string {
-	s := m.styles
-	chips := make([]string, len(dashSectionLabels))
-	for i, l := range dashSectionLabels {
-		chip := s.SegNormal.Render(" " + l + " ")
-		if i == m.focus {
-			chip = s.SegSelected.Render(" " + l + " ")
-		}
-		chips[i] = m.zm.Mark(zoneSection(i), chip) // clickable
-	}
-	return s.clampLine(s.Subtle.Render("разделы: ")+strings.Join(chips, " "), max(m.width, 1))
-}
-
-func zoneSection(i int) string { return "sec-" + strconv.Itoa(i) }
 func zoneMode(i int) string    { return "mode-" + strconv.Itoa(i) }
 func zoneProc(i int) string    { return "proc-" + strconv.Itoa(i) }
 func zoneSetting(i int) string { return "set-" + strconv.Itoa(i) }
@@ -223,33 +132,6 @@ func (m Model) dashConnLimit() int {
 		n = 40
 	}
 	return n
-}
-
-// dashConnsSummary is the one-line connections fallback for very short terminals.
-func (m Model) dashConnsSummary() string {
-	s := m.styles
-	line := fmt.Sprintf("%d соединений", len(m.conns))
-	if sum := m.latencySummary(); sum != "" {
-		line += " " + s.gl.Sep + " " + sum
-	}
-	return s.Subtle.Render(line)
-}
-
-// modeBody assembles the РЕЖИМ panel: the selector, an optional navigation hint,
-// and — when Cisco is active — a wrapped "VPN blocked" note. That note is the
-// colour-independent affordance for the greyed-out VPN segment (the grey alone
-// is invisible under NO_COLOR / ascii, e.g. under sudo).
-func (m Model) modeBody(sel string, cw int, withHint bool) string {
-	s := m.styles
-	parts := []string{sel}
-	if withHint {
-		parts = append(parts, "", s.Subtle.Render("Tab/"+s.gl.ArrowsLR+"  "+s.gl.Sep+"  Enter"))
-	}
-	if m.cisco {
-		note := s.colored(s.th.Warn, s.gl.Warn+" VPN заблокирован: Cisco активен")
-		parts = append(parts, "", wrap(note, max(cw, 1)))
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 // statusBody renders the status panel's inner rows (mode, Cisco, iface, notice),
@@ -569,10 +451,10 @@ func (m Model) procView() string {
 		cur := clampIdx(m.procCursor, len(fp))
 		for i, p := range shown {
 			marker := "  "
-			label := fmt.Sprintf("%-6d %s", p.PID, p.Name)
+			label := fmt.Sprintf("%-6d %s", p.PID, p.Label())
 			if i == cur {
 				marker = s.colored(s.th.Accent, s.gl.SelBar+" ")
-				label = s.Accent.Render(fmt.Sprintf("%-6d %s", p.PID, p.Name))
+				label = s.Accent.Render(fmt.Sprintf("%-6d %s", p.PID, p.Label()))
 			}
 			if p.Ports != "" {
 				label += "  " + s.Subtle.Render(p.Ports)

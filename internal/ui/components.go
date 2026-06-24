@@ -11,33 +11,6 @@ import (
 // pattern — no widget framework). The model owns focus/selection state and
 // passes it in as flags.
 
-// panel renders a titled card. When width > 0 the body wraps to fit. A bordered
-// panel draws a rounded box with the title on its first inner row; a borderless
-// panel (narrow layouts) draws a bold title with an indented body to save the
-// two horizontal cells a border would cost.
-func (s Styles) panel(title, body string, width int, active, bordered bool) string {
-	if !bordered {
-		head := s.PanelTitle.Render(title)
-		bodyW := width - 1
-		if bodyW < 1 {
-			bodyW = 1
-		}
-		indented := s.r.NewStyle().Width(bodyW).MarginLeft(1).Render(body)
-		return lipgloss.JoinVertical(lipgloss.Left, head, indented)
-	}
-	st := s.Panel
-	if active {
-		st = s.PanelActive
-	}
-	if width > 0 {
-		// Width is the content+padding box; the border adds one cell per side,
-		// so subtract 2 to make the rendered block exactly `width` wide.
-		st = st.Width(width - 2)
-	}
-	head := s.PanelTitle.Render(title)
-	return st.Render(lipgloss.JoinVertical(lipgloss.Left, head, body))
-}
-
 // segmented renders the OFF|PROXY|VPN selector. selected is the running mode;
 // cursor is the keyboard position; disabled greys a segment (VPN while Cisco is
 // active). The whole control sits in a focused-coloured box so it reads as the

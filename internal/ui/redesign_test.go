@@ -170,84 +170,82 @@ func TestSelector_WrapNavigation(t *testing.T) {
 	}
 }
 
-// --- pane-grid model: Tab cycles m.pane; Enter/'o'/click expand ---
+// --- sidebar model: ↑/↓/Tab move m.section; Enter/→/1-7/'o'/click open ---
 
-func TestPaneRing_TabCyclesPanesAndStatusIsDefault(t *testing.T) {
+func TestSidebar_TabCyclesSectionsAndModeIsDefault(t *testing.T) {
 	m := newWithCaps(&fakeBackend{}, nil, asciiCaps()).WithLoadedProfile()
 	m, _ = step(m, tea.WindowSizeMsg{Width: 110, Height: 32})
-	// Focus defaults to the mode selector (-1) → the СТАТУС pane is highlighted.
-	if m.Focus() != -1 {
-		t.Fatalf("focus should default to the selector (-1), got %d", m.Focus())
+	// Selection defaults to the Режим home (the OFF/PROXY/VPN selector lives there).
+	if m.Section() != navMode {
+		t.Fatalf("section should default to navMode, got %d", m.Section())
 	}
-	if m.pane != paneStatus {
-		t.Fatalf("the focused pane should default to paneStatus, got %d", m.pane)
-	}
-	// Tab walks the focus ring and the highlighted pane follows it. The first Tab
-	// focuses Соединения → paneConns.
+	// Tab walks the nav ring; the first Tab focuses Соединения.
 	m, _ = step(m, tea.KeyMsg{Type: tea.KeyTab})
-	if m.Focus() != secConns {
-		t.Fatalf("first Tab should focus Соединения (%d), got %d", secConns, m.Focus())
+	if m.Section() != navConns {
+		t.Fatalf("first Tab should focus navConns (%d), got %d", navConns, m.Section())
 	}
-	if m.pane != paneConns {
-		t.Fatalf("Tab should move the highlighted pane to paneConns (%d), got %d", paneConns, m.pane)
-	}
-	// Tab all the way around returns to the selector.
-	seen := map[int]bool{m.pane: true}
-	for i := 0; i < sectionPaneRingLen(); i++ {
+	// Tab all the way around returns to navMode.
+	for i := 0; i < navCount-1; i++ {
 		m, _ = step(m, tea.KeyMsg{Type: tea.KeyTab})
-		seen[m.pane] = true
 	}
-	if m.Focus() != -1 || m.pane != paneStatus {
-		t.Errorf("Tab should wrap back to the selector/paneStatus, got focus=%d pane=%d", m.Focus(), m.pane)
+	if m.Section() != navMode {
+		t.Errorf("Tab should wrap back to navMode, got %d", m.Section())
 	}
 }
 
-// sectionPaneRingLen is the number of разделы chips (the Tab ring length minus the
-// selector slot); a small local helper to keep the wrap loop readable.
-func sectionPaneRingLen() int { return len(dashSectionLabels) }
-
-func TestPaneRing_EnterExpandsFocusedSection(t *testing.T) {
+func TestSidebar_ArrowsMoveSelection(t *testing.T) {
 	m := newWithCaps(&fakeBackend{}, nil, asciiCaps()).WithLoadedProfile()
 	m, _ = step(m, tea.WindowSizeMsg{Width: 110, Height: 32})
-	// Tab to Соединения, then Enter expands it full-screen.
-	m, _ = step(m, tea.KeyMsg{Type: tea.KeyTab})
-	if m.pane != paneConns {
-		t.Fatalf("precondition: paneConns focused, got %d", m.pane)
+	m, _ = step(m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.Section() != navConns {
+		t.Fatalf("Down should move to navConns, got %d", m.Section())
 	}
+	m, _ = step(m, tea.KeyMsg{Type: tea.KeyUp})
+	if m.Section() != navMode {
+		t.Errorf("Up should return to navMode, got %d", m.Section())
+	}
+}
+
+func TestSidebar_EnterOpensSection(t *testing.T) {
+	m := newWithCaps(&fakeBackend{}, nil, asciiCaps()).WithLoadedProfile()
+	m, _ = step(m, tea.WindowSizeMsg{Width: 110, Height: 32})
+	m, _ = step(m, tea.KeyMsg{Type: tea.KeyTab}) // → navConns
 	m, _ = step(m, enterKey)
-	if !m.expanded {
-		t.Error("Enter on a focused pane should set expanded")
-	}
 	if !m.ShowingConns() {
-		t.Error("Enter on the focused Соединения pane should open the connections view")
+		t.Error("Enter on navConns should open the connections view")
 	}
 }
 
-func TestPaneRing_OExpandsConsolePane(t *testing.T) {
+func TestSidebar_NumberJumpOpens(t *testing.T) {
 	m := newWithCaps(&fakeBackend{}, nil, asciiCaps()).WithLoadedProfile()
 	m, _ = step(m, tea.WindowSizeMsg{Width: 110, Height: 32})
-	m.pane = paneConsole
+	// '3' → navApps (index 2) → opens the Приложения picker.
+	m, _ = step(m, rune_("3"))
+	if m.Section() != navApps || !m.showProc {
+		t.Errorf("'3' should open Приложения (section=%d showProc=%v)", m.Section(), m.showProc)
+	}
+}
+
+func TestSidebar_OOpensConsole(t *testing.T) {
+	m := newWithCaps(&fakeBackend{}, nil, asciiCaps()).WithLoadedProfile()
+	m, _ = step(m, tea.WindowSizeMsg{Width: 110, Height: 32})
 	m, _ = step(m, rune_("o"))
-	if !m.expanded {
-		t.Error("'o' should expand the focused pane")
+	if !m.ShowingConsole() || m.Section() != navConsole {
+		t.Errorf("'o' should open the console section (showConsole=%v section=%d)", m.ShowingConsole(), m.Section())
 	}
-	if m.pane != paneConsole {
-		t.Errorf("'o' should keep paneConsole focused, got %d", m.pane)
-	}
-	// Esc collapses back to the grid.
 	m, _ = step(m, escKey)
-	if m.expanded {
-		t.Error("Esc should collapse an expanded pane back to the grid")
+	if m.ShowingConsole() {
+		t.Error("Esc should close the console overlay")
 	}
 }
 
-func TestPaneRing_SelectorRightStillDrivesSegCursor(t *testing.T) {
+func TestSidebar_SelectorRightDrivesSegCursor(t *testing.T) {
 	m := newWithCaps(&fakeBackend{}, nil, asciiCaps()).WithLoadedProfile()
 	m, _ = step(m, tea.WindowSizeMsg{Width: 110, Height: 32})
-	// ←/→ on the focused СТАТУС pane (focus == -1) drives the OFF/PROXY/VPN cursor.
+	// ←/→ on the Режим home drives the OFF/PROXY/VPN cursor.
 	m, _ = step(m, tea.KeyMsg{Type: tea.KeyRight})
 	if m.SegCursor() != 1 {
-		t.Fatalf("right on the СТАТУС pane should advance the selector to PROXY, got %d", m.SegCursor())
+		t.Fatalf("right on the Режим home should advance the selector to PROXY, got %d", m.SegCursor())
 	}
 	// Enter on the selector applies the mode.
 	m, cmd := step(m, enterKey)
@@ -274,26 +272,26 @@ func TestSelector_CursorRestoredAfterCiscoBlock(t *testing.T) {
 	}
 }
 
-// --- mouse: click focuses a pane, click again expands it ---
+// --- mouse: click selects a nav item, click again opens it ---
 
-func TestMouse_ClickPaneFocusesThenExpands(t *testing.T) {
+func TestMouse_ClickNavSelectsThenOpens(t *testing.T) {
 	m := newWithCaps(&fakeBackend{}, nil, asciiCaps()).WithLoadedProfile()
 	m, _ = step(m, tea.WindowSizeMsg{Width: 120, Height: 36})
-	if m.pane != paneStatus {
-		t.Fatalf("precondition: paneStatus focused, got %d", m.pane)
+	if m.Section() != navMode {
+		t.Fatalf("precondition: navMode selected, got %d", m.Section())
 	}
-	// First click on the (unfocused) console pane focuses it without expanding.
-	m, _ = clickZone(t, m, zonePane(paneConsole))
-	if m.pane != paneConsole {
-		t.Fatalf("clicking the console pane should focus it, got %d", m.pane)
+	// First click on Соединения selects it without opening.
+	m, _ = clickZone(t, m, zoneNav(navConns))
+	if m.Section() != navConns {
+		t.Fatalf("clicking a nav item should select it, got %d", m.Section())
 	}
-	if m.expanded {
-		t.Error("first click should only focus, not expand")
+	if m.ShowingConns() {
+		t.Error("first click should only select, not open")
 	}
-	// Second click on the now-focused pane expands it.
-	m, _ = clickZone(t, m, zonePane(paneConsole))
-	if !m.expanded {
-		t.Error("clicking the already-focused pane should expand it")
+	// Second click on the now-selected item opens it.
+	m, _ = clickZone(t, m, zoneNav(navConns))
+	if !m.ShowingConns() {
+		t.Error("clicking the already-selected nav item should open it")
 	}
 }
 

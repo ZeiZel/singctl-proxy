@@ -16,7 +16,7 @@ func NewLister() Lister { return procLister{} }
 
 type procLister struct{}
 
-func (procLister) List(_ context.Context) ([]Process, error) {
+func (procLister) List(_ context.Context) ([]App, error) {
 	// inode → local port for every TCP socket.
 	inodePort := map[uint64]int{}
 	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
@@ -31,20 +31,38 @@ func (procLister) List(_ context.Context) ([]Process, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []Process
+	// One pass over /proc: build pid→ppid and pid→name for ALL processes (needed
+	// to climb the parent chain past non-networked ancestors), and collect the
+	// processes that actually have network sockets.
+	ppid := map[int]int{}
+	name := map[int]string{}
+	var procs []Process
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
 		if err != nil {
 			continue
 		}
+		nm, parent := commForPID(pid), ppidForPID(pid)
+		name[pid] = nm
+		ppid[pid] = parent
 		ports := portsForPID(pid, inodePort)
 		if len(ports) == 0 {
-			continue // only processes with network sockets
+			continue // only processes with network sockets contribute ports
 		}
-		out = append(out, Process{PID: pid, Name: commForPID(pid), Ports: dedupSortPorts(ports)})
+		procs = append(procs, Process{PID: pid, Name: nm, Ports: dedupSortPorts(ports)})
 	}
-	sortByName(out)
-	return out, nil
+	return groupApps(procs, ppid, name), nil
+}
+
+// ppidForPID reads the parent PID from /proc/<pid>/stat (field 4). The comm field
+// (2) is wrapped in parens and may contain spaces/parens, so we key off the last
+// ')' before splitting. Returns 0 when unavailable.
+func ppidForPID(pid int) int {
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return 0
+	}
+	return parseStatPPID(string(data))
 }
 
 // portsForPID scans /proc/<pid>/fd for socket inodes and maps them to ports.

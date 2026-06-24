@@ -17,7 +17,12 @@ MANPAGE := cmd/singctl/singctl.1
 SINGBOX_TAGS := singbox with_utls with_clash_api
 
 .PHONY: build build-macos build-windows build-linux build-all \
-	test test-integration tidy run lint clean install-man uninstall-man
+	test test-integration tidy run lint clean install-man uninstall-man \
+	install uninstall
+
+# Install prefix for the binary (`make install`).
+PREFIX ?= /usr/local
+UNAME_S := $(shell uname -s)
 
 # Shipping build: links the real sing-box core (-tags singbox). Requires the
 # library in the module graph first: `go get github.com/sagernet/sing-box@v1.12.x`.
@@ -82,6 +87,26 @@ install-man:
 
 uninstall-man:
 	rm -f $(MANPREFIX)/man1/singctl.1
+
+# Install singctl as a system tool. On macOS this also installs a LaunchDaemon
+# (system-wide VPN, autostart) via scripts/install-macos.sh; on Linux it just
+# drops the binary into $(PREFIX)/bin (a systemd unit is a future follow-up).
+# Run with sudo. Build first: `make build`.
+install: build
+ifeq ($(UNAME_S),Darwin)
+	./scripts/install-macos.sh
+else
+	install -d $(PREFIX)/bin
+	install -m 0755 bin/$(BINARY) $(PREFIX)/bin/$(BINARY)
+	@echo "singctl installed to $(PREFIX)/bin/$(BINARY) — run with sudo."
+endif
+
+uninstall:
+ifeq ($(UNAME_S),Darwin)
+	./scripts/install-macos.sh uninstall
+else
+	rm -f $(PREFIX)/bin/$(BINARY)
+endif
 
 clean:
 	rm -rf bin

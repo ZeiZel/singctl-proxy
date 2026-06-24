@@ -1,10 +1,7 @@
 package ui
 
 import (
-	"strings"
-
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // btnSpec describes one clickable action button in the visible action bar. id is
@@ -38,28 +35,23 @@ func (m Model) actionButtons() []btnSpec {
 		{id: "btn-mode-1", label: "ПРОКСИ", key: "p", fire: func(m Model) (tea.Model, tea.Cmd) { return m.applyMode(RunProxy) }},
 		{id: "btn-mode-2", label: "VPN", key: "v", fire: func(m Model) (tea.Model, tea.Cmd) { return m.applyMode(RunVPN) }},
 		{id: "btn-apps", label: "Запустить", key: "x", fire: func(m Model) (tea.Model, tea.Cmd) {
-			m.pane = paneApps
-			return m.expandSection(secApps)
+			return m.openNav(navApps)
 		}},
 		{id: "btn-logs", label: "Логи", key: "l", fire: func(m Model) (tea.Model, tea.Cmd) {
-			m.pane = paneSingbox
-			return m.expandSection(secLogs)
+			return m.openNav(navLogs)
 		}},
 		{id: "btn-conns", label: "Соединения", key: "c", fire: func(m Model) (tea.Model, tea.Cmd) {
-			m.pane = paneConns
-			return m.expandSection(secConns)
+			return m.openNav(navConns)
 		}},
 		{id: "btn-console", label: "Консоль", key: "o", fire: func(m Model) (tea.Model, tea.Cmd) {
-			m.pane = paneConsole
-			return m.expandPane()
+			return m.openNav(navConsole)
 		}},
 		{id: "btn-settings", label: "Настройки", key: "g", fire: func(m Model) (tea.Model, tea.Cmd) {
-			m.pane = paneSettings
-			return m.expandSection(secSettings)
+			return m.openNav(navSettings)
 		}},
 		daemon,
 		{id: "btn-stop", label: "Стоп", key: "s", fire: func(m Model) (tea.Model, tea.Cmd) { return m.applyMode(RunOff) }},
-		{id: "btn-keys", label: "Ключи", key: "e", fire: func(m Model) (tea.Model, tea.Cmd) { return m.openSection(secKeys) }},
+		{id: "btn-keys", label: "Ключи", key: "e", fire: func(m Model) (tea.Model, tea.Cmd) { return m.openNav(navKeys) }},
 	}
 }
 
@@ -77,41 +69,7 @@ func (m Model) buttonActive(spec btnSpec) bool {
 	return false
 }
 
-// renderButtonBar lays out the action buttons as clickable pills, wrapping onto
-// new rows when the running width is exceeded. Each pill is marked with its
-// bubblezone id so handleMouse can hit-test it before the pane grid.
-func (m Model) renderButtonBar(width int) string {
-	if width < 1 {
-		width = 1
-	}
-	s := m.styles
-	specs := m.actionButtons()
-
-	const gap = 1
-	var rows []string
-	var row []string
-	rowW := 0
-	for _, spec := range specs {
-		st := s.Button
-		if m.buttonActive(spec) {
-			st = s.ButtonActive
-		}
-		pill := m.zm.Mark(spec.id, st.Render(spec.label))
-		pw := lipgloss.Width(pill)
-		if len(row) > 0 && rowW+gap+pw > width {
-			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, row...))
-			row = nil
-			rowW = 0
-		}
-		if len(row) > 0 {
-			row = append(row, " ")
-			rowW += gap
-		}
-		row = append(row, pill)
-		rowW += pw
-	}
-	if len(row) > 0 {
-		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, row...))
-	}
-	return strings.Join(rows, "\n")
-}
+// btnSpec.fire paths are still exercised directly by the action-button tests and
+// reused by openNav; the actions are surfaced in the UI through the sidebar, the
+// in-content OFF/PROXY/VPN selector and the Настройки «Запустить в фоне» action,
+// so no separate pill bar is rendered (it duplicated the sidebar).

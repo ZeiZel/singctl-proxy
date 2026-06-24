@@ -36,12 +36,93 @@ func (r *linuxRouter) AddPID(ctx context.Context, pid int) error {
 	if err := r.ensureSetup(ctx); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(r.cgroupDir(), "cgroup.procs"),
-		[]byte(strconv.Itoa(pid)), 0o644); err != nil {
+	if err := r.writeCgroupProcs(pid); err != nil {
 		return fmt.Errorf("add pid %d to cgroup: %w", pid, err)
 	}
 	r.pids.add(pid)
+	// Pull in already-running descendants too. cgroup v2 membership is inherited
+	// by FUTURE forks automatically, but helper/child processes spawned before
+	// this add (e.g. an already-running Cursor's renderer/GPU helpers) are still
+	// in their old cgroup, so their traffic would escape the proxy. Sweep the
+	// current process tree once and move the whole subtree in. Best-effort: a
+	// child may exit mid-sweep, and new forks from now on join ours on their own.
+	for _, child := range descendantsOf(pid, readProcPPIDs()) {
+		_ = r.writeCgroupProcs(child)
+	}
 	return nil
+}
+
+// writeCgroupProcs moves a single PID into the routed cgroup.
+func (r *linuxRouter) writeCgroupProcs(pid int) error {
+	return os.WriteFile(filepath.Join(r.cgroupDir(), "cgroup.procs"),
+		[]byte(strconv.Itoa(pid)), 0o644)
+}
+
+// descendantsOf returns all transitive children of root given a pid→ppid map,
+// excluding root itself. Cycle-safe. Pure, so it is unit-tested directly.
+func descendantsOf(root int, ppid map[int]int) []int {
+	children := map[int][]int{}
+	for pid, parent := range ppid {
+		children[parent] = append(children[parent], pid)
+	}
+	var out []int
+	seen := map[int]bool{root: true}
+	queue := append([]int{}, children[root]...)
+	for len(queue) > 0 {
+		pid := queue[0]
+		queue = queue[1:]
+		if seen[pid] {
+			continue
+		}
+		seen[pid] = true
+		out = append(out, pid)
+		queue = append(queue, children[pid]...)
+	}
+	return out
+}
+
+// readProcPPIDs scans /proc for a pid→ppid map of every live process.
+func readProcPPIDs() map[int]int {
+	out := map[int]int{}
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		if parent := statPPID(pid); parent > 0 {
+			out[pid] = parent
+		}
+	}
+	return out
+}
+
+// statPPID reads the parent PID from /proc/<pid>/stat (field 4). The comm field
+// may contain spaces/parens, so we split after the last ')'.
+func statPPID(pid int) int {
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return 0
+	}
+	return parseStatLine(string(data))
+}
+
+// parseStatLine extracts the parent PID (field 4) from a /proc/<pid>/stat line.
+// The comm field may contain spaces/parens, so split after the last ')'. Pure.
+func parseStatLine(s string) int {
+	rparen := strings.LastIndexByte(s, ')')
+	if rparen < 0 || rparen+2 >= len(s) {
+		return 0
+	}
+	fields := strings.Fields(s[rparen+1:])
+	if len(fields) < 2 {
+		return 0
+	}
+	ppid, _ := strconv.Atoi(fields[1])
+	return ppid
 }
 
 func (r *linuxRouter) RemovePID(_ context.Context, pid int) error {

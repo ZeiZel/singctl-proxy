@@ -1,5 +1,7 @@
 package ui
 
+import "fmt"
+
 // RunMode is the user-facing running state shown on the dashboard. The user
 // chooses it explicitly; nothing runs until they do.
 type RunMode int
@@ -98,11 +100,22 @@ type procResultMsg struct {
 	pid  int // PID now routed/launched (0 if none); tracked in routedPIDs
 }
 
-// ProcInfo is one process for the per-process routing picker.
+// ProcInfo is one application for the per-process routing picker. Helper/forked
+// processes are folded into their main app; Children is how many were folded.
 type ProcInfo struct {
-	PID   int
-	Name  string
-	Ports string // pre-rendered ":80 :443"
+	PID      int
+	Name     string
+	Ports    string // pre-rendered ":80 :443"
+	Children int    // helper processes folded under this app (0 = standalone)
+}
+
+// Label is the picker display name: the app name plus a "+N" badge when helper
+// processes are folded under it (so the user sees the swarm is collapsed).
+func (p ProcInfo) Label() string {
+	if p.Children > 0 {
+		return fmt.Sprintf("%s (+%d)", p.Name, p.Children)
+	}
+	return p.Name
 }
 
 type procListMsg struct {

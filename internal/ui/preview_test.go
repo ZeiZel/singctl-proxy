@@ -63,8 +63,7 @@ func TestPreview(t *testing.T) {
 	render("console expanded", 104, 26, withConsole(func(m Model) Model {
 		m.phys = "en0"
 		m.mode = RunProxy
-		m.pane = paneConsole
-		tm, _ := m.expandPane()
+		tm, _ := m.openNav(navConsole)
 		return tm.(Model)
 	}))
 	render("dashboard cisco active", 70, 22, func(m Model) Model { m.phys = "en0"; m.cisco = true; m.segCursor = 2; return m })

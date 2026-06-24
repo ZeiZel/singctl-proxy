@@ -19,12 +19,10 @@ const (
 	minCols     = 34  // below this the UI can't render legibly
 	minRowsWide = 12  // header + compact panels + horizontal selector + footer
 	minRowsNarr = 15  // narrow stacks a 5-row vertical selector → needs more
-	narrowMax   = 56  // [minCols, narrowMax) → narrow
-	wideMin     = 100 // [wideMin, ∞) → wide; between → medium
-	panelMax    = 72  // a single bordered panel never grows past this
-	sideMax     = 52  // each side-by-side panel never grows past this
+	narrowMax = 56  // [minCols, narrowMax) → narrow
+	wideMin   = 100 // [wideMin, ∞) → wide; between → medium
 
-	dashConnRows = 6 // max live-connection rows shown in the dashboard panel
+	dashConnRows = 6 // max live-connection rows shown in the dashboard preview
 )
 
 func layoutFor(w, h int) layout {
