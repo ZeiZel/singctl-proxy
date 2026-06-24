@@ -196,10 +196,22 @@ func addLinkCmd(b Backend, link string) tea.Cmd {
 	}
 }
 
+// hintBindErr turns a raw "address already in use" bind failure into actionable
+// advice: a daemon (or stray instance) already holds the proxy ports, so the
+// user should attach to it / stop it rather than start a second one.
+func hintBindErr(err error) error {
+	if err != nil && strings.Contains(err.Error(), "address already in use") {
+		return fmt.Errorf("%w — порт уже занят: похоже, демон уже запущен. "+
+			"Остановите его (sudo singctl --stop) или переустановите (make install), "+
+			"и singctl сам подключится к нему", err)
+	}
+	return err
+}
+
 func enableProxyCmd(b Backend) tea.Cmd {
 	return safe(func() tea.Msg {
 		if err := b.EnableProxy(context.Background()); err != nil {
-			return errMsg{err}
+			return errMsg{hintBindErr(err)}
 		}
 		return proxyEnabledMsg{}
 	})
@@ -208,7 +220,7 @@ func enableProxyCmd(b Backend) tea.Cmd {
 func enableVPNCmd(b Backend) tea.Cmd {
 	return safe(func() tea.Msg {
 		if err := b.EnableVPN(context.Background()); err != nil {
-			return errMsg{err}
+			return errMsg{hintBindErr(err)}
 		}
 		return vpnEnabledMsg{}
 	})

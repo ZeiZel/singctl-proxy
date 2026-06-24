@@ -1,16 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  singctl system VPN LaunchDaemon.
+  singctl system VPN LaunchDaemon — REFERENCE ONLY.
+
+  scripts/install-macos.sh (`make install`) does NOT copy this file verbatim: it
+  generates the installed plist with an EnvironmentVariables block pinning
+  SUDO_USER and HOME to the installing user. That is REQUIRED — the daemon runs
+  as root (launchd), but it must use that user's ~/.config/singctl (the same dir
+  the interactive `sudo singctl` uses) so the client can find and attach to it.
+  Without it the daemon advertises in /var/root/.config/singctl, the client can't
+  see it, and starting a second instance fails with "address already in use".
 
   Runs `singctl --headless --vpn` in the foreground (NOT `--daemon`: launchd is
-  the supervisor, so the process must stay attached, not self-detach). The key
-  comes from the saved profile under the real user's ~/.config/singctl, so save
-  a key once interactively before enabling this daemon (see docs/macos.md).
+  the supervisor, so the process must stay attached). The key comes from the saved
+  profile under the user's ~/.config/singctl, so save a key once interactively
+  first (docs/macos.md). KeepAlive restarts it; ThrottleInterval avoids a tight
+  loop when no key is configured yet.
 
-  Installed to /Library/LaunchDaemons/com.singctl.proxy.plist by
-  scripts/install-macos.sh (`make install`). KeepAlive restarts it if it dies;
-  ThrottleInterval avoids a tight restart loop when no key is configured yet.
+  To load THIS file by hand, add an EnvironmentVariables dict with SUDO_USER and
+  HOME for your user (see the generated /Library/LaunchDaemons/com.singctl.proxy.plist).
 -->
 <plist version="1.0">
 <dict>
@@ -23,6 +31,15 @@
         <string>--headless</string>
         <string>--vpn</string>
     </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- the installer fills these with the installing user's values -->
+        <key>SUDO_USER</key>
+        <string>__USER__</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
 
     <key>RunAtLoad</key>
     <true/>

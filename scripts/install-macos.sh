@@ -26,7 +26,6 @@ BIN_DST="/usr/local/bin/singctl"
 # Resolve repo root from this script's location so it works from anywhere.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PLIST_SRC="${REPO_ROOT}/packaging/macos/${LABEL}.plist"
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -54,13 +53,53 @@ fi
 # into the system paths needs sudo.
 BIN_SRC="${REPO_ROOT}/bin/singctl"
 [ -x "${BIN_SRC}" ] || die "бинарь не найден: ${BIN_SRC} — сначала выполните 'make build'"
-[ -f "${PLIST_SRC}" ] || die "plist не найден: ${PLIST_SRC}"
+
+# The daemon runs as root (launchd), but it must use the INSTALLING USER's
+# ~/.config/singctl — same place the interactive `sudo singctl` looks — otherwise
+# the client can't find/attach to the daemon and tries to bind its ports again
+# ("address already in use"). We pin SUDO_USER/HOME in the plist so the root
+# daemon resolves to that user's config dir (instance.json, profile, socket, log).
+REAL_USER="${SUDO_USER:-$(id -un)}"
+REAL_HOME="$(eval echo "~${REAL_USER}")"
+[ -n "${REAL_USER}" ] && [ -d "${REAL_HOME}" ] || die "не удалось определить домашний каталог пользователя ${REAL_USER}"
 
 echo "==> ставлю команду singctl -> ${BIN_DST}"
 $SUDO install -m 0755 "${BIN_SRC}" "${BIN_DST}"
 
-echo "==> ставлю LaunchDaemon -> ${PLIST_DST}"
-$SUDO install -m 0644 "${PLIST_SRC}" "${PLIST_DST}"
+echo "==> ставлю LaunchDaemon -> ${PLIST_DST} (config: ${REAL_HOME}/.config/singctl)"
+$SUDO tee "${PLIST_DST}" >/dev/null <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${BIN_DST}</string>
+        <string>--headless</string>
+        <string>--vpn</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SUDO_USER</key>
+        <string>${REAL_USER}</string>
+        <key>HOME</key>
+        <string>${REAL_HOME}</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>/var/log/singctl.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/singctl.log</string>
+</dict>
+</plist>
+PLIST
 $SUDO chown root:wheel "${PLIST_DST}"
 
 echo "==> загружаю ${LABEL}"
