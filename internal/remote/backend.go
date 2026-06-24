@@ -45,6 +45,8 @@ type Backend struct {
 
 	pollMu     sync.Mutex
 	pollCancel context.CancelFunc
+
+	consoleCancel context.CancelFunc
 }
 
 // New builds a remote backend for an advertised instance. socksPort is where the
@@ -62,7 +64,52 @@ func New(inst control.Instance, socksPort int, notes chan<- tea.Msg) *Backend {
 		notes:       notes,
 	}
 	b.startPoller()
+	b.startConsolePoller()
 	return b
+}
+
+// consoleEntry mirrors app.ConsoleEntry for decoding CONSOLE-POLL replies (kept
+// local so remote stays decoupled from package app).
+type consoleEntry struct {
+	ID     int    `json:"id"`
+	PID    int    `json:"pid"`
+	App    string `json:"app"`
+	Stream string `json:"stream"`
+	Text   string `json:"text"`
+}
+
+// startConsolePoller tails the daemon's per-app console over the control socket
+// (CONSOLE-POLL <sinceID>) and pushes each line to the UI as a ConsoleMsg, so an
+// attached client sees the sub-logs of apps launched inside the daemon.
+func (b *Backend) startConsolePoller() {
+	ctx, cancel := context.WithCancel(context.Background())
+	b.consoleCancel = cancel
+	go func() {
+		last := 0
+		t := time.NewTicker(pollInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				reply, err := control.Request(b.sock, "CONSOLE-POLL", strconv.Itoa(last))
+				if err != nil {
+					continue
+				}
+				var entries []consoleEntry
+				if json.Unmarshal([]byte(reply), &entries) != nil {
+					continue
+				}
+				for _, e := range entries {
+					if e.ID > last {
+						last = e.ID
+					}
+					b.push(ui.ConsoleMsg{PID: e.PID, App: e.App, Stream: e.Stream, Text: e.Text})
+				}
+			}
+		}
+	}()
 }
 
 // --- ui.Backend: mode / keys / settings over the control socket ---
@@ -260,6 +307,10 @@ func (b *Backend) Close() {
 	if b.pollCancel != nil {
 		b.pollCancel()
 		b.pollCancel = nil
+	}
+	if b.consoleCancel != nil {
+		b.consoleCancel()
+		b.consoleCancel = nil
 	}
 	b.pollMu.Unlock()
 	if b.router != nil {

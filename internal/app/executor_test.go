@@ -9,6 +9,7 @@ import (
 	"singctl/internal/core"
 	"singctl/internal/monitor"
 	"singctl/internal/policy"
+	"singctl/internal/procproxy"
 	"singctl/internal/runtime"
 	"singctl/internal/types"
 	"singctl/internal/ui"
@@ -176,5 +177,27 @@ func TestExecutor_Apply_RefreshFromProxyOnly(t *testing.T) {
 	})
 	if e.manager().State() != runtime.StateProxyOnly {
 		t.Errorf("refresh from proxy-only -> %v, want proxy-only", e.manager().State())
+	}
+}
+
+func TestConsoleRing_AppendAndSince(t *testing.T) {
+	e, _ := newExecutor()
+	for i := 0; i < 3; i++ {
+		e.appendConsole(procproxy.OutputLine{PID: 42, App: "zen", Stream: "stdout", Text: "line"})
+	}
+	all := e.ConsoleSince(0)
+	if len(all) != 3 {
+		t.Fatalf("ConsoleSince(0) = %d entries, want 3", len(all))
+	}
+	if all[0].ID != 1 || all[2].ID != 3 || all[0].App != "zen" {
+		t.Errorf("entries mis-tagged: %+v", all)
+	}
+	// Polling from the last seen id returns only newer lines.
+	if got := e.ConsoleSince(all[2].ID); len(got) != 0 {
+		t.Errorf("ConsoleSince(last) should be empty, got %d", len(got))
+	}
+	e.appendConsole(procproxy.OutputLine{PID: 42, App: "zen", Stream: "exit", Text: "[exited]"})
+	if got := e.ConsoleSince(all[2].ID); len(got) != 1 || got[0].Stream != "exit" {
+		t.Errorf("ConsoleSince should return the one new entry, got %+v", got)
 	}
 }

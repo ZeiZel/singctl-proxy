@@ -377,6 +377,16 @@ func registerControl(srv *control.Server, executor *app.Executor, stop func(), s
 		}
 		return "OK", executor.RenameLink(context.Background(), idx, name)
 	})
+	srv.Handle("CONSOLE-POLL", func(arg string) (string, error) {
+		since, _ := strconv.Atoi(strings.TrimSpace(arg))
+		// Compact JSON (one line): the control protocol is line-delimited, and
+		// json escapes any newlines inside the captured text.
+		data, err := json.Marshal(executor.ConsoleSince(since))
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	})
 }
 
 // randomSecret returns a 128-bit hex token used as the default Clash API secret

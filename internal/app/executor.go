@@ -69,6 +69,56 @@ type Executor struct {
 
 	listerOnce sync.Once
 	lister     proclist.Lister
+
+	// consoleLog is a ring of recent per-app stdout/stderr lines with monotonic
+	// ids, so an attached client can poll the daemon's app output (CONSOLE-POLL).
+	consoleMu  sync.Mutex
+	consoleLog []ConsoleEntry
+	consoleSeq int
+}
+
+// consoleRingMax caps the console ring (older lines are dropped).
+const consoleRingMax = 2000
+
+// ConsoleEntry is one buffered console line tagged with a monotonic id, returned
+// by ConsoleSince and marshalled over the control socket (CONSOLE-POLL).
+type ConsoleEntry struct {
+	ID     int    `json:"id"`
+	PID    int    `json:"pid"`
+	App    string `json:"app"`
+	Stream string `json:"stream"`
+	Text   string `json:"text"`
+}
+
+// appendConsole records a captured output line in the ring.
+func (e *Executor) appendConsole(l procproxy.OutputLine) {
+	e.consoleMu.Lock()
+	defer e.consoleMu.Unlock()
+	e.consoleSeq++
+	e.consoleLog = append(e.consoleLog, ConsoleEntry{
+		ID: e.consoleSeq, PID: l.PID, App: l.App, Stream: l.Stream, Text: l.Text,
+	})
+	if len(e.consoleLog) > consoleRingMax {
+		e.consoleLog = e.consoleLog[len(e.consoleLog)-consoleRingMax:]
+	}
+}
+
+// ConsoleSince returns buffered console entries newer than id (capped), so a
+// poller advances by the last id it has seen.
+func (e *Executor) ConsoleSince(id int) []ConsoleEntry {
+	e.consoleMu.Lock()
+	defer e.consoleMu.Unlock()
+	const maxBatch = 500
+	out := make([]ConsoleEntry, 0, 32)
+	for _, ent := range e.consoleLog {
+		if ent.ID > id {
+			out = append(out, ent)
+		}
+	}
+	if len(out) > maxBatch {
+		out = out[len(out)-maxBatch:]
+	}
+	return out
 }
 
 // ListProcesses enumerates processes with network sockets so the UI can offer a
@@ -565,6 +615,7 @@ func (e *Executor) procRouter() procproxy.Router {
 			HTTPAddr:   fmt.Sprintf("127.0.0.1:%d", http),
 			LaunchUser: e.launchUser,
 			Output: procproxy.SinkFunc(func(l procproxy.OutputLine) {
+				e.appendConsole(l) // ring for CONSOLE-POLL (attached clients)
 				e.pushNonBlocking(ui.ConsoleMsg{PID: l.PID, App: l.App, Stream: l.Stream, Text: l.Text})
 			}),
 		})
