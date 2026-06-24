@@ -123,9 +123,9 @@ func stopDaemonCmd(b Backend) tea.Cmd {
 // introTick schedules the next entry-animation step. The first run ticks slower
 // (a deliberate full reveal); later runs are a quick component loader.
 func introTick(full bool) tea.Cmd {
-	d := 90 * time.Millisecond
+	d := 200 * time.Millisecond // re-entry: a quick but visible component loader
 	if full {
-		d = 220 * time.Millisecond
+		d = 450 * time.Millisecond // first run: a deliberate, fully-visible reveal
 	}
 	return tea.Tick(d, func(time.Time) tea.Msg { return introTickMsg{} })
 }

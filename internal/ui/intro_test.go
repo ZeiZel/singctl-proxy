@@ -50,3 +50,43 @@ func TestIntro_ShortRunDoesNotMark(t *testing.T) {
 		t.Errorf("a non-first-run intro must not write the marker, calls=%d", b.introSeenCall)
 	}
 }
+
+func TestIntro_BouncingBallMoves(t *testing.T) {
+	m := newWithCaps(&fakeBackend{}, nil, asciiCaps()).WithLoadedProfile().WithIntro(true)
+	m, _ = step(m, tea.WindowSizeMsg{Width: 80, Height: 28})
+	col := func() int {
+		line := m.bouncingBall(80)
+		for _, l := range splitLines(line) {
+			for i, r := range l {
+				if r == 'o' || r == '●' {
+					return i
+				}
+			}
+		}
+		return -1
+	}
+	m.introFrame = 0
+	a := col()
+	m.introFrame = 10
+	b := col()
+	if a == b {
+		t.Errorf("the ball should move between frames (frame0=%d frame10=%d)", a, b)
+	}
+	if a < 0 || b < 0 {
+		t.Errorf("the ball should be rendered (cols %d,%d)", a, b)
+	}
+}
+
+func splitLines(s string) []string {
+	var out []string
+	cur := ""
+	for _, r := range s {
+		if r == '\n' {
+			out = append(out, cur)
+			cur = ""
+		} else {
+			cur += string(r)
+		}
+	}
+	return append(out, cur)
+}

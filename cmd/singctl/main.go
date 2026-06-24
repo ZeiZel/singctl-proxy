@@ -193,6 +193,7 @@ func runRemoteTUI(inst control.Instance, c *cli) int {
 		model = model.WithDisplayMode(modeFromLabel(st.Mode))
 	}
 	model = model.WithCurrentLinks(rb.CurrentLinks())
+	model = model.WithIntro(false) // short component loader when attaching
 
 	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 	go func() { <-ctx.Done(); program.Quit() }()

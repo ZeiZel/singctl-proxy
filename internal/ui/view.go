@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -661,15 +662,17 @@ func (m Model) modalView() string {
 
 // --- entry animation ---
 
-// introView renders the entry animation: a (typewriter-revealed, first run) logo,
-// a component-loading progress bar + checklist, centred. Any key skips it.
+// introView renders the entry animation: a reveal-animated banner, a bouncing
+// ball, and a component-loading progress bar + checklist, centred. Any key skips.
 func (m Model) introView() string {
 	s := m.styles
 	w, h := max(m.width, 1), max(m.height, 1)
 
-	const logo = "singctl"
+	// Banner: the title in a bordered accent box, the letters spaced out and
+	// revealed left-to-right by the spring on the first run.
+	const logo = "SINGCTL"
 	shown := logo
-	if m.introFull { // typewriter reveal driven by the spring
+	if m.introFull {
 		n := int(clampF(m.introPos, 0, 1) * float64(len(logo)))
 		if n < 1 {
 			n = 1
@@ -679,15 +682,18 @@ func (m Model) introView() string {
 		}
 		shown = logo[:n]
 	}
-	title := s.Title.Render(" " + shown + " ")
+	spaced := strings.Join(strings.Split(shown, ""), " ")
+	bw := clampWidth(w-6, 14, 40)
+	banner := s.r.NewStyle().
+		Border(s.gl.Border).BorderForeground(s.th.Accent).
+		Foreground(s.th.Accent).Bold(true).
+		Padding(1, 3).Align(lipgloss.Center).Width(bw).Render(spaced)
 
-	barW := clampWidth(w-8, 12, 36)
+	// Progress bar + component checklist.
 	bar := m.prog
-	bar.Width = barW
+	bar.Width = clampWidth(w-8, 12, 36)
 	frac := float64(m.introStage) / float64(len(introStages))
 	progress := bar.ViewAs(clampF(frac, 0, 1))
-
-	// Component checklist: done = filled dot, current = spinner, pending = hollow.
 	cells := make([]string, len(introStages))
 	for i, c := range introStages {
 		switch {
@@ -699,20 +705,57 @@ func (m Model) introView() string {
 			cells[i] = s.Subtle.Render(s.gl.DotOff + " " + c)
 		}
 	}
-	checklist := s.Subtle.Render(strings.Join(cells, "   "))
+	checklist := s.clampLine(strings.Join(cells, "   "), max(w-2, 1))
 
-	sub := "загрузка…"
+	sub := "загрузка компонентов…"
 	if m.introFull {
 		sub = "добро пожаловать в singctl"
 	}
+
 	content := lipgloss.JoinVertical(lipgloss.Center,
-		title, "",
+		banner, "",
 		s.Muted.Render(sub), "",
 		progress, "",
-		s.clampLine(checklist, max(w-2, 1)), "",
+		checklist, "",
 		s.Subtle.Render("(любая клавиша — пропустить)"),
 	)
-	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, content)
+	placed := lipgloss.Place(w, max(h-3, 1), lipgloss.Center, lipgloss.Center, content)
+	// A ball bounces along the bottom three rows — clear, lively motion.
+	full := lipgloss.JoinVertical(lipgloss.Left, placed, m.bouncingBall(w))
+	// Final clamp so a tall layout on a short terminal can never spill.
+	return s.r.NewStyle().MaxWidth(w).MaxHeight(h).Render(full)
+}
+
+// bouncingBall renders a 3-row strip with a ball that travels left↔right and
+// hops, animated by the intro frame counter (deterministic; no rand/time).
+func (m Model) bouncingBall(w int) string {
+	s := m.styles
+	if w < 4 {
+		return ""
+	}
+	ball := s.gl.DotOn
+	if !m.caps.Unicode {
+		ball = "o"
+	}
+	span := w - 1
+	travel := 2 * span // one full left→right→left cycle
+	p := (m.introFrame * 2) % travel
+	x := p
+	if x > span {
+		x = travel - p // reflect for the return leg
+	}
+	hop := math.Abs(math.Sin(float64(m.introFrame) * 0.45)) // 0..1
+	const rows = 3
+	row := (rows - 1) - int(hop*float64(rows-1)+0.5) // higher hop → higher row
+	lines := make([]string, rows)
+	for r := 0; r < rows; r++ {
+		if r == row {
+			lines[r] = strings.Repeat(" ", clampWidth(x, 0, span)) + s.colored(s.th.Accent, ball)
+		} else {
+			lines[r] = ""
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // --- too-small fallback ---

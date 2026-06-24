@@ -39,9 +39,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			target = 1.0
 		}
 		m.animPos, m.animVel = m.spring.Update(m.animPos, m.animVel, target)
-		// Spring the entry-animation reveal toward 1 while the intro is on screen.
+		// Spring the entry-animation reveal toward 1 and advance the bouncing-ball
+		// frame counter while the intro is on screen.
 		if m.screen == ScreenIntro {
 			m.introPos, m.introVel = m.spring.Update(m.introPos, m.introVel, 1.0)
+			m.introFrame++
 		}
 		return m, frameCmd()
 
@@ -945,7 +947,7 @@ func (m Model) requestVPN() (tea.Model, tea.Cmd) {
 		switch a {
 		case policy.ActShowWarning:
 			m.modal = "Cisco Secure Client активен — VPN-режим заблокирован, чтобы не конфликтовать ни единым пакетом. Отключите Cisco и повторите."
-			m.modalKind = modalInfo // dismiss on any key (not a confirm)
+			m.modalKind = modalInfo   // dismiss on any key (not a confirm)
 			m.segCursor = int(m.mode) // don't leave the cursor stranded on the blocked VPN segment
 			return m, nil
 		case policy.ActStartForwarder:

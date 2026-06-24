@@ -35,8 +35,8 @@ type Model struct {
 	width        int
 	height       int
 	input        textinput.Model
-	modal        string    // modal/popup text ("" = hidden)
-	modalKind    modalKind // info (dismiss on any key) vs confirm ([Да]/[Нет])
+	modal        string        // modal/popup text ("" = hidden)
+	modalKind    modalKind     // info (dismiss on any key) vs confirm ([Да]/[Нет])
 	pending      pendingAction // action to run when a confirm modal is accepted
 	status       string
 	errText      string
@@ -63,16 +63,16 @@ type Model struct {
 	latency    []LatencyRow // per-server failover latencies
 	latencySel string       // currently-selected server tag
 
-	showProc     bool            // Приложения view open (launcher + picker)
-	procInput    textinput.Model // process filter for the picker
-	launchInput  textinput.Model // "запустить приложение в прокси" field
-	appFocus     int             // 0 = launch field, 1 = picker, 2 = proxied list
-	procRows     []ProcInfo      // processes with network sockets (picker)
-	procCursor   int             // highlighted row in the filtered list
-	procErr      string          // process-list fetch error
-	proxied      []proxiedApp    // apps currently routed/launched through the proxy
-	proxiedCur   int             // highlighted row in the proxied list
-	procBusy     bool            // a launch/route is in flight (drives the loader)
+	showProc    bool            // Приложения view open (launcher + picker)
+	procInput   textinput.Model // process filter for the picker
+	launchInput textinput.Model // "запустить приложение в прокси" field
+	appFocus    int             // 0 = launch field, 1 = picker, 2 = proxied list
+	procRows    []ProcInfo      // processes with network sockets (picker)
+	procCursor  int             // highlighted row in the filtered list
+	procErr     string          // process-list fetch error
+	proxied     []proxiedApp    // apps currently routed/launched through the proxy
+	proxiedCur  int             // highlighted row in the proxied list
+	procBusy    bool            // a launch/route is in flight (drives the loader)
 
 	showSettings bool         // Настройки section open
 	showConsole  bool         // Консоль приложений section open
@@ -122,6 +122,7 @@ type Model struct {
 	introStage int
 	introPos   float64
 	introVel   float64
+	introFrame int // frame counter driving the bouncing-ball loader
 	postIntro  Screen
 
 	backend Backend
@@ -350,22 +351,22 @@ func (m Model) Init() tea.Cmd {
 
 // --- test/inspection accessors ---
 
-func (m Model) Screen() Screen          { return m.screen }
-func (m Model) Mode() RunMode           { return m.mode }
-func (m Model) ModalShown() bool        { return m.modal != "" }
-func (m Model) CiscoActive() bool       { return m.cisco }
-func (m Model) Status() string          { return m.status }
-func (m Model) ErrText() string         { return m.errText }
-func (m Model) ShowingLogs() bool       { return m.showLogs }
-func (m Model) Logs() string            { return m.logs }
-func (m Model) ShowingConns() bool      { return m.showConns }
-func (m Model) Conns() []ConnRow        { return m.conns }
-func (m Model) Latency() []LatencyRow   { return m.latency }
-func (m Model) LinkValue() string       { return m.input.Value() }
-func (m Model) Busy() bool              { return m.busy }
-func (m Model) SegCursor() int          { return m.segCursor }
-func (m Model) Section() int            { return m.section }
-func (m Model) ShowingConsole() bool    { return m.showConsole }
+func (m Model) Screen() Screen        { return m.screen }
+func (m Model) Mode() RunMode         { return m.mode }
+func (m Model) ModalShown() bool      { return m.modal != "" }
+func (m Model) CiscoActive() bool     { return m.cisco }
+func (m Model) Status() string        { return m.status }
+func (m Model) ErrText() string       { return m.errText }
+func (m Model) ShowingLogs() bool     { return m.showLogs }
+func (m Model) Logs() string          { return m.logs }
+func (m Model) ShowingConns() bool    { return m.showConns }
+func (m Model) Conns() []ConnRow      { return m.conns }
+func (m Model) Latency() []LatencyRow { return m.latency }
+func (m Model) LinkValue() string     { return m.input.Value() }
+func (m Model) Busy() bool            { return m.busy }
+func (m Model) SegCursor() int        { return m.segCursor }
+func (m Model) Section() int          { return m.section }
+func (m Model) ShowingConsole() bool  { return m.showConsole }
 func (m Model) RoutedPIDs() []int {
 	out := make([]int, len(m.proxied))
 	for i, a := range m.proxied {
