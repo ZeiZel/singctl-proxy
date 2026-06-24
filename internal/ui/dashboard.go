@@ -207,6 +207,17 @@ func (m Model) dashContent(w, h int) string {
 		m.statusBody(w),
 		m.modeSelector(w),
 	}
+	// A wide progress bar makes a long operation (mode switch, daemon start)
+	// visible beyond the small header gauge. Driven by the same harmonica spring.
+	if m.animPos > 0.02 {
+		bar := m.prog
+		bar.Width = clampWidth(w, 16, 40)
+		label := m.status
+		if label == "" {
+			label = "выполняется…"
+		}
+		parts = append(parts, bar.ViewAs(clampF(m.animPos, 0, 1)), s.Subtle.Render(s.clampLine(m.spin.View()+" "+label, w)))
+	}
 	if m.cisco {
 		parts = append(parts, s.colored(s.th.Warn, s.clampLine(s.gl.Warn+" VPN заблокирован: Cisco активен", w)))
 	}
@@ -404,6 +415,17 @@ func (m Model) consoleView() string {
 		body = clampHeight(m.console.render(s, w, bodyH, m.consoleFilter), bodyH)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, chips, body, footer)
+}
+
+// clampWidth bounds v to [lo, hi].
+func clampWidth(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 // clampHeight truncates a multi-line block to at most h lines, so a body never

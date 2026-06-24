@@ -184,6 +184,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case settingsAppliedMsg:
+		m.busy = false
 		if msg.err != nil {
 			m.errText = msg.err.Error()
 			m.status = ""
@@ -195,6 +196,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case daemonizedMsg:
 		if msg.err != nil {
+			m.busy = false
 			m.errText = msg.err.Error()
 			m.status = ""
 			return m, nil
@@ -205,6 +207,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case daemonStoppedMsg:
 		if msg.err != nil {
+			m.busy = false
 			m.errText = msg.err.Error()
 			m.status = ""
 			return m, nil
@@ -870,14 +873,17 @@ func (m Model) handleSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case sfAction:
 			switch fld.action {
 			case "daemon":
+				m.busy = true
 				m.status = "запуск в фоне…"
 				return m, daemonizeCmd(m.backend)
 			case "stopdaemon":
+				m.busy = true
 				m.status = "останавливаю демон…"
 				return m, stopDaemonCmd(m.backend)
 			default: // apply
 				m.settings = f.draft
 				m.showSettings = false
+				m.busy = true
 				m.status = "применяю настройки…"
 				return m, applySettingsCmd(m.backend, f.draft)
 			}

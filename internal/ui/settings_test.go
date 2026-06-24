@@ -79,6 +79,9 @@ func TestSettings_DaemonAction(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("daemon action should issue a command")
 	}
+	if !m.Busy() {
+		t.Error("daemon action should set busy (drives the progress bar)")
+	}
 	msg := cmd()
 	if _, ok := msg.(daemonizedMsg); !ok {
 		t.Fatalf("expected daemonizedMsg, got %T", msg)

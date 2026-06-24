@@ -174,10 +174,6 @@ const (
 	keyModeEdit                       // editing the focused key's raw link (replace)
 )
 
-// appBusyMsg toggles the "proxying in progress" loader (set when a launch/route
-// is dispatched, cleared when its result arrives).
-type appBusyMsg struct{ busy bool }
-
 // linkAddedMsg is the result of adding a second key; links is the refreshed set.
 type linkAddedMsg struct {
 	links []string
