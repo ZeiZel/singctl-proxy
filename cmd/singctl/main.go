@@ -238,6 +238,9 @@ func modeFromLabel(s string) ui.RunMode {
 	}
 }
 
+// launchDaemonPlist is where `make install` puts the macOS system daemon.
+const launchDaemonPlist = "/Library/LaunchDaemons/com.singctl.proxy.plist"
+
 // runControlCommand handles --attach/--stop/--status against a running instance.
 // These never need root: they only read the advertisement file, the log file and
 // the control socket.
@@ -248,12 +251,27 @@ func runControlCommand(c *cli) int {
 		return 1
 	}
 	inst, err := control.ReadInstance(dir)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error: no running singctl instance found (start one with --headless in another tab)")
-		return 1
-	}
-	if !control.IsAlive(inst.PID) {
-		fmt.Fprintf(os.Stderr, "error: instance PID %d is not running (stale advertisement)\n", inst.PID)
+	alive := err == nil && control.IsAlive(inst.PID)
+	if !alive {
+		// The advertisement is missing or stale (points at a dead PID). Clean it
+		// up so it stops misleading discovery, then — for --stop — try to stop a
+		// system LaunchDaemon, which advertises elsewhere (it runs as root) and so
+		// can't be reached over this socket.
+		if err == nil {
+			fmt.Fprintf(os.Stderr, "note: removing stale advertisement (PID %d not running)\n", inst.PID)
+			control.RemoveInstance(dir)
+		}
+		if c.ctl.stop {
+			if ok, msg := stopSystemDaemon(); ok {
+				fmt.Println(msg)
+				return 0
+			}
+		}
+		fmt.Fprintln(os.Stderr, "error: no running singctl instance found.")
+		if goruntime.GOOS == "darwin" {
+			fmt.Fprintln(os.Stderr, "  Если порт занят системным демоном — переустановите (make install),")
+			fmt.Fprintln(os.Stderr, "  либо остановите его: sudo launchctl bootout system "+launchDaemonPlist)
+		}
 		return 1
 	}
 	switch {
