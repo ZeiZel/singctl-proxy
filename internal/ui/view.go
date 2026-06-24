@@ -304,8 +304,8 @@ func (m Model) logsView() string {
 	if m.vpReady {
 		body = m.vp.View()
 	} else {
-		// No size yet (unit tests): plain tail of the buffer.
-		body = tailLines(m.logs, maxLogLines(m.height))
+		// No size yet (unit tests): plain tail of the buffer, level-styled.
+		body = m.styleLogText(tailLines(m.logs, maxLogLines(m.height)))
 		if strings.TrimSpace(body) == "" {
 			body = "(пусто)"
 		}

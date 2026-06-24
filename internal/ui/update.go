@@ -278,7 +278,7 @@ func (m *Model) refreshLogViewport() {
 		return
 	}
 	atBottom := m.vp.AtBottom()
-	content := wrap(tailLines(m.logs, 5000), max(m.vp.Width, 1))
+	content := wrap(m.styleLogText(tailLines(m.logs, 2000)), max(m.vp.Width, 1))
 	if strings.TrimSpace(content) == "" {
 		content = m.styles.Subtle.Render("(логи появятся после запуска режима)")
 	}
