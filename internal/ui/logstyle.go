@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	charmlog "github.com/charmbracelet/log"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // logLevels maps the level tokens that appear in sing-box log lines to a
@@ -44,27 +45,43 @@ func detectLogLevel(line string) (charmlog.Level, string, bool) {
 	return charmlog.InfoLevel, line, false
 }
 
-// styleLogText renders raw sing-box log text with charm/log: each line gets a
-// colored level badge and its message, honoring the terminal's colour profile
-// (so it degrades to plain text under NO_COLOR/ascii). Lines with no recognised
-// level are shown verbatim.
+// levelBadge renders a fixed-width, colour-coded level tag (INFO/WARN/ERR/DBG)
+// plus the style for the message text, so each severity reads at a glance. Colours
+// come from the theme (caps-aware) so they stay distinct and degrade gracefully.
+func (s Styles) levelBadge(lvl charmlog.Level) (badge string, msg lipgloss.Style) {
+	ns := s.r.NewStyle().Bold(true)
+	switch lvl {
+	case charmlog.ErrorLevel:
+		return ns.Foreground(s.th.OnAccent).Background(s.th.Error).Render(" ERR "), s.r.NewStyle().Foreground(s.th.Error)
+	case charmlog.WarnLevel:
+		return ns.Foreground(s.th.OnAccent).Background(s.th.Warn).Render(" WARN"), s.r.NewStyle().Foreground(s.th.Warn)
+	case charmlog.DebugLevel:
+		return s.r.NewStyle().Foreground(s.th.Subtle).Render(" DBG "), s.r.NewStyle().Foreground(s.th.Subtle)
+	default: // info
+		return ns.Foreground(s.th.OnAccent).Background(s.th.Accent).Render(" INFO"), s.r.NewStyle().Foreground(s.th.Text)
+	}
+}
+
+// styleLogText renders raw sing-box log text: each recognised line gets a
+// colour-coded INFO/WARN/ERR/DBG badge + a level-tinted message, so severity is
+// obvious at a glance. Colours are theme-based (caps-aware → plain under
+// NO_COLOR/ascii). Lines with no recognised level are shown verbatim.
 func (m Model) styleLogText(raw string) string {
 	if strings.TrimSpace(raw) == "" {
 		return raw
 	}
+	s := m.styles
 	var b strings.Builder
-	lg := charmlog.New(&b)
-	lg.SetReportTimestamp(false)
-	lg.SetColorProfile(m.caps.R.ColorProfile())
 	for _, line := range strings.Split(strings.TrimRight(raw, "\n"), "\n") {
 		if strings.TrimSpace(line) == "" {
 			b.WriteString("\n")
 			continue
 		}
 		if lvl, msg, ok := detectLogLevel(line); ok {
-			lg.Log(lvl, msg)
+			badge, mst := s.levelBadge(lvl)
+			b.WriteString(badge + " " + mst.Render(msg) + "\n")
 		} else {
-			b.WriteString(line + "\n")
+			b.WriteString(s.Subtle.Render(line) + "\n")
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")

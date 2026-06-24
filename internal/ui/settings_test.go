@@ -134,8 +134,8 @@ func TestDashboard_AttachedBadge(t *testing.T) {
 	m.width, m.height = 100, 30
 	m.relayout()
 	out := m.View()
-	if !strings.Contains(out, "attached PID 4321") {
-		t.Errorf("dashboard should show the attached badge:\n%s", out)
+	if !strings.Contains(out, "демон активен") || !strings.Contains(out, "PID 4321") {
+		t.Errorf("dashboard should show the daemon loader with the attached PID:\n%s", out)
 	}
 }
 

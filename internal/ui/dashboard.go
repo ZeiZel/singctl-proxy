@@ -40,7 +40,7 @@ var navLabels = []string{
 const actionLogTitle = "ДЕЙСТВИЯ"
 
 // sidebarWidth is the fixed width of the left-nav column on wide/medium layouts.
-const sidebarWidth = 20
+const sidebarWidth = 22
 
 // zoneNav is the bubblezone namespace for a clickable sidebar item.
 func zoneNav(i int) string { return "nav-" + strconv.Itoa(i) }
@@ -126,21 +126,23 @@ func (m Model) dashboardView() string {
 	return m.frame(header, body, footer)
 }
 
-// dashHeader is the dashboard top bar (title + mode/attached/activity badges).
+// dashHeader is the dashboard top bar (title + a daemon/activity loader + the
+// mode badge). When attached to a background daemon, an always-spinning loader
+// reads "демон активен PID N" so the running daemon is obvious at the top.
 func (m Model) dashHeader() string {
 	s := m.styles
-	right := s.modeBadge(m.mode)
+	segs := []string{}
 	if m.attached {
-		arrow := "↔"
-		if !m.caps.Unicode {
-			arrow = "<->"
-		}
-		right = s.colored(s.th.Accent, fmt.Sprintf("%s attached PID %d", arrow, m.attachedPID)) + "  " + right
+		segs = append(segs, s.colored(s.th.Ok, m.spin.View()+" демон активен")+s.Subtle.Render(fmt.Sprintf(" PID %d", m.attachedPID)))
+	} else if m.mode != RunOff {
+		// Local run with a live core: a spinning loader signals it's active.
+		segs = append(segs, s.colored(modeColor(s.th, m.mode), m.spin.View()+" активен"))
 	}
 	if m.animPos > 0.02 {
-		right = m.prog.ViewAs(clampF(m.animPos, 0, 1)) + "  " + right
+		segs = append(segs, m.prog.ViewAs(clampF(m.animPos, 0, 1)))
 	}
-	return m.topBar("singctl", right)
+	segs = append(segs, s.modeBadge(m.mode))
+	return m.topBar("singctl", strings.Join(segs, "  "))
 }
 
 // dashBody lays out the sidebar + content for the current breakpoint. Narrow
@@ -155,35 +157,46 @@ func (m Model) dashBody(bodyH int) string {
 	if sideW > m.width/2 {
 		sideW = m.width / 2
 	}
-	contentW := max(m.width-sideW-1, 1)
+	contentW := max(m.width-sideW, 1)
 	side := m.sidebarColumn(sideW, bodyH)
-	content := m.dashContent(contentW, bodyH)
-	return lipgloss.JoinHorizontal(lipgloss.Top, side, " ", content)
+	content := m.contentPanel(contentW, bodyH)
+	return lipgloss.JoinHorizontal(lipgloss.Top, side, content)
 }
 
-// sidebarColumn renders the vertical nav list, the selected item highlighted.
+// contentPanel wraps the section content in a bordered panel beside the sidebar,
+// so the two columns read as distinct framed cards.
+func (m Model) contentPanel(w, h int) string {
+	s := m.styles
+	inner := max(w-4, 1)
+	body := m.dashContent(inner, max(h-2, 1))
+	return s.Panel.Width(max(w-2, 1)).Height(max(h-2, 1)).Render(body)
+}
+
+// sidebarColumn renders the nav list inside a bordered panel; the selected item
+// is a full-width accent bar so the active section is unmistakable.
 func (m Model) sidebarColumn(w, h int) string {
 	s := m.styles
-	cw := max(w-1, 1)
-	rows := make([]string, 0, len(navLabels)+1)
-	rows = append(rows, s.PanelTitle.Render(s.clampLine("РАЗДЕЛЫ", cw)))
+	inner := max(w-4, 1) // border (1 each side) + padding (1 each side)
+	rows := make([]string, 0, len(navLabels)+2)
+	rows = append(rows, s.PanelTitle.Render(s.clampLine("РАЗДЕЛЫ", inner)), s.rule(inner))
 	for i, l := range navLabels {
-		rows = append(rows, m.navRow(i, l, cw))
+		rows = append(rows, m.navRow(i, l, inner))
 	}
-	return s.r.NewStyle().Width(w).Render(clampHeight(strings.Join(rows, "\n"), h))
+	body := clampHeight(strings.Join(rows, "\n"), max(h-2, 1))
+	return s.PanelActive.Width(max(w-2, 1)).Height(max(h-2, 1)).Render(body)
 }
 
-// navRow renders one sidebar entry: "N  Название". The selected row is a filled
-// accent tab pill (with a focus bar), inactive rows are dim — so the keyboard
-// focus is always obvious.
+// navRow renders one sidebar entry: "N  Название". The selected row is a
+// full-width filled accent bar (the active tab); inactive rows are dim.
 func (m Model) navRow(i int, label string, cw int) string {
 	s := m.styles
-	text := strconv.Itoa(i+1) + "  " + label
+	num := strconv.Itoa(i + 1)
 	if i == m.section {
-		pill := s.TabActive.Render(s.clampLine(text, max(cw-3, 1)))
-		return m.zm.Mark(zoneNav(i), s.colored(s.th.Accent, s.gl.SelBar)+pill)
+		line := s.clampLine(s.gl.SelBar+" "+num+"  "+label, max(cw-2, 1))
+		return m.zm.Mark(zoneNav(i), s.TabActive.Width(cw).Render(line))
 	}
-	return m.zm.Mark(zoneNav(i), " "+s.Tab.Render(s.clampLine(text, max(cw-3, 1))))
+	line := s.clampLine("  "+num+"  "+label, max(cw-2, 1))
+	return m.zm.Mark(zoneNav(i), s.Tab.Width(cw).Render(line))
 }
 
 // navChips renders the nav list as a single horizontal tab bar (narrow layout).
@@ -290,14 +303,18 @@ func (m Model) appsSummaryBody(w int) string {
 	if m.isDarwin {
 		rows = append(rows, s.Subtle.Render(s.clampLine("Cursor: --proxy-server=socks5://127.0.0.1:1080 (Chromium)", w)))
 	}
+	rows = append(rows, s.Muted.Render("приложений: ")+s.colored(s.th.Accent, strconv.Itoa(len(m.proxied)))+
+		s.Muted.Render("  ·  соединений: ")+s.colored(s.th.Ok, strconv.Itoa(len(m.conns))))
 	if len(m.proxied) == 0 {
 		rows = append(rows, s.Subtle.Render("(пока никого не проксируем)"))
 	} else {
-		parts := make([]string, len(m.proxied))
-		for i, a := range m.proxied {
-			parts[i] = proxiedLabel(a)
+		for _, a := range m.proxied {
+			line := s.colored(s.th.Ok, s.gl.DotOn) + " " + s.colored(s.th.Accent, orDash(a.Name)) + s.Subtle.Render(fmt.Sprintf(" PID %d", a.PID))
+			if n := m.connCountFor(a.Name); n > 0 {
+				line += s.colored(s.th.Ok, fmt.Sprintf(" · %d соед.", n))
+			}
+			rows = append(rows, s.clampLine(line, w))
 		}
-		rows = append(rows, s.clampLine(strings.Join(parts, ", "), w))
 	}
 	rows = append(rows, s.Subtle.Render(s.clampLine("Enter — запустить приложение в прокси", w)))
 	return strings.Join(rows, "\n")

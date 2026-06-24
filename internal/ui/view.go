@@ -151,7 +151,7 @@ func (m Model) statusBody(contentW int) string {
 	rows := []string{
 		s.kv("режим", s.modeBadge(m.mode), keyW),
 		s.kv("Cisco", s.ciscoBadge(m.cisco), keyW),
-		s.kv("iface", s.clampLine(phys, valW), keyW),
+		s.kv("iface", s.colored(s.th.Accent, s.clampLine(phys, valW)), keyW),
 	}
 	if sum := m.latencySummary(); sum != "" {
 		rows = append(rows, s.kv("сервер", s.clampLine(sum, valW), keyW))
@@ -340,13 +340,14 @@ func (m Model) latencySummary() string {
 	if len(m.latency) == 0 {
 		return ""
 	}
+	s := m.styles
 	for _, r := range m.latency {
 		if r.Selected || r.Tag == m.latencySel {
-			return r.Tag + " " + delayText(r.Delay)
+			return s.colored(s.th.Accent, r.Tag) + " " + s.latencyColor(r.Delay)
 		}
 	}
 	// No explicit selection (single server): show the first.
-	return m.latency[0].Tag + " " + delayText(m.latency[0].Delay)
+	return s.colored(s.th.Accent, m.latency[0].Tag) + " " + s.latencyColor(m.latency[0].Delay)
 }
 
 func delayText(ms int) string {
@@ -354,6 +355,23 @@ func delayText(ms int) string {
 		return "—"
 	}
 	return fmt.Sprintf("%dms", ms)
+}
+
+// latencyColor grades a latency: green (fast) → amber → red (slow), subtle when
+// unknown — so the eye reads link health instantly.
+func (s Styles) latencyColor(ms int) string {
+	col := s.th.Subtle
+	switch {
+	case ms <= 0:
+		col = s.th.Subtle
+	case ms < 100:
+		col = s.th.Ok
+	case ms < 250:
+		col = s.th.Warn
+	default:
+		col = s.th.Error
+	}
+	return s.colored(col, delayText(ms))
 }
 
 func (m Model) connsFooterView() string {
@@ -396,11 +414,13 @@ func (m Model) latencyBody(w int) string {
 	s := m.styles
 	rows := []string{s.Subtle.Render("серверы:")}
 	for _, r := range m.latency {
-		marker := "  "
+		marker := s.Subtle.Render(s.gl.DotOff + " ")
+		tag := s.Muted.Render(r.Tag)
 		if r.Selected || r.Tag == m.latencySel {
 			marker = s.colored(s.th.Accent, s.gl.DotOn+" ")
+			tag = s.colored(s.th.Accent, r.Tag)
 		}
-		rows = append(rows, s.clampLine(marker+r.Tag+"  "+delayText(r.Delay), w))
+		rows = append(rows, s.clampLine(marker+tag+"  "+s.latencyColor(r.Delay), w))
 	}
 	return strings.Join(rows, "\n")
 }
@@ -426,9 +446,14 @@ func (m Model) connsBody(w, limit int) string {
 		if proc == "" {
 			proc = s.gl.Dash
 		}
-		line := fmt.Sprintf("%s  %s %s %s  [%s]", proc, c.Source, s.gl.ArrowR, c.Dest, c.Network)
+		// Colour-coded fields: process (accent) · src (subtle) → dest (text) ·
+		// [network] tag (purple) · chain/outbound (green).
+		line := s.colored(s.th.Accent, proc) + "  " +
+			s.Subtle.Render(c.Source) + " " + s.colored(s.th.Muted, s.gl.ArrowR) + " " +
+			s.colored(s.th.Text, c.Dest) + "  " +
+			s.colored(s.th.Vpn, "["+c.Network+"]")
 		if c.Chain != "" {
-			line += "  " + s.Subtle.Render(c.Chain)
+			line += "  " + s.colored(s.th.Ok, c.Chain)
 		}
 		rows = append(rows, s.clampLine(line, w))
 	}
@@ -508,21 +533,28 @@ func (m Model) procView() string {
 		rows = append(rows, s.Subtle.Render("(процессы с сетевой активностью не найдены)"))
 	}
 
-	// Currently proxied apps, each a row with unroute/kill actions when focused.
+	// Currently proxied apps + a traffic summary, each row with unroute/kill
+	// actions when focused.
 	rows = append(rows, s.rule(subW), m.fieldTitle("Проксируются сейчас", m.appFocus == 2))
+	rows = append(rows, "  "+s.Muted.Render("приложений: ")+s.colored(s.th.Accent, strconv.Itoa(len(m.proxied)))+
+		s.Muted.Render("  ·  соединений: ")+s.colored(s.th.Ok, strconv.Itoa(len(m.conns))))
 	if len(m.proxied) == 0 {
-		rows = append(rows, s.Subtle.Render("(пока никого)"))
+		rows = append(rows, s.Subtle.Render("  (пока никого)"))
 	} else {
 		cur := clampIdx(m.proxiedCur, len(m.proxied))
 		for i, a := range m.proxied {
 			marker := "  "
-			label := proxiedLabel(a)
+			dot := s.colored(s.th.Ok, s.gl.DotOn)
+			name := s.colored(s.th.Accent, orDash(a.Name))
+			meta := s.Subtle.Render(fmt.Sprintf(" PID %d", a.PID))
+			if n := m.connCountFor(a.Name); n > 0 {
+				meta += s.colored(s.th.Ok, fmt.Sprintf(" · %d соед.", n))
+			}
 			focused := m.appFocus == 2 && i == cur
 			if focused {
 				marker = s.colored(s.th.Accent, s.gl.SelBar+" ")
-				label = s.Accent.Render(label)
 			}
-			line := marker + label
+			line := marker + dot + " " + name + meta
 			if focused {
 				line += "   " + s.Subtle.Render("u — отключить прокси · k — завершить")
 			}
@@ -557,6 +589,22 @@ func (m Model) fieldTitle(label string, focused bool) string {
 }
 
 func zoneProxied(i int) string { return "proxied-" + strconv.Itoa(i) }
+
+// connCountFor counts live connections whose source process matches an app name
+// (case-insensitive substring), so each proxied app can show its traffic.
+func (m Model) connCountFor(name string) int {
+	if strings.TrimSpace(name) == "" {
+		return 0
+	}
+	ln := strings.ToLower(name)
+	n := 0
+	for _, c := range m.conns {
+		if strings.Contains(strings.ToLower(c.Process), ln) {
+			n++
+		}
+	}
+	return n
+}
 
 // --- settings ---
 
