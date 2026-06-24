@@ -410,7 +410,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// key; a confirm modal runs its pending action on Да (y/Enter) and cancels on
 	// Нет (n/Esc). This stays first so any key clears it before other handling.
 	if m.modal != "" {
-		if m.modalKind == modalConfirm {
+		switch m.modalKind {
+		case modalInput: // a text-input popup (rename / edit a key)
+			switch msg.String() {
+			case "enter":
+				return m.runPrompt()
+			case "esc":
+				m.modal = ""
+				m.pending = pendingAction{}
+				m.prompt.Blur()
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.prompt, cmd = m.prompt.Update(msg)
+				return m, cmd
+			}
+		case modalConfirm:
 			switch msg.String() {
 			case "y", "д", "enter":
 				return m.runPending()
@@ -419,9 +434,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.pending = pendingAction{}
 				return m, nil
 			}
+		default: // modalInfo: any key dismisses
+			m.modal = ""
+			return m, nil
 		}
-		m.modal = ""
-		return m, nil
 	}
 	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
@@ -687,20 +703,26 @@ func (m Model) openSection(idx int) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(textinput.Blink, listProcessesCmd(m.backend))
 	case secKeys:
 		// Keys manager: a top add field + a navigable masked list (the raw key is
-		// never echoed as the placeholder, so it stays secret).
+		// never echoed as the placeholder, so it stays secret). When keys already
+		// exist, land on the LIST so n/e/d/Enter act on a key immediately; with no
+		// keys, focus the add field.
 		m.input.SetValue("")
 		if len(m.currentLinks) > 0 {
 			m.input.Placeholder = "vless://… (добавить ключ)"
 		} else {
 			m.input.Placeholder = "vless://..."
 		}
-		m.keyFocus = 0
-		m.keyMode = keyModeAdd
 		m.keyCursor = 0
 		m.keyReveal = false
-		m.input.Focus()
-		m.screen = ScreenLink
 		m.errText = ""
+		m.screen = ScreenLink
+		if len(m.currentLinks) > 0 {
+			m.keyFocus = 1
+			m.input.Blur()
+			return m, nil
+		}
+		m.keyFocus = 0
+		m.input.Focus()
 		return m, textinput.Blink
 	case secSettings:
 		m.setForm.focus = 0
@@ -747,26 +769,18 @@ func (m Model) handleKeysKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "enter", " ":
 			m.keyReveal = !m.keyReveal
 			return m, nil
-		case "n": // rename / add name
+		case "n": // rename / add name — opens an input popup
 			if m.keyCursor < len(m.currentLinks) {
-				m.keyMode = keyModeRename
-				m.keyEditIndex = m.keyCursor
-				m.keyFocus = 0
-				m.input.SetValue(linkName(m.currentLinks[m.keyCursor]))
-				m.input.CursorEnd()
-				m.input.Focus()
-				return m, textinput.Blink
+				return m.openKeyPrompt(pendRenameKey,
+					fmt.Sprintf("Имя для ключа %d:", m.keyCursor+1),
+					linkName(m.currentLinks[m.keyCursor]))
 			}
 			return m, nil
-		case "e": // edit the raw link
+		case "e": // edit the raw link — opens an input popup
 			if m.keyCursor < len(m.currentLinks) {
-				m.keyMode = keyModeEdit
-				m.keyEditIndex = m.keyCursor
-				m.keyFocus = 0
-				m.input.SetValue(m.currentLinks[m.keyCursor])
-				m.input.CursorEnd()
-				m.input.Focus()
-				return m, textinput.Blink
+				return m.openKeyPrompt(pendEditKey,
+					fmt.Sprintf("vless:// ссылка для ключа %d:", m.keyCursor+1),
+					m.currentLinks[m.keyCursor])
 			}
 			return m, nil
 		case "d": // delete (confirm)
@@ -780,14 +794,9 @@ func (m Model) handleKeysKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// keyFocus 0: the top input.
+	// keyFocus 0: the top "add key" input (rename/edit happen in popups).
 	switch msg.String() {
 	case "esc":
-		if m.keyMode != keyModeAdd { // cancel rename/edit back to add
-			m.keyMode = keyModeAdd
-			m.input.SetValue("")
-			return m, nil
-		}
 		if m.loaded {
 			m.screen = ScreenDashboard
 			m.input.Blur()
@@ -802,38 +811,18 @@ func (m Model) handleKeysKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		val := strings.TrimSpace(m.input.Value())
-		switch m.keyMode {
-		case keyModeRename:
-			idx := m.keyEditIndex
-			m.keyMode = keyModeAdd
-			m.input.SetValue("")
-			m.status = "переименовываю ключ…"
-			return m, renameLinkCmd(m.backend, idx, val)
-		case keyModeEdit:
-			if val == "" {
-				m.errText = "введите vless:// ссылку"
-				return m, nil
-			}
-			idx := m.keyEditIndex
-			m.keyMode = keyModeAdd
-			m.input.SetValue("")
-			m.busy = true
-			m.status = "сохраняю ключ…"
-			return m, replaceLinkCmd(m.backend, idx, val)
-		default: // keyModeAdd
-			if val == "" {
-				m.errText = "введите vless:// ссылку"
-				return m, nil
-			}
-			m.errText = ""
-			m.busy = true
-			if len(m.currentLinks) > 0 {
-				m.status = "добавляю ключ…"
-				return m, addLinkCmd(m.backend, val)
-			}
-			m.status = "загрузка ссылки…"
-			return m, loadLinkCmd(m.backend, val)
+		if val == "" {
+			m.errText = "введите vless:// ссылку"
+			return m, nil
 		}
+		m.errText = ""
+		m.busy = true
+		if len(m.currentLinks) > 0 {
+			m.status = "добавляю ключ…"
+			return m, addLinkCmd(m.backend, val)
+		}
+		m.status = "загрузка ссылки…"
+		return m, loadLinkCmd(m.backend, val)
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
@@ -1028,6 +1017,43 @@ func (m Model) runPending() (tea.Model, tea.Cmd) {
 		return m, stopProxiedCmd(m.backend, p.pid)
 	}
 	return m, nil
+}
+
+// runPrompt applies an input-popup action (rename / edit a key) with the typed
+// value, then closes the popup.
+func (m Model) runPrompt() (tea.Model, tea.Cmd) {
+	p := m.pending
+	val := strings.TrimSpace(m.prompt.Value())
+	m.modal = ""
+	m.pending = pendingAction{}
+	m.prompt.Blur()
+	m.keyReveal = false
+	switch p.kind {
+	case pendRenameKey:
+		m.status = "переименовываю ключ…"
+		return m, renameLinkCmd(m.backend, p.index, val)
+	case pendEditKey:
+		if val == "" {
+			m.errText = "введите vless:// ссылку"
+			return m, nil
+		}
+		m.busy = true
+		m.status = "сохраняю ключ…"
+		return m, replaceLinkCmd(m.backend, p.index, val)
+	}
+	return m, nil
+}
+
+// openKeyPrompt opens the rename/edit input popup for the focused key, prefilled
+// with the current value.
+func (m Model) openKeyPrompt(kind pendingKind, label, prefill string) (tea.Model, tea.Cmd) {
+	m.modal = label
+	m.modalKind = modalInput
+	m.pending = pendingAction{kind: kind, index: m.keyCursor}
+	m.prompt.SetValue(prefill)
+	m.prompt.CursorEnd()
+	m.prompt.Focus()
+	return m, textinput.Blink
 }
 
 // syncAppFocus points the textinputs at the focused zone (launch/picker), and

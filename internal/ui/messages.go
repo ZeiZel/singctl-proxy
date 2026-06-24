@@ -145,8 +145,9 @@ func proxiedLabel(a proxiedApp) string {
 type modalKind int
 
 const (
-	modalInfo modalKind = iota
-	modalConfirm
+	modalInfo    modalKind = iota
+	modalConfirm           // [Да]/[Нет]
+	modalInput             // a text-input popup (rename / edit a key)
 )
 
 // pendingKind is the action a confirm modal runs when accepted.
@@ -156,6 +157,8 @@ const (
 	pendNone pendingKind = iota
 	pendDeleteKey
 	pendKillApp
+	pendRenameKey // modalInput: set the focused key's #name label
+	pendEditKey   // modalInput: replace the focused key's raw link
 )
 
 // pendingAction carries the parameters of a deferred confirm action.
@@ -165,14 +168,6 @@ type pendingAction struct {
 	pid   int // app PID (pendKillApp)
 }
 
-// keyInputMode is the sub-mode of the Ключи top input.
-type keyInputMode int
-
-const (
-	keyModeAdd    keyInputMode = iota // typing a new vless:// link to add
-	keyModeRename                     // typing a new name for the focused key
-	keyModeEdit                       // editing the focused key's raw link (replace)
-)
 
 // linkAddedMsg is the result of adding a second key; links is the refreshed set.
 type linkAddedMsg struct {

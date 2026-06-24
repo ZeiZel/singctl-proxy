@@ -17,12 +17,9 @@ func openKeys(links ...string) (Model, *fakeBackend) {
 
 func TestKeys_TabToListAndArrowMove(t *testing.T) {
 	m, _ := openKeys("vless://u@1.1.1.1:443#A", "vless://u@2.2.2.2:443#B")
-	if m.keyFocus != 0 {
-		t.Fatalf("keys screen should open on the input, keyFocus=%d", m.keyFocus)
-	}
-	m, _ = step(m, tea.KeyMsg{Type: tea.KeyTab})
+	// With keys loaded, the screen opens on the LIST so actions work immediately.
 	if m.keyFocus != 1 {
-		t.Fatalf("Tab should focus the keys list, got %d", m.keyFocus)
+		t.Fatalf("keys screen should open on the list, keyFocus=%d", m.keyFocus)
 	}
 	m, _ = step(m, tea.KeyMsg{Type: tea.KeyDown})
 	if m.keyCursor != 1 {
@@ -32,11 +29,16 @@ func TestKeys_TabToListAndArrowMove(t *testing.T) {
 	if !m.keyReveal {
 		t.Error("Enter on the list should reveal the focused key")
 	}
+	// Tab toggles to the add-input.
+	m, _ = step(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.keyFocus != 0 {
+		t.Fatalf("Tab should focus the add-input, got %d", m.keyFocus)
+	}
 }
 
 func TestKeys_DeleteShowsConfirmThenDeletes(t *testing.T) {
 	m, b := openKeys("vless://u@1.1.1.1:443#A", "vless://u@2.2.2.2:443#B")
-	m, _ = step(m, tea.KeyMsg{Type: tea.KeyTab}) // → list, cursor 0
+	// Opens on the list (cursor 0); 'd' confirms deletion.
 	m, _ = step(m, rune_("d"))
 	if !m.ModalShown() || m.modalKind != modalConfirm {
 		t.Fatalf("'d' should open a confirm modal (shown=%v kind=%d)", m.ModalShown(), m.modalKind)
@@ -64,14 +66,17 @@ func TestKeys_DeleteShowsConfirmThenDeletes(t *testing.T) {
 	}
 }
 
-func TestKeys_RenameFlow(t *testing.T) {
+func TestKeys_RenameOpensPopupThenRenames(t *testing.T) {
 	m, b := openKeys("vless://u@1.1.1.1:443#Old")
-	m, _ = step(m, tea.KeyMsg{Type: tea.KeyTab}) // → list
-	m, _ = step(m, rune_("n"))                   // rename → input, prefilled with "Old"
-	if m.keyFocus != 0 || m.keyMode != keyModeRename {
-		t.Fatalf("'n' should enter rename mode on the input (focus=%d mode=%d)", m.keyFocus, m.keyMode)
+	// Opens on the list; 'n' opens the rename input popup, prefilled with "Old".
+	m, _ = step(m, rune_("n"))
+	if !m.ModalShown() || m.modalKind != modalInput {
+		t.Fatalf("'n' should open an input popup (shown=%v kind=%d)", m.ModalShown(), m.modalKind)
 	}
-	m.input.SetValue("NewName")
+	if got := m.prompt.Value(); got != "Old" {
+		t.Errorf("rename popup should be prefilled with the current name, got %q", got)
+	}
+	m.prompt.SetValue("NewName")
 	m, cmd := step(m, enterKey)
 	if cmd == nil {
 		t.Fatal("rename should issue a command")
@@ -80,8 +85,21 @@ func TestKeys_RenameFlow(t *testing.T) {
 	if b.renamedIndex != 0 || b.renamedName != "NewName" {
 		t.Errorf("RenameLink got (%d,%q), want (0,NewName)", b.renamedIndex, b.renamedName)
 	}
-	if m.keyMode != keyModeAdd {
-		t.Error("after rename the input should return to add mode")
+	if m.ModalShown() {
+		t.Error("the popup should close after Enter")
+	}
+}
+
+func TestKeys_RenamePopupCancels(t *testing.T) {
+	m, b := openKeys("vless://u@1.1.1.1:443#Old")
+	m, _ = step(m, rune_("n"))
+	m.prompt.SetValue("X")
+	m, _ = step(m, escKey)
+	if m.ModalShown() {
+		t.Error("Esc should close the rename popup")
+	}
+	if b.renamedName != "" {
+		t.Errorf("Esc must not rename, got %q", b.renamedName)
 	}
 }
 

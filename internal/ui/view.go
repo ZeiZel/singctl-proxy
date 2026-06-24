@@ -193,15 +193,8 @@ func (m Model) linkView() string {
 	}
 
 	var rows []string
-	// The add/rename/edit input, full width, focused-styled when keyFocus==0.
-	inputTitle := "Добавить ключ"
-	switch m.keyMode {
-	case keyModeRename:
-		inputTitle = fmt.Sprintf("Имя для ключа %d", m.keyEditIndex+1)
-	case keyModeEdit:
-		inputTitle = fmt.Sprintf("Редактировать ключ %d", m.keyEditIndex+1)
-	}
-	rows = append(rows, m.fieldTitle(inputTitle, m.keyFocus == 0))
+	// The "add key" input, full width, focused-styled when keyFocus==0.
+	rows = append(rows, m.fieldTitle("Добавить ключ", m.keyFocus == 0))
 	if lay == layoutNarrow {
 		rows = append(rows, s.clampLine(m.input.View(), max(m.width, 1)))
 	} else {
@@ -247,11 +240,7 @@ func (m Model) linkView() string {
 		pairs = [][2]string{{s.gl.ArrowsUD, "ключ"}, {"Enter", "показать"}, {"n", "имя"}, {"e", "ред."}, {"d", "удалить"}, {"Tab", "ввод"}}
 	} else {
 		enterLabel := "загрузить"
-		if m.keyMode == keyModeRename {
-			enterLabel = "переименовать"
-		} else if m.keyMode == keyModeEdit {
-			enterLabel = "сохранить"
-		} else if len(m.currentLinks) > 0 {
+		if len(m.currentLinks) > 0 {
 			enterLabel = "добавить"
 		}
 		pairs = [][2]string{{"Enter", enterLabel}}
@@ -662,15 +651,19 @@ func (m Model) modalView() string {
 	tight := h < 16 // short terminal: shed vertical padding/spacers so it fits
 
 	maxW := max(w-2, 1)
-	// Confirm dialogs are accent-bordered with a Да/Нет hint; info (Cisco) is
-	// warn-bordered and dismissed by any key.
-	confirm := m.modalKind == modalConfirm
+	// Three kinds: info (Cisco) — warn-bordered, dismiss on any key; confirm —
+	// accent-bordered Да/Нет; input — accent-bordered text field (rename/edit).
 	titleText := s.gl.Warn + " Cisco активен"
 	hintText := "(любая клавиша)"
 	borderColor := m.theme.Warn
-	if confirm {
+	switch m.modalKind {
+	case modalConfirm:
 		titleText = "Подтвердите действие"
 		hintText = "Да — y / Enter   ·   Нет — n / Esc"
+		borderColor = m.theme.Accent
+	case modalInput:
+		titleText = "Изменить ключ"
+		hintText = "Enter — сохранить   ·   Esc — отмена"
 		borderColor = m.theme.Accent
 	}
 
@@ -682,23 +675,36 @@ func (m Model) modalView() string {
 	box := s.r.NewStyle().Border(s.gl.Border).BorderForeground(borderColor).Padding(vpad, 2)
 	inner := maxBox - box.GetHorizontalFrameSize() // subtract border+padding before wrapping
 
+	// For an input popup, render the text field sized to the card (no extra
+	// border — the card already frames it; the field shows the prompt + cursor).
+	field := ""
+	if m.modalKind == modalInput {
+		pi := m.prompt
+		pi.Width = max(inner-4, 8)
+		field = pi.View()
+	}
+
 	var card string
 	if inner < 8 {
 		// Ultra-narrow terminal: drop the border, just centred wrapped text.
-		card = lipgloss.JoinVertical(lipgloss.Left,
-			s.colored(borderColor, wrap(titleText, maxW)),
-			"",
-			wrap(m.modal, maxW),
-			"",
-			s.Subtle.Render(wrap(hintText, maxW)),
-		)
+		parts := []string{s.colored(borderColor, wrap(titleText, maxW)), "", wrap(m.modal, maxW)}
+		if field != "" {
+			parts = append(parts, s.clampBlock(m.prompt.View(), maxW))
+		}
+		parts = append(parts, "", s.Subtle.Render(wrap(hintText, maxW)))
+		card = lipgloss.JoinVertical(lipgloss.Left, parts...)
 	} else {
 		title := s.colored(borderColor, wrap(titleText, inner))
 		body := wrap(m.modal, inner)
 		hint := s.Subtle.Render(hintText)
-		content := lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", hint)
-		if tight {
-			content = lipgloss.JoinVertical(lipgloss.Left, title, body, hint)
+		var content string
+		if field != "" {
+			content = lipgloss.JoinVertical(lipgloss.Left, title, "", body, field, "", hint)
+		} else {
+			content = lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", hint)
+			if tight {
+				content = lipgloss.JoinVertical(lipgloss.Left, title, body, hint)
+			}
 		}
 		card = box.Width(inner).Render(content)
 	}

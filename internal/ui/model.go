@@ -35,9 +35,10 @@ type Model struct {
 	width        int
 	height       int
 	input        textinput.Model
-	modal        string        // modal/popup text ("" = hidden)
-	modalKind    modalKind     // info (dismiss on any key) vs confirm ([Да]/[Нет])
-	pending      pendingAction // action to run when a confirm modal is accepted
+	modal        string          // modal/popup text ("" = hidden)
+	modalKind    modalKind       // info (dismiss) / confirm ([Да]/[Нет]) / input (text popup)
+	pending      pendingAction   // action to run when a confirm/input modal is accepted
+	prompt       textinput.Model // text field shown inside an input popup (rename/edit)
 	status       string
 	errText      string
 	loaded       bool // a profile (link) has been loaded
@@ -48,15 +49,12 @@ type Model struct {
 	currentLinks []string // all loaded keys (masked) shown on the link screen
 	autoMode     RunMode  // mode to enable right after start (RunOff = none)
 
-	// Ключи manager (the ScreenLink screen). keyFocus is 0 = top input, 1 = the
-	// keys list; keyCursor selects a loaded key row; keyReveal shows the focused
-	// key's raw link; keyMode is the input sub-mode (add a new key / rename / edit
-	// the focused one); keyEditIndex is the key being renamed/edited.
-	keyFocus     int
-	keyCursor    int
-	keyReveal    bool
-	keyMode      keyInputMode
-	keyEditIndex int
+	// Ключи manager (the ScreenLink screen). keyFocus is 0 = top "add" input,
+	// 1 = the keys list; keyCursor selects a loaded key row; keyReveal shows the
+	// focused key's raw link. Rename/edit happen in an input popup (modalInput).
+	keyFocus  int
+	keyCursor int
+	keyReveal bool
 
 	showConns  bool         // connections overlay open
 	conns      []ConnRow    // live connection table (from the Clash API poller)
@@ -189,6 +187,13 @@ func newWithCaps(backend Backend, notes <-chan tea.Msg, caps Caps) Model {
 	se.Cursor.Style = caps.R.NewStyle().Foreground(th.Accent)
 	se.Width = 40
 
+	pmt := textinput.New()
+	pmt.Prompt = gl.Prompt
+	pmt.PromptStyle = caps.R.NewStyle().Foreground(th.Accent)
+	pmt.PlaceholderStyle = caps.R.NewStyle().Foreground(th.Subtle)
+	pmt.Cursor.Style = caps.R.NewStyle().Foreground(th.Accent)
+	pmt.Width = 44
+
 	sp := spinner.New()
 	sp.Spinner = spinner.MiniDot // braille dots
 	if !caps.Unicode {
@@ -207,6 +212,7 @@ func newWithCaps(backend Backend, notes <-chan tea.Msg, caps Caps) Model {
 		input:       ti,
 		procInput:   pi,
 		launchInput: li,
+		prompt:      pmt,
 		theme:       th,
 		caps:        caps,
 		glyphs:      gl,

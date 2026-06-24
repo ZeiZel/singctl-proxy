@@ -133,11 +133,21 @@ func (b *Backend) add(link string) error {
 
 func (b *Backend) DeleteLink(_ context.Context, index int) error {
 	_, err := control.Request(b.sock, "KEYS-REMOVE", strconv.Itoa(index))
-	return err
+	return staleDaemon(err)
 }
 
 func (b *Backend) RenameLink(_ context.Context, index int, name string) error {
 	_, err := control.Request(b.sock, "KEYS-RENAME", strconv.Itoa(index)+" "+strings.TrimSpace(name))
+	return staleDaemon(err)
+}
+
+// staleDaemon rewrites the control socket's "unknown command" reply (which means
+// the running daemon is an older binary than this client) into actionable advice.
+func staleDaemon(err error) error {
+	if err != nil && strings.Contains(err.Error(), "unknown command") {
+		return errors.New("запущенный демон устарел и не знает эту команду — обновите его: " +
+			"`make install` (переустановит и перезапустит демон) или `sudo singctl --stop` и запустите заново")
+	}
 	return err
 }
 
