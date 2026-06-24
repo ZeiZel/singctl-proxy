@@ -5,14 +5,18 @@
 #   scripts/install-macos.sh            # install binary + LaunchDaemon
 #   scripts/install-macos.sh uninstall  # remove both
 #
-# It self-elevates with sudo for the privileged copy (so `make install` works
-# without running the build as root). Installs the binary to /usr/local/bin and
-# a LaunchDaemon at
-# /Library/LaunchDaemons/com.singctl.proxy.plist that runs the system VPN
-# (singctl --headless --vpn) at boot. The VPN key comes from the saved profile,
-# so save a key once interactively first (see docs/macos.md). This does NOT do
-# per-process kernel interception (that needs a signed Network Extension) — it's
-# a system-wide VPN daemon you manage with launchctl / --status / --attach / --stop.
+# Privilege handling is brew-style: we do NOT run the build (or make) as root.
+# Only the install touches root-owned paths (/usr/local/bin, /Library/LaunchDaemons),
+# so we ask for the sudo password ONCE up front (sudo -v) and run just those
+# steps with sudo — everything else stays as your user.
+#
+# Result: `singctl` becomes a normal command in /usr/local/bin (on macOS's default
+# PATH), runnable as `sudo singctl` (it needs root for the TUN device). The
+# LaunchDaemon runs the system VPN (singctl --headless --vpn) at boot; the key
+# comes from the saved profile, so save one once interactively first (docs/macos.md).
+# This is NOT per-process kernel interception (that needs a signed Network
+# Extension) — it is a system-wide VPN daemon managed via launchctl / --status /
+# --attach / --stop.
 set -euo pipefail
 
 LABEL="com.singctl.proxy"
@@ -28,55 +32,60 @@ die() { echo "error: $*" >&2; exit 1; }
 
 [ "$(uname -s)" = "Darwin" ] || die "this installer is for macOS only"
 
-# Installing touches /usr/local/bin and /Library/LaunchDaemons, which need root.
-# Self-elevate so `make install` (run as the normal user, which keeps the build
-# non-root) just works — sudo prompts for the password, then re-runs this script
-# by its absolute path (robust even if sudo resets the working directory).
+# Acquire sudo once for the privileged steps. We prefix only those commands with
+# $SUDO (empty when already root) — never `sudo make`, never the whole script.
+SUDO=""
 if [ "$(id -u)" != "0" ]; then
-    echo "==> need root for /usr/local/bin + /Library/LaunchDaemons — re-running with sudo"
-    exec sudo -- "${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")" "$@"
+	SUDO="sudo"
+	echo "==> для установки в /usr/local/bin и /Library/LaunchDaemons нужен sudo"
+	sudo -v || die "не удалось получить права sudo"
 fi
 
 if [ "${1:-install}" = "uninstall" ]; then
-    echo "==> unloading ${LABEL}"
-    launchctl bootout system "${PLIST_DST}" 2>/dev/null || launchctl unload -w "${PLIST_DST}" 2>/dev/null || true
-    rm -f "${PLIST_DST}"
-    rm -f "${BIN_DST}"
-    echo "==> uninstalled singctl (kept ~/.config/singctl and /var/log/singctl.log)"
-    exit 0
+	echo "==> выгружаю ${LABEL}"
+	$SUDO launchctl bootout system "${PLIST_DST}" 2>/dev/null ||
+		$SUDO launchctl unload -w "${PLIST_DST}" 2>/dev/null || true
+	$SUDO rm -f "${PLIST_DST}" "${BIN_DST}"
+	echo "==> singctl удалён (профиль ~/.config/singctl и /var/log/singctl.log сохранены)"
+	exit 0
 fi
 
-# install
+# install — the binary is built by the normal user (make build); only the copy
+# into the system paths needs sudo.
 BIN_SRC="${REPO_ROOT}/bin/singctl"
-[ -x "${BIN_SRC}" ] || die "binary not found at ${BIN_SRC} — run 'make build' first"
-[ -f "${PLIST_SRC}" ] || die "plist not found at ${PLIST_SRC}"
+[ -x "${BIN_SRC}" ] || die "бинарь не найден: ${BIN_SRC} — сначала выполните 'make build'"
+[ -f "${PLIST_SRC}" ] || die "plist не найден: ${PLIST_SRC}"
 
-echo "==> installing binary -> ${BIN_DST}"
-install -m 0755 "${BIN_SRC}" "${BIN_DST}"
+echo "==> ставлю команду singctl -> ${BIN_DST}"
+$SUDO install -m 0755 "${BIN_SRC}" "${BIN_DST}"
 
-echo "==> installing LaunchDaemon -> ${PLIST_DST}"
-install -m 0644 "${PLIST_SRC}" "${PLIST_DST}"
-chown root:wheel "${PLIST_DST}"
+echo "==> ставлю LaunchDaemon -> ${PLIST_DST}"
+$SUDO install -m 0644 "${PLIST_SRC}" "${PLIST_DST}"
+$SUDO chown root:wheel "${PLIST_DST}"
 
-echo "==> loading ${LABEL}"
-launchctl bootout system "${PLIST_DST}" 2>/dev/null || true
-launchctl bootstrap system "${PLIST_DST}" 2>/dev/null || launchctl load -w "${PLIST_DST}"
+echo "==> загружаю ${LABEL}"
+$SUDO launchctl bootout system "${PLIST_DST}" 2>/dev/null || true
+$SUDO launchctl bootstrap system "${PLIST_DST}" 2>/dev/null ||
+	$SUDO launchctl load -w "${PLIST_DST}"
 
-cat <<EOF
+cat <<'EOF'
 
-singctl installed as a system VPN daemon.
+singctl установлен как системная команда (/usr/local/bin/singctl).
 
-  IMPORTANT: save a VPN key once before it can connect:
-      sudo singctl            # add a key in the TUI (Ключи), then quit
-  The daemon reads the saved profile from your ~/.config/singctl.
+  Теперь можно запускать из любого места:
+      sudo singctl                  # TUI (нужен root для TUN)
 
-  Manage it:
-      launchctl list | grep singctl     # is it loaded?
-      sudo singctl --status             # daemon status
-      sudo singctl --attach             # live-tail its logs
-      sudo singctl --stop               # stop the running instance
-      tail -f /var/log/singctl.log      # daemon log
+  ВАЖНО: сохраните ключ один раз, чтобы демон мог подключиться:
+      sudo singctl                  # раздел «Ключи» → добавить ключ → выйти
+  Демон берёт ключ из сохранённого профиля (~/.config/singctl).
 
-  Uninstall:
-      make uninstall   (or scripts/install-macos.sh uninstall)
+  Управление:
+      launchctl list | grep singctl     # загружен ли демон
+      sudo singctl --status             # статус демона
+      sudo singctl --attach             # живой лог
+      sudo singctl --stop               # остановить инстанс
+      tail -f /var/log/singctl.log      # лог демона
+
+  Удалить:
+      make uninstall                    # (или scripts/install-macos.sh uninstall)
 EOF
