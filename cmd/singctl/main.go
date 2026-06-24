@@ -37,6 +37,7 @@ import (
 	"singctl/internal/monitor"
 	"singctl/internal/netstate"
 	"singctl/internal/platform"
+	"singctl/internal/proclist"
 	"singctl/internal/procproxy"
 	"singctl/internal/profile"
 	"singctl/internal/remote"
@@ -241,6 +242,49 @@ func modeFromLabel(s string) ui.RunMode {
 // launchDaemonPlist is where `make install` puts the macOS system daemon.
 const launchDaemonPlist = "/Library/LaunchDaemons/com.singctl.proxy.plist"
 
+// proxyPorts is the set of local ports the proxy listens on (SOCKS + HTTP), from
+// the CLI port or the defaults.
+func proxyPorts(c *cli) []int {
+	socks := c.proxy.port
+	if socks == 0 {
+		socks = 1080
+	}
+	return []int{socks, socks + 1, 1080, 2080}
+}
+
+// portHolders enumerates processes listening on any of the given ports, split
+// into singctl processes (safe to terminate to free the port) and foreign ones
+// (reported, never killed). Best-effort; an enumeration error yields nothing.
+func portHolders(ports []int) (singctlPIDs []int, foreign []proclist.App) {
+	apps, err := proclist.NewLister().List(context.Background())
+	if err != nil {
+		return nil, nil
+	}
+	self := os.Getpid()
+	for _, a := range apps {
+		if a.PID == self || !anyPortIn(a.Ports, ports) {
+			continue
+		}
+		if strings.Contains(strings.ToLower(a.Name), "singctl") {
+			singctlPIDs = append(singctlPIDs, a.PID)
+		} else {
+			foreign = append(foreign, a)
+		}
+	}
+	return singctlPIDs, foreign
+}
+
+func anyPortIn(have, want []int) bool {
+	for _, h := range have {
+		for _, w := range want {
+			if h == w {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // runControlCommand handles --attach/--stop/--status against a running instance.
 // These never need root: they only read the advertisement file, the log file and
 // the control socket.
@@ -262,8 +306,26 @@ func runControlCommand(c *cli) int {
 			control.RemoveInstance(dir)
 		}
 		if c.ctl.stop {
+			freed := false
 			if ok, msg := stopSystemDaemon(); ok {
 				fmt.Println(msg)
+				freed = true
+			}
+			// Also free the ports from any orphaned singctl process that no
+			// advertisement tracks (e.g. a detached --daemon child), and report a
+			// foreign holder.
+			ports := proxyPorts(c)
+			sc, foreign := portHolders(ports)
+			for _, pid := range sc {
+				if err := syscall.Kill(pid, syscall.SIGTERM); err == nil {
+					fmt.Printf("singctl: остановлен процесс PID %d (занимал порт)\n", pid)
+					freed = true
+				}
+			}
+			for _, a := range foreign {
+				fmt.Fprintf(os.Stderr, "note: порт занят посторонним процессом %q (PID %d) — это не singctl\n", a.Name, a.PID)
+			}
+			if freed {
 				return 0
 			}
 		}
