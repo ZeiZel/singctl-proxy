@@ -68,7 +68,7 @@ func TestView_NeverExceedsWidth(t *testing.T) {
 		{"apps", func(m Model) Model {
 			m.showProc = true
 			m.procRows = []ProcInfo{{PID: 123, Name: "zen", Ports: ":443"}, {PID: 456, Name: "codex"}}
-			m.routedPIDs = []int{123}
+			m.proxied = []proxiedApp{{PID: 123, Name: "zen"}}
 			return m
 		}},
 		{"settings", func(m Model) Model {

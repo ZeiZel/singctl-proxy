@@ -284,14 +284,14 @@ func (m Model) appsSummaryBody(w int) string {
 	if m.isDarwin {
 		rows = append(rows, s.Subtle.Render(s.clampLine("Cursor: --proxy-server=socks5://127.0.0.1:1080 (Chromium)", w)))
 	}
-	if len(m.routedPIDs) == 0 {
+	if len(m.proxied) == 0 {
 		rows = append(rows, s.Subtle.Render("(пока никого не проксируем)"))
 	} else {
-		parts := make([]string, len(m.routedPIDs))
-		for i, pid := range m.routedPIDs {
-			parts[i] = strconv.Itoa(pid)
+		parts := make([]string, len(m.proxied))
+		for i, a := range m.proxied {
+			parts[i] = proxiedLabel(a)
 		}
-		rows = append(rows, s.clampLine("PID: "+strings.Join(parts, ", "), w))
+		rows = append(rows, s.clampLine(strings.Join(parts, ", "), w))
 	}
 	rows = append(rows, s.Subtle.Render(s.clampLine("Enter — запустить приложение в прокси", w)))
 	return strings.Join(rows, "\n")

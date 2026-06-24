@@ -34,7 +34,9 @@ type Model struct {
 	width        int
 	height       int
 	input        textinput.Model
-	modal        string
+	modal        string    // modal/popup text ("" = hidden)
+	modalKind    modalKind // info (dismiss on any key) vs confirm ([Да]/[Нет])
+	pending      pendingAction // action to run when a confirm modal is accepted
 	status       string
 	errText      string
 	loaded       bool // a profile (link) has been loaded
@@ -45,19 +47,31 @@ type Model struct {
 	currentLinks []string // all loaded keys (masked) shown on the link screen
 	autoMode     RunMode  // mode to enable right after start (RunOff = none)
 
+	// Ключи manager (the ScreenLink screen). keyFocus is 0 = top input, 1 = the
+	// keys list; keyCursor selects a loaded key row; keyReveal shows the focused
+	// key's raw link; keyMode is the input sub-mode (add a new key / rename / edit
+	// the focused one); keyEditIndex is the key being renamed/edited.
+	keyFocus     int
+	keyCursor    int
+	keyReveal    bool
+	keyMode      keyInputMode
+	keyEditIndex int
+
 	showConns  bool         // connections overlay open
 	conns      []ConnRow    // live connection table (from the Clash API poller)
 	latency    []LatencyRow // per-server failover latencies
 	latencySel string       // currently-selected server tag
 
-	showProc    bool            // Приложения view open (launcher + picker)
-	procInput   textinput.Model // process filter for the picker
-	launchInput textinput.Model // "запустить приложение в прокси" field
-	appFocus    int             // 0 = launch field, 1 = process filter
-	procRows    []ProcInfo      // processes with network sockets (picker)
-	procCursor  int             // highlighted row in the filtered list
-	procErr     string          // process-list fetch error
-	routedPIDs  []int           // PIDs currently routed/launched through the proxy
+	showProc     bool            // Приложения view open (launcher + picker)
+	procInput    textinput.Model // process filter for the picker
+	launchInput  textinput.Model // "запустить приложение в прокси" field
+	appFocus     int             // 0 = launch field, 1 = picker, 2 = proxied list
+	procRows     []ProcInfo      // processes with network sockets (picker)
+	procCursor   int             // highlighted row in the filtered list
+	procErr      string          // process-list fetch error
+	proxied      []proxiedApp    // apps currently routed/launched through the proxy
+	proxiedCur   int             // highlighted row in the proxied list
+	procBusy     bool            // a launch/route is in flight (drives the loader)
 
 	showSettings bool         // Настройки section open
 	showConsole  bool         // Консоль приложений section open
@@ -325,7 +339,13 @@ func (m Model) Busy() bool              { return m.busy }
 func (m Model) SegCursor() int          { return m.segCursor }
 func (m Model) Section() int            { return m.section }
 func (m Model) ShowingConsole() bool    { return m.showConsole }
-func (m Model) RoutedPIDs() []int       { return m.routedPIDs }
+func (m Model) RoutedPIDs() []int {
+	out := make([]int, len(m.proxied))
+	for i, a := range m.proxied {
+		out[i] = a.PID
+	}
+	return out
+}
 func (m Model) ShowingSettings() bool   { return m.showSettings }
 func (m Model) DraftSettings() Settings { return m.setForm.draft }
 func (m Model) Attached() bool          { return m.attached }

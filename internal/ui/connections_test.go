@@ -99,8 +99,13 @@ func TestProcPrompt_RoutePID(t *testing.T) {
 	m.procInput.SetValue("12345")
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
-	if m.showProc {
-		t.Error("submitting should close the view")
+	// The Приложения view stays open after routing so the proxied-apps list +
+	// loader are visible; a busy spinner marks the in-flight route.
+	if !m.showProc {
+		t.Error("submitting should keep the Приложения view open")
+	}
+	if !m.procBusy {
+		t.Error("submitting should set the proxying loader")
 	}
 	if cmd == nil {
 		t.Fatal("expected a command from submit")

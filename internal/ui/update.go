@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -79,7 +80,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.busy = false
 		m.errText = ""
 		m.input.SetValue("")
-		m.status = "ключ добавлен (" + strconv.Itoa(len(msg.links)) + " всего)"
+		m.keyReveal = false
+		if m.keyCursor >= len(m.currentLinks) {
+			m.keyCursor = max(len(m.currentLinks)-1, 0)
+		}
+		if len(m.currentLinks) == 0 { // last key removed → focus the input
+			m.keyFocus = 0
+			m.input.Focus()
+		}
+		m.status = "ключи обновлены (" + strconv.Itoa(len(msg.links)) + " всего)"
 		return m, nil
 
 	case linkLoadedMsg:
@@ -142,6 +151,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case procResultMsg:
+		m.procBusy = false
 		if msg.err != nil {
 			m.errText = msg.err.Error()
 			m.status = ""
@@ -150,8 +160,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errText = ""
 			m.status = msg.note
 			m.actions.add(ActOk, msg.note)
-			if msg.pid > 0 {
-				m.routedPIDs = appendUnique(m.routedPIDs, msg.pid)
+			switch {
+			case msg.remove && msg.pid != 0:
+				m.proxied = removeProxied(m.proxied, msg.pid)
+				if m.proxiedCur >= len(m.proxied) {
+					m.proxiedCur = max(len(m.proxied)-1, 0)
+				}
+			case msg.pid > 0:
+				m.proxied = upsertProxied(m.proxied, proxiedApp{PID: msg.pid, Name: msg.app})
 			}
 		}
 		return m, nil
@@ -292,8 +308,9 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
 		return m, nil
 	}
-	if m.modal != "" {
+	if m.modal != "" { // click anywhere dismisses (cancels a confirm)
 		m.modal = ""
+		m.pending = pendingAction{}
 		return m, nil
 	}
 	switch {
@@ -304,6 +321,24 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.procInput.Focus()
 				m.launchInput.Blur()
 				m.procCursor = i
+				return m, nil
+			}
+		}
+		for i := range m.proxied {
+			if m.zm.Get(zoneProxied(i)).InBounds(msg) {
+				m.appFocus = 2
+				m.procInput.Blur()
+				m.launchInput.Blur()
+				m.proxiedCur = i
+				return m, nil
+			}
+		}
+	case m.screen == ScreenLink:
+		for i := range m.currentLinks {
+			if m.zm.Get(zoneKey(i)).InBounds(msg) {
+				m.keyFocus = 1
+				m.input.Blur()
+				m.keyCursor = i
 				return m, nil
 			}
 		}
@@ -352,9 +387,20 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// A shown modal swallows the next keypress to dismiss itself — this must stay
-	// first so any key (including ctrl+c) clears it before other handling.
+	// A shown modal captures the next keypress. An info modal dismisses on any
+	// key; a confirm modal runs its pending action on Да (y/Enter) and cancels on
+	// Нет (n/Esc). This stays first so any key clears it before other handling.
 	if m.modal != "" {
+		if m.modalKind == modalConfirm {
+			switch msg.String() {
+			case "y", "д", "enter":
+				return m.runPending()
+			default: // n / esc / anything → cancel
+				m.modal = ""
+				m.pending = pendingAction{}
+				return m, nil
+			}
+		}
 		m.modal = ""
 		return m, nil
 	}
@@ -362,8 +408,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	// Приложения view: a launch field (запустить приложение в прокси) + a process
-	// picker. Tab toggles focus between them; esc closes.
+	// Приложения view: three focus zones — 0 launch field, 1 picker (filter +
+	// list), 2 the proxied-apps list. Tab cycles them; ↑/↓ drive the focused zone;
+	// esc closes.
 	if m.showProc {
 		switch {
 		case msg.String() == "esc":
@@ -372,54 +419,78 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.procInput.Blur()
 			return m, nil
 		case msg.Type == tea.KeyTab:
-			m.appFocus = 1 - m.appFocus
-			if m.appFocus == 0 {
-				m.launchInput.Focus()
-				m.procInput.Blur()
-			} else {
-				m.procInput.Focus()
-				m.launchInput.Blur()
-			}
+			m.appFocus = (m.appFocus + 1) % 3
+			m.syncAppFocus()
+			return m, textinput.Blink
+		case msg.Type == tea.KeyShiftTab:
+			m.appFocus = (m.appFocus + 2) % 3
+			m.syncAppFocus()
 			return m, textinput.Blink
 		case msg.String() == "up":
-			if m.procCursor > 0 {
+			if m.appFocus == 2 {
+				if m.proxiedCur > 0 {
+					m.proxiedCur--
+				}
+			} else if m.procCursor > 0 {
 				m.procCursor--
 			}
 			return m, nil
 		case msg.String() == "down":
-			if n := len(m.filteredProcs()); n > 0 && m.procCursor < n-1 {
+			if m.appFocus == 2 {
+				if m.proxiedCur < len(m.proxied)-1 {
+					m.proxiedCur++
+				}
+			} else if n := len(m.filteredProcs()); n > 0 && m.procCursor < n-1 {
 				m.procCursor++
 			}
 			return m, nil
-		case msg.Type == tea.KeyCtrlR:
-			// Restart the highlighted process in proxy mode (best-effort; the
-			// only way to proxy an existing process on macOS).
+		case msg.String() == "u" && m.appFocus == 2:
+			// Unroute the selected proxied app (Linux: clean detach; macOS: kill).
+			if pid := m.selectedProxiedPID(); pid != 0 {
+				m.procBusy = true
+				m.status = "отключаю проксирование…"
+				return m, unroutePIDCmd(m.backend, pid)
+			}
+			return m, nil
+		case (msg.String() == "k" || msg.Type == tea.KeyCtrlR) && m.appFocus == 2:
+			// Kill the selected proxied app — confirm first.
+			if pid := m.selectedProxiedPID(); pid != 0 {
+				m.modal = fmt.Sprintf("Завершить приложение (PID %d)? Процесс будет остановлен.", pid)
+				m.modalKind = modalConfirm
+				m.pending = pendingAction{kind: pendKillApp, pid: pid}
+			}
+			return m, nil
+		case msg.Type == tea.KeyCtrlR && m.appFocus != 2:
+			// Restart the highlighted picker process in proxy mode (best-effort;
+			// the only way to proxy an existing process on macOS).
 			fp := m.filteredProcs()
 			if len(fp) == 0 {
 				return m, nil
 			}
-			pid := fp[clampIdx(m.procCursor, len(fp))].PID
-			m.showProc = false
+			row := fp[clampIdx(m.procCursor, len(fp))]
+			m.procBusy = true
 			m.status = "перезапускаю процесс в proxy-режиме…"
-			return m, restartPIDCmd(m.backend, pid)
+			return m, restartPIDCmd(m.backend, row.PID, row.Name)
 		case msg.String() == "enter":
-			// Launch field with text → launch it. Otherwise (filter field, or an
-			// empty launch field) → route the highlighted/typed process, so the
-			// picker list is always actionable regardless of which field is focused.
 			if m.appFocus == 0 {
 				if v := strings.TrimSpace(m.launchInput.Value()); v != "" {
 					m.launchInput.SetValue("")
-					m.showProc = false
+					m.procBusy = true
 					m.status = "запускаю приложение через прокси…"
 					return m, launchProcCmd(m.backend, strings.Fields(v))
 				}
+				// empty launch field → fall through and route the highlighted app
+			}
+			if m.appFocus == 2 {
+				return m, nil // the proxied list acts via u/k, not Enter
 			}
 			return m.submitProc() // route the highlighted/typed PID
 		default:
 			var cmd tea.Cmd
-			if m.appFocus == 0 {
+			switch m.appFocus {
+			case 0:
 				m.launchInput, cmd = m.launchInput.Update(msg)
-			} else {
+			case 1:
 				m.procInput, cmd = m.procInput.Update(msg)
 				m.procCursor = 0 // filter changed — reset the highlight
 			}
@@ -499,36 +570,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch m.screen {
 	case ScreenLink:
-		switch msg.String() {
-		case "esc":
-			// Cancel editing and go back — unless this is the first-run screen
-			// (no profile yet), where esc exits.
-			if m.loaded {
-				m.screen = ScreenDashboard
-				m.input.Blur()
-				return m, nil
-			}
-			return m, tea.Quit
-		case "enter":
-			link := strings.TrimSpace(m.input.Value())
-			if link == "" {
-				m.errText = "введите vless:// ссылку"
-				return m, nil
-			}
-			m.errText = ""
-			m.busy = true
-			// With keys already loaded, Enter ADDS another (failover); otherwise
-			// it loads the first.
-			if len(m.currentLinks) > 0 {
-				m.status = "добавляю ключ…"
-				return m, addLinkCmd(m.backend, link)
-			}
-			m.status = "загрузка ссылки…"
-			return m, loadLinkCmd(m.backend, link)
-		}
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		return m, cmd
+		return m.handleKeysKey(msg)
 
 	case ScreenDashboard:
 		switch {
@@ -617,17 +659,22 @@ func (m Model) openSection(idx int) (tea.Model, tea.Cmd) {
 		m.procInput.Blur()
 		m.showProc = true
 		m.procCursor = 0
+		m.proxiedCur = 0
 		m.errText = ""
 		return m, tea.Batch(textinput.Blink, listProcessesCmd(m.backend))
 	case secKeys:
-		// Connection-strings screen: keys shown masked, field adds another (the
-		// raw key is never echoed as the placeholder, so it stays secret).
+		// Keys manager: a top add field + a navigable masked list (the raw key is
+		// never echoed as the placeholder, so it stays secret).
 		m.input.SetValue("")
 		if len(m.currentLinks) > 0 {
 			m.input.Placeholder = "vless://… (добавить ключ)"
 		} else {
 			m.input.Placeholder = "vless://..."
 		}
+		m.keyFocus = 0
+		m.keyMode = keyModeAdd
+		m.keyCursor = 0
+		m.keyReveal = false
 		m.input.Focus()
 		m.screen = ScreenLink
 		m.errText = ""
@@ -642,6 +689,132 @@ func (m Model) openSection(idx int) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// handleKeysKey drives the Ключи screen: a top input (add / rename / edit) and a
+// navigable list of loaded keys. keyFocus 0 = input, 1 = list. List actions:
+// Enter reveal, n rename, e edit, d delete (confirm).
+func (m Model) handleKeysKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.keyFocus == 1 { // the keys list
+		switch msg.String() {
+		case "esc", "q":
+			if m.loaded {
+				m.screen = ScreenDashboard
+				return m, nil
+			}
+			return m, tea.Quit
+		case "tab", "shift+tab":
+			m.keyFocus = 0
+			m.input.Focus()
+			return m, textinput.Blink
+		case "up", "k":
+			if m.keyCursor > 0 {
+				m.keyCursor--
+			} else {
+				m.keyFocus = 0
+				m.input.Focus()
+				return m, textinput.Blink
+			}
+			return m, nil
+		case "down", "j":
+			if m.keyCursor < len(m.currentLinks)-1 {
+				m.keyCursor++
+			}
+			return m, nil
+		case "enter", " ":
+			m.keyReveal = !m.keyReveal
+			return m, nil
+		case "n": // rename / add name
+			if m.keyCursor < len(m.currentLinks) {
+				m.keyMode = keyModeRename
+				m.keyEditIndex = m.keyCursor
+				m.keyFocus = 0
+				m.input.SetValue(linkName(m.currentLinks[m.keyCursor]))
+				m.input.CursorEnd()
+				m.input.Focus()
+				return m, textinput.Blink
+			}
+			return m, nil
+		case "e": // edit the raw link
+			if m.keyCursor < len(m.currentLinks) {
+				m.keyMode = keyModeEdit
+				m.keyEditIndex = m.keyCursor
+				m.keyFocus = 0
+				m.input.SetValue(m.currentLinks[m.keyCursor])
+				m.input.CursorEnd()
+				m.input.Focus()
+				return m, textinput.Blink
+			}
+			return m, nil
+		case "d": // delete (confirm)
+			if m.keyCursor < len(m.currentLinks) {
+				m.modal = fmt.Sprintf("Удалить ключ %d? Это действие необратимо.", m.keyCursor+1)
+				m.modalKind = modalConfirm
+				m.pending = pendingAction{kind: pendDeleteKey, index: m.keyCursor}
+			}
+			return m, nil
+		}
+		return m, nil
+	}
+
+	// keyFocus 0: the top input.
+	switch msg.String() {
+	case "esc":
+		if m.keyMode != keyModeAdd { // cancel rename/edit back to add
+			m.keyMode = keyModeAdd
+			m.input.SetValue("")
+			return m, nil
+		}
+		if m.loaded {
+			m.screen = ScreenDashboard
+			m.input.Blur()
+			return m, nil
+		}
+		return m, tea.Quit
+	case "tab", "down":
+		if len(m.currentLinks) > 0 {
+			m.keyFocus = 1
+			m.input.Blur()
+		}
+		return m, nil
+	case "enter":
+		val := strings.TrimSpace(m.input.Value())
+		switch m.keyMode {
+		case keyModeRename:
+			idx := m.keyEditIndex
+			m.keyMode = keyModeAdd
+			m.input.SetValue("")
+			m.status = "переименовываю ключ…"
+			return m, renameLinkCmd(m.backend, idx, val)
+		case keyModeEdit:
+			if val == "" {
+				m.errText = "введите vless:// ссылку"
+				return m, nil
+			}
+			idx := m.keyEditIndex
+			m.keyMode = keyModeAdd
+			m.input.SetValue("")
+			m.busy = true
+			m.status = "сохраняю ключ…"
+			return m, replaceLinkCmd(m.backend, idx, val)
+		default: // keyModeAdd
+			if val == "" {
+				m.errText = "введите vless:// ссылку"
+				return m, nil
+			}
+			m.errText = ""
+			m.busy = true
+			if len(m.currentLinks) > 0 {
+				m.status = "добавляю ключ…"
+				return m, addLinkCmd(m.backend, val)
+			}
+			m.status = "загрузка ссылки…"
+			return m, loadLinkCmd(m.backend, val)
+		}
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
 }
 
 // handleSettingsKey drives the Настройки section: ↑/↓ move focus, Enter toggles
@@ -748,6 +921,7 @@ func (m Model) requestVPN() (tea.Model, tea.Cmd) {
 		switch a {
 		case policy.ActShowWarning:
 			m.modal = "Cisco Secure Client активен — VPN-режим заблокирован, чтобы не конфликтовать ни единым пакетом. Отключите Cisco и повторите."
+			m.modalKind = modalInfo // dismiss on any key (not a confirm)
 			m.segCursor = int(m.mode) // don't leave the cursor stranded on the blocked VPN segment
 			return m, nil
 		case policy.ActStartForwarder:
@@ -781,26 +955,88 @@ func (m Model) submitProc() (tea.Model, tea.Cmd) {
 	raw := strings.TrimSpace(m.procInput.Value())
 	fp := m.filteredProcs()
 	m.procInput.SetValue("")
-	m.showProc = false
 
 	if pid, err := strconv.Atoi(raw); err == nil && pid > 0 {
+		m.procBusy = true
 		m.status = "проксирую процесс…"
-		return m, routePIDCmd(m.backend, pid)
+		return m, routePIDCmd(m.backend, pid, "PID "+raw)
 	}
 	if len(fp) > 0 {
+		row := fp[clampIdx(m.procCursor, len(fp))]
+		m.procBusy = true
 		m.status = "проксирую процесс…"
-		return m, routePIDCmd(m.backend, fp[clampIdx(m.procCursor, len(fp))].PID)
+		return m, routePIDCmd(m.backend, row.PID, row.Name)
 	}
 	return m, nil
 }
 
-func appendUnique(s []int, v int) []int {
-	for _, x := range s {
-		if x == v {
+// runPending executes the action a confirm modal was guarding, then clears it.
+func (m Model) runPending() (tea.Model, tea.Cmd) {
+	p := m.pending
+	m.modal = ""
+	m.pending = pendingAction{}
+	switch p.kind {
+	case pendDeleteKey:
+		m.status = "удаляю ключ…"
+		if m.keyCursor >= p.index && m.keyCursor > 0 {
+			m.keyCursor--
+		}
+		m.keyReveal = false
+		return m, deleteLinkCmd(m.backend, p.index)
+	case pendKillApp:
+		m.procBusy = true
+		m.status = "завершаю приложение…"
+		return m, stopProxiedCmd(m.backend, p.pid)
+	}
+	return m, nil
+}
+
+// syncAppFocus points the textinputs at the focused zone (launch/picker), and
+// blurs both when the proxied-apps list (zone 2) is focused.
+func (m *Model) syncAppFocus() {
+	switch m.appFocus {
+	case 0:
+		m.launchInput.Focus()
+		m.procInput.Blur()
+	case 1:
+		m.procInput.Focus()
+		m.launchInput.Blur()
+	default:
+		m.launchInput.Blur()
+		m.procInput.Blur()
+	}
+}
+
+// selectedProxiedPID is the PID of the highlighted proxied app (0 if none).
+func (m Model) selectedProxiedPID() int {
+	if len(m.proxied) == 0 {
+		return 0
+	}
+	return m.proxied[clampIdx(m.proxiedCur, len(m.proxied))].PID
+}
+
+// upsertProxied adds or updates an app in the proxied list (dedup by PID).
+func upsertProxied(s []proxiedApp, a proxiedApp) []proxiedApp {
+	for i, x := range s {
+		if x.PID == a.PID {
+			if a.Name != "" {
+				s[i].Name = a.Name
+			}
 			return s
 		}
 	}
-	return append(s, v)
+	return append(s, a)
+}
+
+// removeProxied drops the app with pid from the proxied list.
+func removeProxied(s []proxiedApp, pid int) []proxiedApp {
+	out := s[:0]
+	for _, x := range s {
+		if x.PID != pid {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 func clampIdx(i, n int) int {

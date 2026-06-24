@@ -17,6 +17,12 @@ type Backend interface {
 	AddLink(ctx context.Context, link string) error
 	// CurrentLinks returns the loaded VLESS links (priority order) for display.
 	CurrentLinks() []string
+	// DeleteLink removes the key at index (0-based) and reloads, preserving the
+	// running mode; removing the last key stops the proxy.
+	DeleteLink(ctx context.Context, index int) error
+	// RenameLink sets the human-readable label (the #fragment) of the key at
+	// index, without touching the secret, and reloads preserving the mode.
+	RenameLink(ctx context.Context, index int, name string) error
 	EnableProxy(ctx context.Context) error
 	EnableVPN(ctx context.Context) error
 	Stop(ctx context.Context) error
@@ -31,6 +37,15 @@ type Backend interface {
 	// RestartProxied terminates a running PID and relaunches it through the
 	// proxy (best-effort; the only way to proxy an existing process on macOS).
 	RestartProxied(ctx context.Context, pid int) (int, error)
+	// UnroutePID stops routing a PID through the proxy. On Linux it cleanly
+	// removes the process from the cgroup (the app keeps running, direct); on
+	// macOS env-proxying can't be undone, so it terminates the process instead.
+	UnroutePID(ctx context.Context, pid int) error
+	// StopProxied terminates a proxied process (kill).
+	StopProxied(ctx context.Context, pid int) error
+	// MarkIntroSeen records that the first-run intro animation has played, so
+	// later runs show only the short component loader.
+	MarkIntroSeen() error
 	// ApplySettings reloads the running core with edited settings (port, Clash
 	// API, urltest), preserving the current mode.
 	ApplySettings(ctx context.Context, s Settings) error

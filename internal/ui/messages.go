@@ -95,9 +95,11 @@ type errMsg struct{ err error }
 type logsMsg struct{ content string }
 type logsTickMsg struct{}
 type procResultMsg struct {
-	note string
-	err  error
-	pid  int // PID now routed/launched (0 if none); tracked in routedPIDs
+	note   string
+	err    error
+	pid    int    // PID now routed/launched (0 if none)
+	app    string // app name for the proxied list (launch/route)
+	remove bool   // true → drop pid from the proxied list (unroute/kill)
 }
 
 // ProcInfo is one application for the per-process routing picker. Helper/forked
@@ -122,6 +124,59 @@ type procListMsg struct {
 	rows []ProcInfo
 	err  error
 }
+
+// proxiedApp is one application currently routed/launched through the proxy,
+// shown in the "Проксируются сейчас" list with per-app unroute/kill actions.
+type proxiedApp struct {
+	PID  int
+	Name string
+}
+
+// proxiedLabel renders a proxied app as "name (PID)" (or just the PID).
+func proxiedLabel(a proxiedApp) string {
+	if a.Name != "" {
+		return fmt.Sprintf("%s (PID %d)", a.Name, a.PID)
+	}
+	return fmt.Sprintf("PID %d", a.PID)
+}
+
+// modalKind selects how the popup behaves: an info card dismissed by any key, or
+// a confirm card with [Да]/[Нет].
+type modalKind int
+
+const (
+	modalInfo modalKind = iota
+	modalConfirm
+)
+
+// pendingKind is the action a confirm modal runs when accepted.
+type pendingKind int
+
+const (
+	pendNone pendingKind = iota
+	pendDeleteKey
+	pendKillApp
+)
+
+// pendingAction carries the parameters of a deferred confirm action.
+type pendingAction struct {
+	kind  pendingKind
+	index int // key index (pendDeleteKey)
+	pid   int // app PID (pendKillApp)
+}
+
+// keyInputMode is the sub-mode of the Ключи top input.
+type keyInputMode int
+
+const (
+	keyModeAdd    keyInputMode = iota // typing a new vless:// link to add
+	keyModeRename                     // typing a new name for the focused key
+	keyModeEdit                       // editing the focused key's raw link (replace)
+)
+
+// appBusyMsg toggles the "proxying in progress" loader (set when a launch/route
+// is dispatched, cleared when its result arrives).
+type appBusyMsg struct{ busy bool }
 
 // linkAddedMsg is the result of adding a second key; links is the refreshed set.
 type linkAddedMsg struct {

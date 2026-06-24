@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -80,6 +81,16 @@ func (b *Backend) AddLink(_ context.Context, link string) error  { return b.add(
 
 func (b *Backend) add(link string) error {
 	_, err := control.Request(b.sock, "KEYS-ADD", strings.TrimSpace(link))
+	return err
+}
+
+func (b *Backend) DeleteLink(_ context.Context, index int) error {
+	_, err := control.Request(b.sock, "KEYS-REMOVE", strconv.Itoa(index))
+	return err
+}
+
+func (b *Backend) RenameLink(_ context.Context, index int, name string) error {
+	_, err := control.Request(b.sock, "KEYS-RENAME", strconv.Itoa(index)+" "+strings.TrimSpace(name))
 	return err
 }
 
@@ -175,6 +186,20 @@ func (b *Backend) LaunchProxied(ctx context.Context, argv []string) (int, error)
 func (b *Backend) RestartProxied(ctx context.Context, pid int) (int, error) {
 	return b.procRouter().RestartPID(ctx, pid)
 }
+
+// UnroutePID / StopProxied act on children launched by THIS attach client (they
+// run locally toward the daemon's port), so they use the local router directly.
+func (b *Backend) UnroutePID(ctx context.Context, pid int) error {
+	return b.procRouter().Unroute(ctx, pid)
+}
+
+func (b *Backend) StopProxied(ctx context.Context, pid int) error {
+	return b.procRouter().Kill(ctx, pid)
+}
+
+// MarkIntroSeen is a no-op for an attached client (the intro is a first-run,
+// local concern; the daemon owns no terminal).
+func (b *Backend) MarkIntroSeen() error { return nil }
 
 func (b *Backend) ListProcesses(ctx context.Context) ([]ui.ProcInfo, error) {
 	b.listerOnce.Do(func() { b.lister = proclist.NewLister() })

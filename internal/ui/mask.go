@@ -19,3 +19,13 @@ func maskLink(link, maskChar string) string {
 	}
 	return masked
 }
+
+// linkName returns the human label (decoded #fragment) of a VLESS link, or "".
+func linkName(link string) string {
+	if i := strings.LastIndex(link, "#"); i >= 0 && i+1 < len(link) {
+		if name, err := url.QueryUnescape(link[i+1:]); err == nil {
+			return strings.TrimSpace(name)
+		}
+	}
+	return ""
+}

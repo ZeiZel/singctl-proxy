@@ -136,6 +136,16 @@ func (r *linuxRouter) RemovePID(_ context.Context, pid int) error {
 	return nil
 }
 
+// Unroute on Linux is a clean detach: the PID leaves the cgroup and its traffic
+// rides the default route again, while the process keeps running.
+func (r *linuxRouter) Unroute(ctx context.Context, pid int) error { return r.RemovePID(ctx, pid) }
+
+// Kill terminates a proxied process (and drops it from the routed set).
+func (r *linuxRouter) Kill(_ context.Context, pid int) error {
+	r.pids.remove(pid)
+	return terminate(pid)
+}
+
 func (r *linuxRouter) Launch(ctx context.Context, argv []string) (int, error) {
 	if err := r.ensureSetup(ctx); err != nil {
 		return 0, err

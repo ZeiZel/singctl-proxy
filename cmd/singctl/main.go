@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -360,6 +361,21 @@ func registerControl(srv *control.Server, executor *app.Executor, stop func(), s
 	})
 	srv.Handle("KEYS-ADD", func(arg string) (string, error) {
 		return "OK", executor.AddLink(context.Background(), arg)
+	})
+	srv.Handle("KEYS-REMOVE", func(arg string) (string, error) {
+		idx, err := strconv.Atoi(strings.TrimSpace(arg))
+		if err != nil {
+			return "", fmt.Errorf("bad index %q: %w", arg, err)
+		}
+		return "OK", executor.DeleteLink(context.Background(), idx)
+	})
+	srv.Handle("KEYS-RENAME", func(arg string) (string, error) {
+		idxStr, name, _ := strings.Cut(strings.TrimSpace(arg), " ")
+		idx, err := strconv.Atoi(idxStr)
+		if err != nil {
+			return "", fmt.Errorf("bad index %q: %w", idxStr, err)
+		}
+		return "OK", executor.RenameLink(context.Background(), idx, name)
 	})
 }
 

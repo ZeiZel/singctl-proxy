@@ -53,6 +53,7 @@ type Executor struct {
 	// against LoadLink. Never hold cfgMu and mu at the same time.
 	cfgMu       sync.Mutex
 	save        func(string) error
+	introSeen   func() error
 	logPath     string
 	logFile     *os.File
 	ports       singbox.Ports
@@ -147,6 +148,25 @@ func (e *Executor) SetSaver(fn func(string) error) {
 	e.save = fn
 }
 
+// SetIntroHook registers the hook that records the first-run intro as seen
+// (backed by the profile store). Optional; MarkIntroSeen is a no-op when unset.
+func (e *Executor) SetIntroHook(fn func() error) {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	e.introSeen = fn
+}
+
+// MarkIntroSeen records that the first-run intro animation has played.
+func (e *Executor) MarkIntroSeen() error {
+	e.cfgMu.Lock()
+	fn := e.introSeen
+	e.cfgMu.Unlock()
+	if fn == nil {
+		return nil
+	}
+	return fn()
+}
+
 // --- ui.Backend ---
 
 // LoadLink validates+remembers the link and prepares the runtime WITHOUT
@@ -206,6 +226,67 @@ func (e *Executor) AddLink(ctx context.Context, link string) error {
 	prev := e.StateLabel()
 	combined := append(e.CurrentLinks(), strings.TrimSpace(link))
 	if err := e.LoadLink(ctx, strings.Join(combined, "\n")); err != nil {
+		return err
+	}
+	switch prev {
+	case "vpn":
+		return e.EnableVPN(ctx)
+	case "proxy", "suspended":
+		return e.EnableProxy(ctx)
+	}
+	return nil
+}
+
+// DeleteLink removes the key at index and reloads the set, preserving the
+// running mode. Removing the last key stops the proxy entirely.
+func (e *Executor) DeleteLink(ctx context.Context, index int) error {
+	links := e.CurrentLinks()
+	if index < 0 || index >= len(links) {
+		return fmt.Errorf("неверный индекс ключа: %d", index)
+	}
+	remaining := append(links[:index:index], links[index+1:]...)
+	if len(remaining) == 0 {
+		// Last key removed: stop the proxy and clear the loaded set + saved profile.
+		if err := e.Stop(ctx); err != nil {
+			return err
+		}
+		if old := e.manager(); old != nil {
+			_ = old.Shutdown(ctx)
+		}
+		e.mu.Lock()
+		e.mgr = nil
+		e.links = nil
+		e.mu.Unlock()
+		e.cfgMu.Lock()
+		save := e.save
+		e.cfgMu.Unlock()
+		if save != nil {
+			_ = save("")
+		}
+		return nil
+	}
+	return e.reloadPreservingMode(ctx, remaining)
+}
+
+// RenameLink rewrites the #fragment label of the key at index and reloads.
+func (e *Executor) RenameLink(ctx context.Context, index int, name string) error {
+	links := e.CurrentLinks()
+	if index < 0 || index >= len(links) {
+		return fmt.Errorf("неверный индекс ключа: %d", index)
+	}
+	renamed, err := vless.SetName(links[index], name)
+	if err != nil {
+		return err
+	}
+	links[index] = renamed
+	return e.reloadPreservingMode(ctx, links)
+}
+
+// reloadPreservingMode reloads the given link set and re-enables whatever mode
+// was running, so key edits take effect live. Shared by Delete/Rename.
+func (e *Executor) reloadPreservingMode(ctx context.Context, links []string) error {
+	prev := e.StateLabel()
+	if err := e.LoadLink(ctx, strings.Join(links, "\n")); err != nil {
 		return err
 	}
 	switch prev {
@@ -514,6 +595,16 @@ func (e *Executor) RestartProxied(ctx context.Context, pid int) (int, error) {
 		return 0, errProxyNotRunning
 	}
 	return e.procRouter().RestartPID(ctx, pid)
+}
+
+// UnroutePID stops routing a PID (Linux: clean cgroup detach; macOS: terminate).
+func (e *Executor) UnroutePID(ctx context.Context, pid int) error {
+	return e.procRouter().Unroute(ctx, pid)
+}
+
+// StopProxied terminates a proxied process.
+func (e *Executor) StopProxied(ctx context.Context, pid int) error {
+	return e.procRouter().Kill(ctx, pid)
 }
 
 // CurrentSettings returns the live tunables as a ui.Settings (the inverse of

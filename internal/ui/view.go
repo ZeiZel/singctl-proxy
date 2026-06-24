@@ -179,7 +179,7 @@ func (m Model) linkView() string {
 
 	title := "singctl " + s.gl.Dash + " вставьте VLESS-ссылку"
 	if len(m.currentLinks) > 0 {
-		title = "singctl " + s.gl.Dash + " строки подключения"
+		title = "singctl " + s.gl.Dash + " ключи подключения"
 	}
 	header := m.topBar(title, "")
 
@@ -189,41 +189,72 @@ func (m Model) linkView() string {
 	}
 
 	var rows []string
-	// Show the already-loaded keys, masked like a password, labelled "Ключ N".
-	if len(m.currentLinks) > 0 {
-		rows = append(rows, s.Subtle.Render("ключи подключения (скрыты):"))
-		for i, link := range m.currentLinks {
-			label := s.Key.Render("Ключ " + strconv.Itoa(i+1) + ": ")
-			rows = append(rows, s.clampLine(label+maskLink(link, maskChar), subW))
+	// The add/rename/edit input, full width, focused-styled when keyFocus==0.
+	inputTitle := "Добавить ключ"
+	switch m.keyMode {
+	case keyModeRename:
+		inputTitle = fmt.Sprintf("Имя для ключа %d", m.keyEditIndex+1)
+	case keyModeEdit:
+		inputTitle = fmt.Sprintf("Редактировать ключ %d", m.keyEditIndex+1)
+	}
+	rows = append(rows, m.fieldTitle(inputTitle, m.keyFocus == 0))
+	if lay == layoutNarrow {
+		rows = append(rows, s.clampLine(m.input.View(), max(m.width, 1)))
+	} else {
+		// Full-width box (the round-1 hardcoded 60-cell cap is gone).
+		st := s.Panel
+		if m.keyFocus == 0 {
+			st = s.PanelActive
 		}
-		rows = append(rows, "", s.Subtle.Render("Ключ "+strconv.Itoa(len(m.currentLinks)+1)+" — добавить ключ:"))
+		rows = append(rows, st.Width(max(m.width-4, 1)).Render(m.input.View()))
 	}
 
-	var box string
-	if lay == layoutNarrow {
-		// No border to save cells; clamp defensively so a long link can never
-		// overflow (a focused input already windows itself to its Width).
-		box = s.clampLine(m.input.View(), max(m.width, 1))
-	} else {
-		bw := min(m.width-2, 60)
-		box = s.Panel.Width(max(bw-2, 1)).Render(m.input.View())
-	}
-	rows = append(rows, box)
-	if m.errText != "" {
-		rows = append(rows, "", s.Err.Render(wrap(s.gl.Warn+" "+m.errText, subW)))
-	}
+	// The navigable list of loaded keys.
 	if len(m.currentLinks) > 0 {
+		rows = append(rows, s.rule(subW), m.fieldTitle("Ключи (скрыты)", m.keyFocus == 1))
+		cur := clampIdx(m.keyCursor, len(m.currentLinks))
+		for i, link := range m.currentLinks {
+			focused := m.keyFocus == 1 && i == cur
+			marker := "  "
+			label := "Ключ " + strconv.Itoa(i+1) + ": " + maskLink(link, maskChar)
+			if focused {
+				marker = s.colored(s.th.Accent, s.gl.SelBar+" ")
+				label = s.Accent.Render(label)
+			}
+			rows = append(rows, m.zm.Mark(zoneKey(i), s.clampLine(marker+label, subW)))
+			if focused && m.keyReveal {
+				rows = append(rows, s.Subtle.Render(s.clampBlock(wrap(link, subW), subW)))
+			}
+			if focused {
+				rows = append(rows, s.Subtle.Render(s.clampLine("   Enter — показать · n — имя · e — ред. · d — удалить", subW)))
+			}
+		}
 		rows = append(rows, "", s.Muted.Render(wrap("Несколько ключей образуют группу с авто-выбором самого быстрого.", subW)))
 	} else {
 		rows = append(rows, "", s.Muted.Render(wrap("Ничего не запустится, пока вы сами не выберете режим.", subW)))
 	}
+	if m.errText != "" {
+		rows = append(rows, "", s.Err.Render(wrap(s.gl.Warn+" "+m.errText, subW)))
+	}
 	body := lipgloss.JoinVertical(lipgloss.Left, rows...)
 
-	enterLabel := "загрузить"
-	if len(m.currentLinks) > 0 {
-		enterLabel = "добавить"
+	var pairs [][2]string
+	if m.keyFocus == 1 {
+		pairs = [][2]string{{s.gl.ArrowsUD, "ключ"}, {"Enter", "показать"}, {"n", "имя"}, {"e", "ред."}, {"d", "удалить"}, {"Tab", "ввод"}}
+	} else {
+		enterLabel := "загрузить"
+		if m.keyMode == keyModeRename {
+			enterLabel = "переименовать"
+		} else if m.keyMode == keyModeEdit {
+			enterLabel = "сохранить"
+		} else if len(m.currentLinks) > 0 {
+			enterLabel = "добавить"
+		}
+		pairs = [][2]string{{"Enter", enterLabel}}
+		if len(m.currentLinks) > 0 {
+			pairs = append(pairs, [2]string{"Tab", "список"})
+		}
 	}
-	pairs := [][2]string{{"Enter", enterLabel}}
 	if m.loaded {
 		pairs = append(pairs, [2]string{"esc", "назад"})
 	}
@@ -231,6 +262,8 @@ func (m Model) linkView() string {
 	footer := s.clampLine(s.footerHints(pairs), max(m.width, 1))
 	return m.frame(header, body, footer)
 }
+
+func zoneKey(i int) string { return "key-" + strconv.Itoa(i) }
 
 // --- logs ---
 
@@ -424,9 +457,12 @@ func (m Model) procView() string {
 	subW := max(m.width-2, 1)
 
 	rows := []string{
-		s.PanelTitle.Render("Запустить приложение в прокси"),
+		m.fieldTitle("Запустить приложение в прокси", m.appFocus == 0),
 		m.inputBox(m.launchInput, m.appFocus == 0),
 		s.Muted.Render(wrap("Введите имя или путь приложения и нажмите Enter — оно запустится с трафиком через прокси (напр. zen).", subW)),
+	}
+	if m.procBusy {
+		rows = append(rows, s.colored(s.th.Accent, m.spin.View()+" проксирование приложения…"))
 	}
 	if m.isDarwin {
 		rows = append(rows, s.Subtle.Render(wrap(
@@ -434,7 +470,7 @@ func (m Model) procView() string {
 	}
 	rows = append(rows,
 		s.rule(subW),
-		s.PanelTitle.Render("Проксировать запущенный процесс"),
+		m.fieldTitle("Проксировать запущенный процесс", m.appFocus == 1),
 		m.inputBox(m.procInput, m.appFocus == 1),
 	)
 
@@ -468,16 +504,26 @@ func (m Model) procView() string {
 		rows = append(rows, s.Subtle.Render("(процессы с сетевой активностью не найдены)"))
 	}
 
-	// Currently routed PIDs.
-	rows = append(rows, s.rule(subW), s.PanelTitle.Render("Проксируются сейчас"))
-	if len(m.routedPIDs) == 0 {
+	// Currently proxied apps, each a row with unroute/kill actions when focused.
+	rows = append(rows, s.rule(subW), m.fieldTitle("Проксируются сейчас", m.appFocus == 2))
+	if len(m.proxied) == 0 {
 		rows = append(rows, s.Subtle.Render("(пока никого)"))
 	} else {
-		parts := make([]string, len(m.routedPIDs))
-		for i, pid := range m.routedPIDs {
-			parts[i] = strconv.Itoa(pid)
+		cur := clampIdx(m.proxiedCur, len(m.proxied))
+		for i, a := range m.proxied {
+			marker := "  "
+			label := proxiedLabel(a)
+			focused := m.appFocus == 2 && i == cur
+			if focused {
+				marker = s.colored(s.th.Accent, s.gl.SelBar+" ")
+				label = s.Accent.Render(label)
+			}
+			line := marker + label
+			if focused {
+				line += "   " + s.Subtle.Render("u — отключить прокси · k — завершить")
+			}
+			rows = append(rows, m.zm.Mark(zoneProxied(i), s.clampLine(line, subW)))
 		}
-		rows = append(rows, s.clampLine("PID: "+strings.Join(parts, ", "), subW))
 	}
 
 	if m.errText != "" {
@@ -488,12 +534,25 @@ func (m Model) procView() string {
 	footer := s.clampLine(s.footerHints([][2]string{
 		{"Tab", "поле"},
 		{s.gl.ArrowsUD, "выбор"},
-		{"Enter", "запустить/проксировать"},
+		{"Enter", "запуск/прокси"},
+		{"u/k", "откл./стоп"},
 		{"^R", "перезапуск"},
 		{"esc", "назад"},
 	}), max(m.width, 1))
 	return m.frame(header, body, footer)
 }
+
+// fieldTitle renders a section/field label, marked with the focus bar + accent
+// when its zone is focused (so the Apps view's three zones read clearly).
+func (m Model) fieldTitle(label string, focused bool) string {
+	s := m.styles
+	if focused {
+		return s.colored(s.th.Accent, s.gl.SelBar+" ") + s.PanelTitle.Render(label)
+	}
+	return "  " + s.PanelTitle.Render(label)
+}
+
+func zoneProxied(i int) string { return "proxied-" + strconv.Itoa(i) }
 
 // --- settings ---
 
@@ -551,30 +610,40 @@ func (m Model) modalView() string {
 	tight := h < 16 // short terminal: shed vertical padding/spacers so it fits
 
 	maxW := max(w-2, 1)
+	// Confirm dialogs are accent-bordered with a Да/Нет hint; info (Cisco) is
+	// warn-bordered and dismissed by any key.
+	confirm := m.modalKind == modalConfirm
 	titleText := s.gl.Warn + " Cisco активен"
+	hintText := "(любая клавиша)"
+	borderColor := m.theme.Warn
+	if confirm {
+		titleText = "Подтвердите действие"
+		hintText = "Да — y / Enter   ·   Нет — n / Esc"
+		borderColor = m.theme.Accent
+	}
 
 	maxBox := min(w-4, 56)
 	vpad := 1
 	if tight {
 		vpad = 0
 	}
-	box := s.r.NewStyle().Border(s.gl.Border).BorderForeground(m.theme.Warn).Padding(vpad, 2)
+	box := s.r.NewStyle().Border(s.gl.Border).BorderForeground(borderColor).Padding(vpad, 2)
 	inner := maxBox - box.GetHorizontalFrameSize() // subtract border+padding before wrapping
 
 	var card string
 	if inner < 8 {
 		// Ultra-narrow terminal: drop the border, just centred wrapped text.
 		card = lipgloss.JoinVertical(lipgloss.Left,
-			s.colored(m.theme.Warn, wrap(titleText, maxW)),
+			s.colored(borderColor, wrap(titleText, maxW)),
 			"",
 			wrap(m.modal, maxW),
 			"",
-			s.Subtle.Render(wrap("(любая клавиша)", maxW)),
+			s.Subtle.Render(wrap(hintText, maxW)),
 		)
 	} else {
-		title := s.colored(m.theme.Warn, wrap(titleText, inner))
+		title := s.colored(borderColor, wrap(titleText, inner))
 		body := wrap(m.modal, inner)
-		hint := s.Subtle.Render("(любая клавиша)")
+		hint := s.Subtle.Render(hintText)
 		content := lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", hint)
 		if tight {
 			content = lipgloss.JoinVertical(lipgloss.Left, title, body, hint)

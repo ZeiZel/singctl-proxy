@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -26,12 +27,75 @@ func safe(fn func() tea.Msg) tea.Cmd {
 }
 
 // routePIDCmd routes an already-running PID through the proxy.
-func routePIDCmd(b Backend, pid int) tea.Cmd {
+func routePIDCmd(b Backend, pid int, name string) tea.Cmd {
 	return safe(func() tea.Msg {
 		if err := b.RoutePID(context.Background(), pid); err != nil {
 			return procResultMsg{err: err}
 		}
-		return procResultMsg{note: fmt.Sprintf("PID %d проксируется", pid), pid: pid}
+		return procResultMsg{note: fmt.Sprintf("PID %d проксируется", pid), pid: pid, app: name}
+	})
+}
+
+// unroutePIDCmd stops proxying a PID (Linux: clean detach; macOS: terminate).
+func unroutePIDCmd(b Backend, pid int) tea.Cmd {
+	return safe(func() tea.Msg {
+		if err := b.UnroutePID(context.Background(), pid); err != nil {
+			return procResultMsg{err: err}
+		}
+		return procResultMsg{note: fmt.Sprintf("PID %d больше не проксируется", pid), pid: pid, remove: true}
+	})
+}
+
+// stopProxiedCmd terminates a proxied process.
+func stopProxiedCmd(b Backend, pid int) tea.Cmd {
+	return safe(func() tea.Msg {
+		if err := b.StopProxied(context.Background(), pid); err != nil {
+			return procResultMsg{err: err}
+		}
+		return procResultMsg{note: fmt.Sprintf("PID %d завершён", pid), pid: pid, remove: true}
+	})
+}
+
+// deleteLinkCmd removes the key at index, returning the refreshed set.
+func deleteLinkCmd(b Backend, index int) tea.Cmd {
+	return safe(func() tea.Msg {
+		if err := b.DeleteLink(context.Background(), index); err != nil {
+			return errMsg{err}
+		}
+		return linkAddedMsg{links: b.CurrentLinks()}
+	})
+}
+
+// renameLinkCmd relabels the key at index, returning the refreshed set.
+func renameLinkCmd(b Backend, index int, name string) tea.Cmd {
+	return safe(func() tea.Msg {
+		if err := b.RenameLink(context.Background(), index, name); err != nil {
+			return errMsg{err}
+		}
+		return linkAddedMsg{links: b.CurrentLinks()}
+	})
+}
+
+// replaceLinkCmd edits a key in place: it removes the key at index then adds the
+// edited link (the new link joins the failover group; latency, not order, picks
+// the active server). Returns the refreshed set.
+func replaceLinkCmd(b Backend, index int, link string) tea.Cmd {
+	return safe(func() tea.Msg {
+		if err := b.DeleteLink(context.Background(), index); err != nil {
+			return errMsg{err}
+		}
+		if err := b.AddLink(context.Background(), link); err != nil {
+			return errMsg{err}
+		}
+		return linkAddedMsg{links: b.CurrentLinks()}
+	})
+}
+
+// markIntroSeenCmd records the first-run intro as played (best-effort).
+func markIntroSeenCmd(b Backend) tea.Cmd {
+	return safe(func() tea.Msg {
+		_ = b.MarkIntroSeen()
+		return nil
 	})
 }
 
@@ -71,24 +135,36 @@ func listProcessesCmd(b Backend) tea.Cmd {
 
 // launchProcCmd starts a command with its traffic routed through the proxy.
 func launchProcCmd(b Backend, argv []string) tea.Cmd {
+	name := ""
+	if len(argv) > 0 {
+		name = baseName(argv[0])
+	}
 	return safe(func() tea.Msg {
 		pid, err := b.LaunchProxied(context.Background(), argv)
 		if err != nil {
 			return procResultMsg{err: err}
 		}
-		return procResultMsg{note: fmt.Sprintf("запущен PID %d через прокси", pid), pid: pid}
+		return procResultMsg{note: fmt.Sprintf("запущен PID %d через прокси", pid), pid: pid, app: name}
 	})
 }
 
 // restartPIDCmd restarts a running PID in proxy mode.
-func restartPIDCmd(b Backend, pid int) tea.Cmd {
+func restartPIDCmd(b Backend, pid int, name string) tea.Cmd {
 	return safe(func() tea.Msg {
 		newPID, err := b.RestartProxied(context.Background(), pid)
 		if err != nil {
 			return procResultMsg{err: err}
 		}
-		return procResultMsg{note: fmt.Sprintf("PID %d перезапущен в proxy-режиме (новый PID %d)", pid, newPID), pid: newPID}
+		return procResultMsg{note: fmt.Sprintf("PID %d перезапущен в proxy-режиме (новый PID %d)", pid, newPID), pid: newPID, app: name}
 	})
+}
+
+// baseName is the last path component of a command (for the proxied-app label).
+func baseName(p string) string {
+	if i := strings.LastIndexByte(p, '/'); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }
 
 func loadLinkCmd(b Backend, link string) tea.Cmd {

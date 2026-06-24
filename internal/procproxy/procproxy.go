@@ -26,6 +26,13 @@ type Router interface {
 	AddPID(ctx context.Context, pid int) error
 	// RemovePID stops routing a process.
 	RemovePID(ctx context.Context, pid int) error
+	// Unroute stops proxying a process the way the platform allows: on Linux it
+	// removes the PID from the cgroup (the process keeps running, direct); on
+	// platforms where proxying is env-injection (macOS) it can't be undone, so it
+	// terminates the process instead.
+	Unroute(ctx context.Context, pid int) error
+	// Kill terminates a proxied process (best-effort SIGTERM).
+	Kill(ctx context.Context, pid int) error
 	// Launch starts argv with its traffic routed through the proxy and returns
 	// the child PID.
 	Launch(ctx context.Context, argv []string) (int, error)
@@ -285,6 +292,18 @@ func (r *envRouter) AddPID(ctx context.Context, pid int) error {
 func (r *envRouter) RemovePID(context.Context, int) error { return nil }
 func (r *envRouter) Cleanup() error                       { return nil }
 func (r *envRouter) ListRouted() []int                    { return r.mu.list() }
+
+// Unroute off Linux can't detach env-proxying, so it terminates the process.
+func (r *envRouter) Unroute(_ context.Context, pid int) error {
+	r.mu.remove(pid)
+	return terminate(pid)
+}
+
+// Kill terminates a proxied process.
+func (r *envRouter) Kill(_ context.Context, pid int) error {
+	r.mu.remove(pid)
+	return terminate(pid)
+}
 
 func (r *envRouter) Launch(ctx context.Context, argv []string) (int, error) {
 	argv = chromiumProxyArgs(argv, r.cfg.SocksAddr)

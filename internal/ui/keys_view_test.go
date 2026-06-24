@@ -44,8 +44,8 @@ func TestLinkView_ShowsMaskedKeysAndAddField(t *testing.T) {
 	if !strings.Contains(out, "Ключ 1") {
 		t.Errorf("loaded key should be labelled 'Ключ 1':\n%s", out)
 	}
-	if !strings.Contains(out, "Ключ 2 — добавить ключ") {
-		t.Errorf("add field should be labelled 'Ключ 2 — добавить ключ':\n%s", out)
+	if !strings.Contains(out, "Добавить ключ") {
+		t.Errorf("the add field should be labelled 'Добавить ключ':\n%s", out)
 	}
 }
 

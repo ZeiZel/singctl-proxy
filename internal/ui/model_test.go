@@ -32,6 +32,17 @@ type fakeBackend struct {
 	daemonErr       error
 	stopDaemonCalls int
 	stopDaemonErr   error
+
+	deletedIndex  int
+	deleteErr     error
+	renamedIndex  int
+	renamedName   string
+	renameErr     error
+	unroutedPID   int
+	unrouteErr    error
+	stoppedPID    int
+	stopProxErr   error
+	introSeenCall int
 }
 
 func (b *fakeBackend) LoadLink(_ context.Context, link string) error {
@@ -50,7 +61,30 @@ func (b *fakeBackend) AddLink(_ context.Context, link string) error {
 	b.links = append(b.links, link)
 	return nil
 }
-func (b *fakeBackend) CurrentLinks() []string            { return b.links }
+func (b *fakeBackend) CurrentLinks() []string { return b.links }
+func (b *fakeBackend) DeleteLink(_ context.Context, index int) error {
+	b.deletedIndex = index
+	if b.deleteErr != nil {
+		return b.deleteErr
+	}
+	if index >= 0 && index < len(b.links) {
+		b.links = append(b.links[:index:index], b.links[index+1:]...)
+	}
+	return nil
+}
+func (b *fakeBackend) RenameLink(_ context.Context, index int, name string) error {
+	b.renamedIndex, b.renamedName = index, name
+	return b.renameErr
+}
+func (b *fakeBackend) UnroutePID(_ context.Context, pid int) error {
+	b.unroutedPID = pid
+	return b.unrouteErr
+}
+func (b *fakeBackend) StopProxied(_ context.Context, pid int) error {
+	b.stoppedPID = pid
+	return b.stopProxErr
+}
+func (b *fakeBackend) MarkIntroSeen() error { b.introSeenCall++; return nil }
 func (b *fakeBackend) EnableProxy(context.Context) error { b.proxyCalls++; return b.proxyErr }
 func (b *fakeBackend) EnableVPN(context.Context) error   { b.vpnCalls++; return b.vpnErr }
 func (b *fakeBackend) Stop(context.Context) error        { b.stopCalls++; return b.stopErr }

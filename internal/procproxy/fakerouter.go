@@ -7,6 +7,8 @@ import "context"
 type FakeRouter struct {
 	Added     []int
 	Removed   []int
+	Unrouted  []int
+	Killed    []int
 	Restarted []int
 	Launched  [][]string
 	CleanedUp bool
@@ -60,6 +62,22 @@ func (f *FakeRouter) RestartPID(_ context.Context, pid int) (int, error) {
 	}
 	f.Routed = append(f.Routed, newPID)
 	return newPID, nil
+}
+
+func (f *FakeRouter) Unroute(ctx context.Context, pid int) error {
+	f.Unrouted = append(f.Unrouted, pid)
+	return f.RemovePID(ctx, pid)
+}
+
+func (f *FakeRouter) Kill(_ context.Context, pid int) error {
+	f.Killed = append(f.Killed, pid)
+	for i, p := range f.Routed {
+		if p == pid {
+			f.Routed = append(f.Routed[:i], f.Routed[i+1:]...)
+			break
+		}
+	}
+	return nil
 }
 
 func (f *FakeRouter) ListRouted() []int { return f.Routed }

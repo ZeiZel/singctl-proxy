@@ -12,7 +12,7 @@ func TestAppsView_RendersLauncherAndRoutedList(t *testing.T) {
 	m.width, m.height = 100, 30
 	m.relayout()
 	m, _ = step(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")}) // open Приложения
-	m.routedPIDs = []int{4242}
+	m.proxied = []proxiedApp{{PID: 4242, Name: "zen"}}
 	out := m.View()
 	for _, want := range []string{"Запустить приложение в прокси", "Проксировать запущенный процесс", "Проксируются сейчас", "4242"} {
 		if !strings.Contains(out, want) {

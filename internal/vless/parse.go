@@ -110,6 +110,18 @@ func ParseLink(raw string) (ServerProfile, error) {
 	return p, nil
 }
 
+// SetName returns the link with its #fragment (the human-readable label)
+// replaced by name, preserving everything else. An empty name drops the
+// fragment. Used to rename a key without touching the secret/host/params.
+func SetName(raw, name string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", parseErr("link", raw, ErrNotVLESS)
+	}
+	u.Fragment = strings.TrimSpace(name)
+	return u.String(), nil
+}
+
 // ParseLinks parses one or more vless:// links into a ProfileSet, preserving
 // order as failover priority. Each input string may itself contain several
 // links separated by newlines, spaces, semicolons, or commas (so a pasted blob
