@@ -83,3 +83,17 @@ func TestStore_Load_RoundTrip_AndMissing(t *testing.T) {
 		t.Errorf("loaded %q, want trimmed link", got)
 	}
 }
+
+func TestIntroMarker(t *testing.T) {
+	fs := newFakeFS()
+	s := NewStore(fs, "/home/u", 1000, 1000)
+	if s.HasSeenIntro() {
+		t.Fatal("fresh store should not have seen the intro")
+	}
+	if err := s.MarkIntroSeen(); err != nil {
+		t.Fatalf("MarkIntroSeen: %v", err)
+	}
+	if !s.HasSeenIntro() {
+		t.Error("after MarkIntroSeen, HasSeenIntro should be true")
+	}
+}

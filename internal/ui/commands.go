@@ -120,6 +120,16 @@ func stopDaemonCmd(b Backend) tea.Cmd {
 	})
 }
 
+// introTick schedules the next entry-animation step. The first run ticks slower
+// (a deliberate full reveal); later runs are a quick component loader.
+func introTick(full bool) tea.Cmd {
+	d := 90 * time.Millisecond
+	if full {
+		d = 220 * time.Millisecond
+	}
+	return tea.Tick(d, func(time.Time) tea.Msg { return introTickMsg{} })
+}
+
 // frameCmd schedules the next animation frame (~25 fps).
 func frameCmd() tea.Cmd {
 	return tea.Tick(40*time.Millisecond, func(time.Time) tea.Msg { return frameMsg{} })

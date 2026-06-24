@@ -34,7 +34,28 @@ func NewStore(fs FS, homeDir string, uid, gid int) *Store {
 	}
 }
 
-func (s *Store) path() string { return filepath.Join(s.dir, "profile.txt") }
+func (s *Store) path() string      { return filepath.Join(s.dir, "profile.txt") }
+func (s *Store) introPath() string { return filepath.Join(s.dir, "intro-shown") }
+
+// HasSeenIntro reports whether the first-run intro animation has already played.
+func (s *Store) HasSeenIntro() bool {
+	_, err := s.fs.ReadFile(s.introPath())
+	return err == nil
+}
+
+// MarkIntroSeen records that the intro has played (best-effort), chowning the
+// marker back to the real user like the saved profile.
+func (s *Store) MarkIntroSeen() error {
+	if err := s.fs.MkdirAll(s.dir, 0o700); err != nil {
+		return err
+	}
+	if err := s.fs.WriteFile(s.introPath(), []byte("1"), 0o600); err != nil {
+		return err
+	}
+	_ = s.fs.Chown(s.dir, s.uid, s.gid)
+	_ = s.fs.Chown(s.introPath(), s.uid, s.gid)
+	return nil
+}
 
 // Save writes the link and chowns the dir + file back to the real user.
 func (s *Store) Save(link string) error {

@@ -522,6 +522,7 @@ func main() {
 		if !c.keys.noSave {
 			executor.SetSaver(store.Save)
 		}
+		executor.SetIntroHook(store.MarkIntroSeen)
 		if l, err := store.Load(); err == nil {
 			savedLink = l
 		}
@@ -646,6 +647,12 @@ func main() {
 			}
 		}
 	}
+	// Entry animation: a full reveal on the first run (then a marker is written),
+	// a short component loader on later runs. Applied last so it captures the
+	// resolved screen as its post-intro target.
+	firstRun := store == nil || !store.HasSeenIntro()
+	model = model.WithIntro(firstRun)
+
 	// WithAltScreen clears the terminal (alternate buffer) so earlier commands
 	// aren't visible above the UI.
 	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))

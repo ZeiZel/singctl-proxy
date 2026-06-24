@@ -39,7 +39,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			target = 1.0
 		}
 		m.animPos, m.animVel = m.spring.Update(m.animPos, m.animVel, target)
+		// Spring the entry-animation reveal toward 1 while the intro is on screen.
+		if m.screen == ScreenIntro {
+			m.introPos, m.introVel = m.spring.Update(m.introPos, m.introVel, 1.0)
+		}
 		return m, frameCmd()
+
+	case introTickMsg:
+		if m.screen != ScreenIntro {
+			return m, nil
+		}
+		m.introStage++
+		if m.introStage >= len(introStages) {
+			return m.finishIntro()
+		}
+		return m, introTick(m.introFull)
 
 	case NetStateMsg:
 		m.cisco = msg.Cisco
@@ -409,6 +423,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
+	}
+	// During the entry animation any key skips straight to the dashboard/link.
+	if m.screen == ScreenIntro {
+		return m.finishIntro()
 	}
 
 	// Приложения view: three focus zones — 0 launch field, 1 picker (filter +
@@ -974,6 +992,19 @@ func (m Model) submitProc() (tea.Model, tea.Cmd) {
 		return m, routePIDCmd(m.backend, row.PID, row.Name)
 	}
 	return m, nil
+}
+
+// finishIntro reveals the post-intro screen; on the first run it records the
+// intro as seen (so later runs show only the short loader).
+func (m Model) finishIntro() (tea.Model, tea.Cmd) {
+	m.screen = m.postIntro
+	m.introStage = len(introStages)
+	var cmd tea.Cmd
+	if m.introFull {
+		cmd = markIntroSeenCmd(m.backend)
+	}
+	m.introFull = false
+	return m, cmd
 }
 
 // runPending executes the action a confirm modal was guarding, then clears it.

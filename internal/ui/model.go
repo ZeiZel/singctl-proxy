@@ -22,6 +22,7 @@ type Screen int
 const (
 	ScreenLink Screen = iota
 	ScreenDashboard
+	ScreenIntro // entry animation; transitions to postIntro when done
 )
 
 // Model is the Bubble Tea model. All fields are unexported; tests in this
@@ -112,6 +113,16 @@ type Model struct {
 	consoleVPReady bool
 	consoleFilter  int  // per-app console filter PID (0 = «Все», show every app)
 	isDarwin       bool // drives macOS-specific hints in the (pure) view
+
+	// entry animation (ScreenIntro). introFull = first-run (full reveal, marker
+	// then written); else a short component-loading bar. introStage ticks through
+	// the component checklist; introPos/introVel spring-animate the logo reveal;
+	// postIntro is the screen revealed when the animation completes.
+	introFull  bool
+	introStage int
+	introPos   float64
+	introVel   float64
+	postIntro  Screen
 
 	backend Backend
 	decide  func(policy.DecideInput) policy.DecisionResult
@@ -301,6 +312,19 @@ func (m Model) WithAutoMode(mode RunMode) Model {
 	return m
 }
 
+// WithIntro plays the entry animation before the normal screen. full = first
+// run (a full reveal; the seen-marker is then written via Backend.MarkIntroSeen);
+// otherwise a short component-loading bar. The current screen becomes postIntro.
+func (m Model) WithIntro(full bool) Model {
+	m.postIntro = m.screen
+	m.screen = ScreenIntro
+	m.introFull = full
+	return m
+}
+
+// introStages are the components shown ticking in the entry loader.
+var introStages = []string{"ядро", "профиль", "clash api", "сеть", "интерфейс"}
+
 // WithLogsOpen starts with the logs view shown (the --logs flag).
 func (m Model) WithLogsOpen() Model {
 	m.showLogs = true
@@ -317,6 +341,9 @@ func (m Model) Init() tea.Cmd {
 	}
 	if m.showLogs {
 		cmds = append(cmds, readLogsCmd(m.logPath), logsTick())
+	}
+	if m.screen == ScreenIntro {
+		cmds = append(cmds, introTick(m.introFull))
 	}
 	return tea.Batch(cmds...)
 }

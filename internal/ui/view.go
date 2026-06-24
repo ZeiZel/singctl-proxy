@@ -29,6 +29,9 @@ func (m Model) screenView() string {
 	if layoutFor(m.width, m.height) == layoutTooSmall {
 		return m.tooSmallView()
 	}
+	if m.screen == ScreenIntro {
+		return m.introView()
+	}
 	if m.showProc {
 		return m.procView()
 	}
@@ -654,6 +657,62 @@ func (m Model) modalView() string {
 	// Final clamp: a long warning on a short terminal can be taller than h, and
 	// Place never truncates — keep it within the screen so nothing spills.
 	return s.r.NewStyle().MaxWidth(w).MaxHeight(h).Render(placed)
+}
+
+// --- entry animation ---
+
+// introView renders the entry animation: a (typewriter-revealed, first run) logo,
+// a component-loading progress bar + checklist, centred. Any key skips it.
+func (m Model) introView() string {
+	s := m.styles
+	w, h := max(m.width, 1), max(m.height, 1)
+
+	const logo = "singctl"
+	shown := logo
+	if m.introFull { // typewriter reveal driven by the spring
+		n := int(clampF(m.introPos, 0, 1) * float64(len(logo)))
+		if n < 1 {
+			n = 1
+		}
+		if n > len(logo) {
+			n = len(logo)
+		}
+		shown = logo[:n]
+	}
+	title := s.Title.Render(" " + shown + " ")
+
+	barW := clampWidth(w-8, 12, 36)
+	bar := m.prog
+	bar.Width = barW
+	frac := float64(m.introStage) / float64(len(introStages))
+	progress := bar.ViewAs(clampF(frac, 0, 1))
+
+	// Component checklist: done = filled dot, current = spinner, pending = hollow.
+	cells := make([]string, len(introStages))
+	for i, c := range introStages {
+		switch {
+		case i < m.introStage:
+			cells[i] = s.colored(s.th.Accent, s.gl.DotOn+" "+c)
+		case i == m.introStage:
+			cells[i] = m.spin.View() + " " + c
+		default:
+			cells[i] = s.Subtle.Render(s.gl.DotOff + " " + c)
+		}
+	}
+	checklist := s.Subtle.Render(strings.Join(cells, "   "))
+
+	sub := "загрузка…"
+	if m.introFull {
+		sub = "добро пожаловать в singctl"
+	}
+	content := lipgloss.JoinVertical(lipgloss.Center,
+		title, "",
+		s.Muted.Render(sub), "",
+		progress, "",
+		s.clampLine(checklist, max(w-2, 1)), "",
+		s.Subtle.Render("(любая клавиша — пропустить)"),
+	)
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, content)
 }
 
 // --- too-small fallback ---

@@ -57,6 +57,8 @@ func TestPreview(t *testing.T) {
 		}
 	}
 
+	render("intro first-run", 80, 22, func(m Model) Model { m.phys = "en0"; m = m.WithIntro(true); m.introStage = 2; m.introPos = 0.6; return m })
+	render("intro re-entry", 80, 22, func(m Model) Model { m.phys = "en0"; m = m.WithIntro(false); m.introStage = 3; return m })
 	render("dashboard narrow", 40, 20, func(m Model) Model { m.phys = "en0"; return m })
 	render("dashboard medium", 70, 22, withConsole(func(m Model) Model { m.phys = "en0"; m.mode = RunProxy; m.status = "PROXY запущен"; return m }))
 	render("dashboard wide", 104, 26, withConsole(func(m Model) Model { m.phys = "en0"; m.mode = RunVPN; m.status = "VPN запущен"; return m }))

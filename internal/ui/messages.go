@@ -179,6 +179,7 @@ type linkAddedMsg struct {
 	links []string
 }
 
+type introTickMsg struct{} // advances the entry-animation component checklist
 type settingsAppliedMsg struct{ err error }
 type daemonizedMsg struct{ err error }
 type daemonStoppedMsg struct{ err error }
