@@ -10,9 +10,13 @@ singctl можно поставить системно — бинарь в `/usr
 который поднимает системный VPN при загрузке и держит его включённым:
 
 ```
-make build                 # собрать бинарь (CGO, нужен на macOS для TUN)
-sudo make install          # бинарь -> /usr/local/bin, LaunchDaemon -> /Library/LaunchDaemons
+make install               # собирает бинарь и ставит его + LaunchDaemon
 ```
+
+`make install` запускайте **без** `sudo` — сборка пройдёт от вашего пользователя
+(чтобы не оставлять root-овых файлов), а на шаге установки скрипт сам поднимет
+права через `sudo` (спросит пароль) и скопирует бинарь в `/usr/local/bin` плюс
+LaunchDaemon в `/Library/LaunchDaemons`.
 
 Перед первым включением **сохраните ключ один раз** интерактивно — демон берёт
 его из сохранённого профиля (`~/.config/singctl`), а не из командной строки:
@@ -29,7 +33,7 @@ sudo singctl --status             # статус
 sudo singctl --attach             # живой лог
 sudo singctl --stop               # остановить инстанс
 tail -f /var/log/singctl.log      # лог демона
-sudo make uninstall               # удалить бинарь + LaunchDaemon
+make uninstall                    # удалить бинарь + LaunchDaemon (сам поднимет sudo)
 ```
 
 **Что это даёт и чего НЕ даёт.** LaunchDaemon — это **системный VPN на весь

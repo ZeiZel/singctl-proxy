@@ -2,10 +2,12 @@
 #
 # install-macos.sh — install singctl as a system tool on macOS.
 #
-#   sudo scripts/install-macos.sh            # install binary + LaunchDaemon
-#   sudo scripts/install-macos.sh uninstall  # remove both
+#   scripts/install-macos.sh            # install binary + LaunchDaemon
+#   scripts/install-macos.sh uninstall  # remove both
 #
-# Installs the binary to /usr/local/bin/singctl and a LaunchDaemon at
+# It self-elevates with sudo for the privileged copy (so `make install` works
+# without running the build as root). Installs the binary to /usr/local/bin and
+# a LaunchDaemon at
 # /Library/LaunchDaemons/com.singctl.proxy.plist that runs the system VPN
 # (singctl --headless --vpn) at boot. The VPN key comes from the saved profile,
 # so save a key once interactively first (see docs/macos.md). This does NOT do
@@ -25,7 +27,15 @@ PLIST_SRC="${REPO_ROOT}/packaging/macos/${LABEL}.plist"
 die() { echo "error: $*" >&2; exit 1; }
 
 [ "$(uname -s)" = "Darwin" ] || die "this installer is for macOS only"
-[ "$(id -u)" = "0" ] || die "run with sudo (need /usr/local/bin + /Library/LaunchDaemons)"
+
+# Installing touches /usr/local/bin and /Library/LaunchDaemons, which need root.
+# Self-elevate so `make install` (run as the normal user, which keeps the build
+# non-root) just works — sudo prompts for the password, then re-runs this script
+# by its absolute path (robust even if sudo resets the working directory).
+if [ "$(id -u)" != "0" ]; then
+    echo "==> need root for /usr/local/bin + /Library/LaunchDaemons — re-running with sudo"
+    exec sudo -- "${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")" "$@"
+fi
 
 if [ "${1:-install}" = "uninstall" ]; then
     echo "==> unloading ${LABEL}"
@@ -68,5 +78,5 @@ singctl installed as a system VPN daemon.
       tail -f /var/log/singctl.log      # daemon log
 
   Uninstall:
-      sudo scripts/install-macos.sh uninstall
+      make uninstall   (or scripts/install-macos.sh uninstall)
 EOF

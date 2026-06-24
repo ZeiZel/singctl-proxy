@@ -88,16 +88,19 @@ install-man:
 uninstall-man:
 	rm -f $(MANPREFIX)/man1/singctl.1
 
-# Install singctl as a system tool. On macOS this also installs a LaunchDaemon
-# (system-wide VPN, autostart) via scripts/install-macos.sh; on Linux it just
-# drops the binary into $(PREFIX)/bin (a systemd unit is a future follow-up).
-# Run with sudo. Build first: `make build`.
+# Install singctl as a system tool. Run plain `make install` (NOT under sudo) so
+# the build stays non-root; the install step self-elevates with sudo for the
+# privileged copy. On macOS this also installs a LaunchDaemon (system-wide VPN,
+# autostart) via scripts/install-macos.sh; on Linux it drops the binary into
+# $(PREFIX)/bin (a systemd unit is a future follow-up). SUDO is empty when already
+# root so `sudo make install` also works.
+SUDO := $(shell [ "$$(id -u)" = "0" ] || echo sudo)
 install: build
 ifeq ($(UNAME_S),Darwin)
 	./scripts/install-macos.sh
 else
-	install -d $(PREFIX)/bin
-	install -m 0755 bin/$(BINARY) $(PREFIX)/bin/$(BINARY)
+	$(SUDO) install -d $(PREFIX)/bin
+	$(SUDO) install -m 0755 bin/$(BINARY) $(PREFIX)/bin/$(BINARY)
 	@echo "singctl installed to $(PREFIX)/bin/$(BINARY) — run with sudo."
 endif
 
@@ -105,7 +108,7 @@ uninstall:
 ifeq ($(UNAME_S),Darwin)
 	./scripts/install-macos.sh uninstall
 else
-	rm -f $(PREFIX)/bin/$(BINARY)
+	$(SUDO) rm -f $(PREFIX)/bin/$(BINARY)
 endif
 
 clean:
