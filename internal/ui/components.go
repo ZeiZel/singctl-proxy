@@ -11,6 +11,25 @@ import (
 // pattern — no widget framework). The model owns focus/selection state and
 // passes it in as flags.
 
+// tabBar renders labels as a horizontal row of lipgloss tab pills, the selected
+// one filled with the accent (TabActive). mark, when non-nil, wraps each pill in
+// a bubblezone so a click maps back to its index.
+func (s Styles) tabBar(labels []string, selected int, mark func(i int, seg string) string) string {
+	tabs := make([]string, len(labels))
+	for i, l := range labels {
+		st := s.Tab
+		if i == selected {
+			st = s.TabActive
+		}
+		seg := st.Render(l)
+		if mark != nil {
+			seg = mark(i, seg)
+		}
+		tabs[i] = seg
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
+}
+
 // segmented renders the OFF|PROXY|VPN selector. selected is the running mode;
 // cursor is the keyboard position; disabled greys a segment (VPN while Cisco is
 // active). The whole control sits in a focused-coloured box so it reads as the

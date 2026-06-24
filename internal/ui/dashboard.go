@@ -173,33 +173,28 @@ func (m Model) sidebarColumn(w, h int) string {
 	return s.r.NewStyle().Width(w).Render(clampHeight(strings.Join(rows, "\n"), h))
 }
 
-// navRow renders one sidebar entry: "N  Название", the selected one marked with
-// the focus bar + accent so the keyboard focus is always obvious.
+// navRow renders one sidebar entry: "N  Название". The selected row is a filled
+// accent tab pill (with a focus bar), inactive rows are dim — so the keyboard
+// focus is always obvious.
 func (m Model) navRow(i int, label string, cw int) string {
 	s := m.styles
-	num := strconv.Itoa(i + 1)
-	text := num + "  " + label
-	marker := "  "
+	text := strconv.Itoa(i+1) + "  " + label
 	if i == m.section {
-		marker = s.colored(s.th.Accent, s.gl.SelBar+" ")
-		text = s.Accent.Render(text)
+		pill := s.TabActive.Render(s.clampLine(text, max(cw-3, 1)))
+		return m.zm.Mark(zoneNav(i), s.colored(s.th.Accent, s.gl.SelBar)+pill)
 	}
-	return m.zm.Mark(zoneNav(i), s.clampLine(marker+text, cw))
+	return m.zm.Mark(zoneNav(i), " "+s.Tab.Render(s.clampLine(text, max(cw-3, 1))))
 }
 
-// navChips renders the nav list as a single horizontal chip row (narrow layout).
+// navChips renders the nav list as a single horizontal tab bar (narrow layout).
 func (m Model) navChips(w int) string {
-	s := m.styles
-	chips := make([]string, len(navLabels))
+	labels := make([]string, len(navLabels))
 	for i, l := range navLabels {
-		txt := " " + strconv.Itoa(i+1) + " " + l + " "
-		st := s.SegNormal
-		if i == m.section {
-			st = s.SegSelected
-		}
-		chips[i] = m.zm.Mark(zoneNav(i), st.Render(txt))
+		labels[i] = strconv.Itoa(i+1) + " " + l
 	}
-	return s.clampBlock(lipgloss.JoinHorizontal(lipgloss.Top, chips...), w)
+	return m.styles.clampBlock(m.styles.tabBar(labels, m.section, func(i int, seg string) string {
+		return m.zm.Mark(zoneNav(i), seg)
+	}), w)
 }
 
 // dashContent renders the right-hand panel: the status block + OFF/PROXY/VPN

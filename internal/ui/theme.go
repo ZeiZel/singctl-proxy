@@ -144,6 +144,9 @@ type Styles struct {
 	Button       lipgloss.Style // an idle clickable action-bar pill (Seg look)
 	ButtonActive lipgloss.Style // the active/selected action-bar pill
 
+	Tab       lipgloss.Style // an idle sidebar/tab item
+	TabActive lipgloss.Style // the selected sidebar/tab item (accent pill)
+
 	Help lipgloss.Style
 }
 
@@ -177,6 +180,9 @@ func NewStyles(c Caps, th Theme, gl Glyphs) Styles {
 
 		Button:       btn.Border(gl.Border, false, true).BorderForeground(th.Border).Foreground(th.Text),
 		ButtonActive: btn.Border(gl.Border, false, true).BorderForeground(th.BorderActive).Background(th.Accent).Foreground(th.OnAccent).Bold(true),
+
+		Tab:       ns().Padding(0, 1).Foreground(th.Muted),
+		TabActive: ns().Padding(0, 1).Background(th.Accent).Foreground(th.OnAccent).Bold(true),
 
 		Help: ns().Foreground(th.Subtle),
 	}
