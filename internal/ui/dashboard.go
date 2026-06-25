@@ -300,7 +300,9 @@ func (m Model) sectionPreview(n, w, h int) string {
 func (m Model) appsSummaryBody(w int) string {
 	s := m.styles
 	var rows []string
-	if m.isDarwin {
+	if m.leakyEditorProxied() {
+		rows = append(rows, s.colored(s.th.Warn, s.clampLine(s.gl.Warn+" Cursor/VS Code течёт мимо — v для VPN (полное покрытие)", w)))
+	} else if m.isDarwin {
 		rows = append(rows, s.Subtle.Render(s.clampLine("Cursor: Chromium авто; extension-host (Node) — полное покрытие через VPN (v)", w)))
 	}
 	rows = append(rows, s.Muted.Render("приложений: ")+s.colored(s.th.Accent, strconv.Itoa(len(m.proxied)))+

@@ -482,7 +482,10 @@ func (m Model) procView() string {
 	if m.procBusy {
 		rows = append(rows, s.colored(s.th.Accent, m.spin.View()+" проксирование приложения…"))
 	}
-	if m.isDarwin {
+	if m.leakyEditorProxied() {
+		warn := s.colored(s.th.Warn, s.gl.Warn+" Cursor/VS Code: агентский трафик extension-host течёт мимо прокси — нажмите v, чтобы включить VPN (полное покрытие)")
+		rows = append(rows, m.zm.Mark(zoneEnableVPN, s.clampLine(warn, subW)))
+	} else if m.isDarwin {
 		rows = append(rows, s.Subtle.Render(wrap(
 			"Cursor/VS Code: Chromium-слой проксируется автоматически, но агентский трафик extension-host (Node) может течь мимо — для полного покрытия включите VPN (v). Подробнее: docs/macos.md", subW)))
 	}
@@ -578,6 +581,10 @@ func (m Model) fieldTitle(label string, focused bool) string {
 }
 
 func zoneProxied(i int) string { return "proxied-" + strconv.Itoa(i) }
+
+// zoneEnableVPN is the clickable "switch to VPN" warning shown when a leaky
+// editor (Cursor/VS Code) is proxied but VPN is off (see leakyEditorProxied).
+const zoneEnableVPN = "enable-vpn"
 
 // connCountFor counts live connections whose source process matches an app name
 // (case-insensitive substring), so each proxied app can show its traffic.

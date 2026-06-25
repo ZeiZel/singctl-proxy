@@ -334,6 +334,9 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	switch {
 	case m.showProc:
+		if m.zm.Get(zoneEnableVPN).InBounds(msg) {
+			return m.applyMode(RunVPN)
+		}
 		for i := range m.filteredProcs() {
 			if m.zm.Get(zoneProc(i)).InBounds(msg) {
 				m.appFocus = 1
