@@ -191,6 +191,7 @@ var chromiumApps = map[string]bool{
 	"electron":      true,
 	"slack":         true,
 	"discord":       true,
+	"claude":        true, // Claude Desktop (/Applications/Claude.app/Contents/MacOS/Claude)
 }
 
 // chromiumProxyArgs returns argv with a --proxy-server flag appended when argv[0]

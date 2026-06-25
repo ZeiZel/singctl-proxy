@@ -29,6 +29,7 @@ func TestChromiumProxyArgs_AppendsForKnownApps(t *testing.T) {
 		{"slack", []string{"/opt/Slack/slack"}},
 		{"discord exe", []string{"Discord.exe"}},
 		{"uppercase Chrome.app", []string{"/Applications/Chrome.app"}},
+		{"claude desktop bundle", []string{"/Applications/Claude.app/Contents/MacOS/Claude"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -89,7 +90,8 @@ func TestAppLabel(t *testing.T) {
 		"/usr/bin/cursor":          "cursor",
 		"/Applications/Cursor.app": "cursor",
 		"/Applications/Cursor.app/Contents/MacOS/Cursor": "cursor",
-		"Discord.exe":           "discord",
+		"Discord.exe": "discord",
+		"/Applications/Claude.app/Contents/MacOS/Claude": "claude",
 		"/opt/Slack/Slack":      "slack",
 		"":                      "",
 		"Google Chrome":         "google chrome",
