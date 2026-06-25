@@ -16,7 +16,7 @@ MANPAGE := cmd/singctl/singctl.1
 # build with sing-tun's pinned gVisor version).
 SINGBOX_TAGS := singbox with_utls with_clash_api
 
-.PHONY: build build-macos build-windows build-linux build-all \
+.PHONY: build build-macos build-windows build-linux build-all build-netext \
 	test test-integration tidy run lint clean install-man uninstall-man \
 	install uninstall
 
@@ -52,6 +52,23 @@ build-windows:
 	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GO) build -tags "$(SINGBOX_TAGS)" -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-windows-arm64.exe ./cmd/singctl
 
 build-all: build-macos build-linux build-windows
+
+# Build the macOS transparent-proxy System Extension scaffold (Variant C of the
+# Cursor-leak plan, bead singctl-proxy-4uy). macOS-only: needs Xcode + XcodeGen
+# (`brew install xcodegen`) and an Apple Developer Team ID. The extension catches
+# an app's WHOLE network stack (Chromium, Node/undici, raw sockets) — the only
+# way to fully proxy Cursor/VS Code per-app on macOS. After building, run the
+# .app once to approve the extension, then notarize (see the script's output).
+#
+#   make build-netext DEVELOPMENT_TEAM=<your-team-id>
+#
+NETEXT_DIR := packaging/macos/netextension
+build-netext:
+ifeq ($(UNAME_S),Darwin)
+	DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" $(NETEXT_DIR)/build.sh
+else
+	@echo "build-netext is macOS-only (needs Xcode + the NetworkExtension SDK)." >&2; exit 1
+endif
 
 # Hermetic dev build: stub core, no sing-box dependency. Used by the unit suite.
 build-stub:
