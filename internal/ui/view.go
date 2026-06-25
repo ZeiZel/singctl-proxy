@@ -484,7 +484,7 @@ func (m Model) procView() string {
 	}
 	if m.isDarwin {
 		rows = append(rows, s.Subtle.Render(wrap(
-			"Cursor: добавьте --proxy-server=socks5://127.0.0.1:1080 (для Chromium-приложений). Подробнее: docs/macos.md", subW)))
+			"Cursor/VS Code: Chromium-слой проксируется автоматически, но агентский трафик extension-host (Node) может течь мимо — для полного покрытия включите VPN (v). Подробнее: docs/macos.md", subW)))
 	}
 	rows = append(rows,
 		s.rule(subW),

@@ -40,7 +40,7 @@ func defaultKeys(gl Glyphs, darwin bool) keyMap {
 	return keyMap{
 		darwin: darwin,
 		macHintProx: key.NewBinding(key.WithKeys(""), key.WithHelp(
-			"--proxy-server", "socks5://127.0.0.1:1080 (Chromium/Cursor)")),
+			"Cursor", "Chromium через --proxy-server; extension-host — VPN (v)")),
 		macHintDocs: key.NewBinding(key.WithKeys(""), key.WithHelp(
 			"macOS", "перезапуск-в-прокси · docs/macos.md")),
 		Proxy:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "прокси")),

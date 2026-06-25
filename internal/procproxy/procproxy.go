@@ -215,6 +215,22 @@ func chromiumProxyArgs(argv []string, socksAddr string) []string {
 	return append(out, "--proxy-server=socks5://"+socksAddr)
 }
 
+// electronEnv returns extra environment for a launched Electron app whose
+// extension-host / agent traffic runs on Node's native fetch (undici) — e.g.
+// Cursor and VS Code. That traffic ignores BOTH --proxy-server (which only
+// steers Chromium's network service) AND the bare HTTP[S]_PROXY env vars (Node's
+// fetch/undici does not honour them by default), so it otherwise leaks straight
+// past the proxy. NODE_USE_ENV_PROXY=1 makes Node parse HTTP[S]_PROXY/NO_PROXY
+// for fetch() — but only on Node >= 22.21 / 24 (bundled in newer Electron); it
+// is a harmless no-op on older runtimes. Keyed on the same chromiumApps set as
+// chromiumProxyArgs. Returns nil for non-Electron commands. Pure; unit-tested.
+func electronEnv(argv []string) []string {
+	if len(argv) == 0 || !chromiumApps[appLabel(argv[0])] {
+		return nil
+	}
+	return []string{"NODE_USE_ENV_PROXY=1"}
+}
+
 // appLabel derives a short display label from a command token (an executable
 // path or argv[0]): filepath.Base, then strip a trailing .app or .exe suffix,
 // lower-cased. Pure, so it is unit-tested and shared by the Chromium preset and
@@ -308,7 +324,8 @@ func (r *envRouter) Kill(_ context.Context, pid int) error {
 
 func (r *envRouter) Launch(ctx context.Context, argv []string) (int, error) {
 	argv = chromiumProxyArgs(argv, r.cfg.SocksAddr)
-	pid, err := launchWithEnv(ctx, argv, proxyEnv(r.cfg.SocksAddr, r.cfg.HTTPAddr), r.cfg.LaunchUser, r.cfg.Output)
+	env := append(proxyEnv(r.cfg.SocksAddr, r.cfg.HTTPAddr), electronEnv(argv)...)
+	pid, err := launchWithEnv(ctx, argv, env, r.cfg.LaunchUser, r.cfg.Output)
 	if err != nil {
 		return 0, err
 	}

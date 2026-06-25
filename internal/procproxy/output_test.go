@@ -84,6 +84,33 @@ func TestChromiumProxyArgs_EmptyInputs(t *testing.T) {
 	}
 }
 
+func TestElectronEnv(t *testing.T) {
+	const flag = "NODE_USE_ENV_PROXY=1"
+	// Known Electron editors get the flag so Node fetch/undici honours HTTP_PROXY.
+	for _, argv := range [][]string{
+		{"cursor"},
+		{"/Applications/Cursor.app/Contents/MacOS/Cursor"},
+		{"code", "--new-window"},
+		{"electron", "main.js"},
+	} {
+		got := electronEnv(argv)
+		if len(got) != 1 || got[0] != flag {
+			t.Errorf("electronEnv(%v) = %v, want [%s]", argv, got, flag)
+		}
+	}
+	// Plain CLI tools and unknown apps get nothing (we don't change their net stack).
+	for _, argv := range [][]string{
+		nil,
+		{"curl", "https://example.com"},
+		{"/bin/sh"},
+		{"firefox"},
+	} {
+		if got := electronEnv(argv); got != nil {
+			t.Errorf("electronEnv(%v) = %v, want nil", argv, got)
+		}
+	}
+}
+
 func TestAppLabel(t *testing.T) {
 	cases := map[string]string{
 		"cursor":                   "cursor",

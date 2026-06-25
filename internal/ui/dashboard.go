@@ -301,7 +301,7 @@ func (m Model) appsSummaryBody(w int) string {
 	s := m.styles
 	var rows []string
 	if m.isDarwin {
-		rows = append(rows, s.Subtle.Render(s.clampLine("Cursor: --proxy-server=socks5://127.0.0.1:1080 (Chromium)", w)))
+		rows = append(rows, s.Subtle.Render(s.clampLine("Cursor: Chromium авто; extension-host (Node) — полное покрытие через VPN (v)", w)))
 	}
 	rows = append(rows, s.Muted.Render("приложений: ")+s.colored(s.th.Accent, strconv.Itoa(len(m.proxied)))+
 		s.Muted.Render("  ·  соединений: ")+s.colored(s.th.Ok, strconv.Itoa(len(m.conns))))
