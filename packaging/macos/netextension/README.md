@@ -65,40 +65,62 @@ The Go binary owns the policy; the extension is a dumb relay. Contract:
    `internal/ui/leaky.go` is the natural default allow-list.
 3. Unroute removes the bundle ID; an empty `targets` list disables capture.
 
-This wiring is **intentionally not implemented in Go yet** — it would be dead,
-untestable code until the extension is signed and installable. Add it (behind a
-"is the extension present & approved?" probe) once the extension builds.
+**This wiring is implemented in Go** — see `internal/netext`:
+- `netext.Controller` (port) + `netext.New(socks, port)` — a real darwin
+  controller that writes `config.json` into the App Group container, and a no-op
+  controller off macOS. `Available()` probes `systemextensionsctl list` for the
+  approved extension.
+- `netext.BundleID(path)` / `netext.BundleIDForPID(pid)` resolve the bundle ID to
+  capture (via `defaults read` / `ps`); `BundleInfoPlistPath` is pure & tested.
+- The Executor (`internal/app/executor.go`) calls `captureExtension` /
+  `releaseExtension` from RoutePID/LaunchProxied/RestartProxied/UnroutePID/
+  StopProxied. All of it is a **safe no-op until the extension is installed and
+  approved** (`Available()==false`), so routing still falls back to the
+  procproxy env/flag path. Unit-tested with `netext.FakeController`.
+
+What remains on the Go side is only what depends on the signed extension existing
+(end-to-end verification, live config-reload signalling).
 
 ## Build / sign / notarize (on a Mac with Xcode)
 
-1. Create an Xcode project with two targets: a macOS **App** (ContainerApp) and a
-   **Network Extension** → **Transparent Proxy** (ProxyExtension). Drop these
-   sources/plists/entitlements into the matching targets.
-2. Set the **Team** on both targets; bundle IDs must nest, e.g.
-   `com.singctl.proxy` (app) and `com.singctl.proxy.netext` (extension).
-3. Add the **Network Extensions** capability (App Proxy/Transparent Proxy) and
-   **System Extension** capability. Enable **App Groups** if you use the shared
-   container for `config.json`.
-4. Code-sign with a Developer ID, **notarize** the app (system extensions
-   distributed outside the App Store must be notarized), and staple.
-5. Ship the `.app`; first run prompts the user to **Approve** the system
-   extension in System Settings → General → Login Items & Extensions, then to
-   allow the proxy configuration.
+The targets are described by `project.yml` (XcodeGen) so you don't assemble them
+by hand. From this directory on a Mac:
+
+```sh
+brew install xcodegen
+DEVELOPMENT_TEAM=<YOUR_TEAM_ID> ./build.sh   # xcodegen generate + xcodebuild
+```
+
+`build.sh` generates `SingctlProxy.xcodeproj` (container app `com.singctl.proxy`
++ nested extension `com.singctl.proxy.netext`) and builds Release. You still must
+have the **Network Extensions** capability and **App Groups** provisioned on your
+Apple Developer account. Then:
+
+1. Run the `.app` once; **approve** the system extension in System Settings →
+   General → Login Items & Extensions, then allow the proxy configuration.
+2. **Notarize**: `xcrun notarytool submit … --wait` then `xcrun stapler staple`
+   (system extensions distributed outside the App Store must be notarized).
+3. Ship the `.app` alongside singctl.
 
 ## Remaining work (the epic)
 
-- [ ] Finish `FlowRelay` — full SOCKS5 handshake + bidirectional pump for TCP;
-      add UDP (`NEAppProxyUDPFlow`) support.
-- [ ] Source-app matching: confirm `flow.metaData.sourceAppSigningIdentifier`
-      (bundle ID) and `sourceAppAuditToken` mapping for helper processes; decide
-      whether to capture by bundle ID (captures all Electron helpers) or by path.
-- [ ] Container-app activation/approval UX + `NETransparentProxyManager` config.
-- [ ] Live config reload (Darwin notification or file watch) so singctl can change
+Done in this repo (Go + scaffold):
+- [x] Go-side control layer + `extension present?` probe + config writer
+      (`internal/netext`), wired into the Executor (no-op until installed).
+- [x] Source-app matching by bundle ID + bundle-ID resolution from path/PID
+      (`netext.BundleID` / `BundleIDForPID`).
+- [x] Buildable project (`project.yml` + `build.sh`) and container-app activation
+      flow (`SystemExtensionActivator` + `main.swift`).
+
+Requires a Mac + Apple Developer signing (cannot be finished/verified here):
+- [ ] Finish `FlowRelay` — harden the SOCKS5 handshake + bidirectional pump for
+      TCP; add UDP (`NEAppProxyUDPFlow`) support.
+- [ ] Confirm `sourceAppSigningIdentifier` covers Electron helper processes on a
+      live system (vs `sourceAppAuditToken`).
+- [ ] Live config reload (Darwin notification / file watch) so singctl can change
       `targets` without reinstalling.
 - [ ] Cisco coexistence: the provider must **yield** when AnyConnect is active,
-      mirroring the observe-only policy in `internal/policy` (do not capture while
-      Cisco is connecting/up).
-- [ ] Go-side wiring + an `extension present?` probe; prefer the extension over
-      the env/flag path on macOS when available.
-- [ ] Signing/notarization in the release pipeline.
+      mirroring the observe-only policy in `internal/policy`.
+- [ ] On-device verification (the `lsof` check in `build.sh`) + signing/
+      notarization in the release pipeline.
 ```

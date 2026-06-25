@@ -21,6 +21,7 @@ import (
 	"singctl/internal/core"
 	"singctl/internal/daemon"
 	"singctl/internal/monitor"
+	"singctl/internal/netext"
 	"singctl/internal/policy"
 	"singctl/internal/proclist"
 	"singctl/internal/procproxy"
@@ -63,6 +64,7 @@ type Executor struct {
 	router      procproxy.Router
 	routerBuilt bool
 	launchUser  *procproxy.LaunchUser // real user to drop launched children to (sudo)
+	netext      netext.Controller     // macOS transparent-proxy extension (no-op until installed)
 
 	pollMu     sync.Mutex
 	pollCancel context.CancelFunc
@@ -619,9 +621,37 @@ func (e *Executor) procRouter() procproxy.Router {
 				e.pushNonBlocking(ui.ConsoleMsg{PID: l.PID, App: l.App, Stream: l.Stream, Text: l.Text})
 			}),
 		})
+		// The macOS transparent-proxy extension (no-op until installed+approved):
+		// captures an app's WHOLE network stack, complementing the env/flag path.
+		e.netext = netext.New("127.0.0.1", socks)
 		e.routerBuilt = true
 	}
 	return e.router
+}
+
+// captureExtension marks a bundle ID for whole-app capture by the macOS system
+// extension when it is installed; a no-op otherwise (off macOS, extension not
+// approved, or empty id). Complements — does not replace — the procproxy
+// env/flag path, so routing still works without the extension.
+func (e *Executor) captureExtension(bundleID string) {
+	e.cfgMu.Lock()
+	c := e.netext
+	e.cfgMu.Unlock()
+	if c == nil || bundleID == "" || !c.Available() {
+		return
+	}
+	_ = c.AddTarget(bundleID)
+}
+
+// releaseExtension stops capturing a bundle ID (inverse of captureExtension).
+func (e *Executor) releaseExtension(bundleID string) {
+	e.cfgMu.Lock()
+	c := e.netext
+	e.cfgMu.Unlock()
+	if c == nil || bundleID == "" || !c.Available() {
+		return
+	}
+	_ = c.RemoveTarget(bundleID)
 }
 
 // RoutePID routes an already-running PID's traffic through the proxy.
@@ -629,7 +659,11 @@ func (e *Executor) RoutePID(ctx context.Context, pid int) error {
 	if !e.proxyRunning() {
 		return errProxyNotRunning
 	}
-	return e.procRouter().AddPID(ctx, pid)
+	if err := e.procRouter().AddPID(ctx, pid); err != nil {
+		return err
+	}
+	e.captureExtension(netext.BundleIDForPID(pid))
+	return nil
 }
 
 // LaunchProxied starts a command with its traffic routed through the proxy.
@@ -637,7 +671,11 @@ func (e *Executor) LaunchProxied(ctx context.Context, argv []string) (int, error
 	if !e.proxyRunning() {
 		return 0, errProxyNotRunning
 	}
-	return e.procRouter().Launch(ctx, argv)
+	pid, err := e.procRouter().Launch(ctx, argv)
+	if err == nil && len(argv) > 0 {
+		e.captureExtension(netext.BundleID(argv[0]))
+	}
+	return pid, err
 }
 
 // RestartProxied terminates a running PID and relaunches it through the proxy.
@@ -645,17 +683,27 @@ func (e *Executor) RestartProxied(ctx context.Context, pid int) (int, error) {
 	if !e.proxyRunning() {
 		return 0, errProxyNotRunning
 	}
-	return e.procRouter().RestartPID(ctx, pid)
+	newPID, err := e.procRouter().RestartPID(ctx, pid)
+	if err == nil {
+		e.captureExtension(netext.BundleIDForPID(newPID))
+	}
+	return newPID, err
 }
 
 // UnroutePID stops routing a PID (Linux: clean cgroup detach; macOS: terminate).
 func (e *Executor) UnroutePID(ctx context.Context, pid int) error {
-	return e.procRouter().Unroute(ctx, pid)
+	id := netext.BundleIDForPID(pid) // resolve before the process may exit
+	err := e.procRouter().Unroute(ctx, pid)
+	e.releaseExtension(id)
+	return err
 }
 
 // StopProxied terminates a proxied process.
 func (e *Executor) StopProxied(ctx context.Context, pid int) error {
-	return e.procRouter().Kill(ctx, pid)
+	id := netext.BundleIDForPID(pid) // resolve before the process is killed
+	err := e.procRouter().Kill(ctx, pid)
+	e.releaseExtension(id)
+	return err
 }
 
 // CurrentSettings returns the live tunables as a ui.Settings (the inverse of
