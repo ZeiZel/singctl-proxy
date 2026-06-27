@@ -77,6 +77,27 @@ func TestServerClient_StatusAndStop(t *testing.T) {
 	}
 }
 
+func TestQueryTraffic(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "c.sock")
+	srv := NewServer(sock)
+	srv.Handle("TRAFFIC", func(string) (string, error) {
+		data, _ := json.Marshal(Traffic{Up: 1024, Down: 4096})
+		return string(data), nil
+	})
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer srv.Close()
+
+	tr, err := QueryTraffic(sock)
+	if err != nil {
+		t.Fatalf("QueryTraffic: %v", err)
+	}
+	if tr.Up != 1024 || tr.Down != 4096 {
+		t.Errorf("traffic = %+v, want up 1024 down 4096", tr)
+	}
+}
+
 func TestRegistry_HandlerArgsAndErrors(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "c.sock")
 	srv := NewServer(sock)

@@ -61,3 +61,17 @@ func QueryStatus(socketPath string) (Status, error) {
 	}
 	return st, nil
 }
+
+// QueryTraffic asks the running instance for its cumulative byte counters
+// (TRAFFIC). Callers sample this on an interval to chart throughput.
+func QueryTraffic(socketPath string) (Traffic, error) {
+	resp, err := Request(socketPath, "TRAFFIC", "")
+	if err != nil {
+		return Traffic{}, err
+	}
+	var tr Traffic
+	if err := json.Unmarshal([]byte(resp), &tr); err != nil {
+		return Traffic{}, fmt.Errorf("bad traffic reply %q: %w", resp, err)
+	}
+	return tr, nil
+}

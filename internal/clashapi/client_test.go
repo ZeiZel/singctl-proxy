@@ -82,6 +82,18 @@ func TestConnections_AuthRequired(t *testing.T) {
 	}
 }
 
+func TestTraffic(t *testing.T) {
+	c, srv := newTestServer(t, "tok")
+	defer srv.Close()
+	up, down, err := c.Traffic(context.Background())
+	if err != nil {
+		t.Fatalf("Traffic: %v", err)
+	}
+	if up != 50 || down != 100 {
+		t.Errorf("Traffic() = up %d down %d, want up 50 down 100", up, down)
+	}
+}
+
 func TestProxies(t *testing.T) {
 	c, srv := newTestServer(t, "")
 	defer srv.Close()

@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -199,5 +202,47 @@ func TestConsoleRing_AppendAndSince(t *testing.T) {
 	e.appendConsole(procproxy.OutputLine{PID: 42, App: "zen", Stream: "exit", Text: "[exited]"})
 	if got := e.ConsoleSince(all[2].ID); len(got) != 1 || got[0].Stream != "exit" {
 		t.Errorf("ConsoleSince should return the one new entry, got %+v", got)
+	}
+}
+
+func TestExecutor_ListRouted(t *testing.T) {
+	e, _ := newExecutor()
+	// No router built yet → empty (must not lazily build one just to list).
+	if got := e.ListRouted(); len(got) != 0 {
+		t.Fatalf("ListRouted before any routing = %v, want empty", got)
+	}
+	// Inject a fake router (white-box) and confirm its PIDs surface.
+	fake := &procproxy.FakeRouter{Routed: []int{111, 222}}
+	e.cfgMu.Lock()
+	e.router, e.routerBuilt = fake, true
+	e.cfgMu.Unlock()
+	got := e.ListRouted()
+	if len(got) != 2 || got[0] != 111 || got[1] != 222 {
+		t.Errorf("ListRouted = %v, want [111 222]", got)
+	}
+}
+
+func TestExecutor_TrafficSnapshot(t *testing.T) {
+	e, _ := newExecutor()
+	// Clash API disabled → zero snapshot, no error.
+	if tr, err := e.TrafficSnapshot(context.Background()); err != nil || tr.Up != 0 || tr.Down != 0 {
+		t.Fatalf("TrafficSnapshot (disabled) = %+v, %v; want zero/nil", tr, err)
+	}
+	// Point at a stub Clash API returning running totals.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/connections" {
+			_, _ = w.Write([]byte(`{"downloadTotal":4096,"uploadTotal":1024,"connections":[]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	e.SetClashAPI(strings.TrimPrefix(srv.URL, "http://"), "")
+	tr, err := e.TrafficSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("TrafficSnapshot: %v", err)
+	}
+	if tr.Up != 1024 || tr.Down != 4096 {
+		t.Errorf("TrafficSnapshot = %+v, want up 1024 down 4096", tr)
 	}
 }

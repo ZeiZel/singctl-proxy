@@ -21,6 +21,13 @@ type Status struct {
 	StartedAt string `json:"started_at"`
 }
 
+// Traffic is the TRAFFIC payload: cumulative byte counters (running totals, not
+// rates). A client samples it on an interval and charts the per-second deltas.
+type Traffic struct {
+	Up   int64 `json:"up"`
+	Down int64 `json:"down"`
+}
+
 // HandlerFunc handles one command. arg is everything after the first token
 // (possibly empty, possibly JSON). The returned reply is sent verbatim as one
 // line; a non-nil err is sent as "ERR <err>".

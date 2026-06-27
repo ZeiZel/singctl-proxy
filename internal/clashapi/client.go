@@ -103,6 +103,17 @@ func (c *Client) Connections(ctx context.Context) ([]Connection, error) {
 	return resp.Connections, nil
 }
 
+// Traffic fetches the cumulative upload/download byte counters from
+// /connections. A client samples these over time and charts the per-second
+// deltas (the Clash API reports running totals, not rates).
+func (c *Client) Traffic(ctx context.Context) (up, down int64, err error) {
+	var resp connectionsResponse
+	if err := c.getJSON(ctx, "/connections", &resp); err != nil {
+		return 0, 0, err
+	}
+	return resp.UploadTotal, resp.DownloadTotal, nil
+}
+
 // ProxyState is one entry from GET /proxies (a server or a group).
 type ProxyState struct {
 	Type    string         `json:"type"`

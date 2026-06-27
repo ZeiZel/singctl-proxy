@@ -18,6 +18,7 @@ import (
 
 	"singctl/internal/clashapi"
 	"singctl/internal/clashui"
+	"singctl/internal/control"
 	"singctl/internal/core"
 	"singctl/internal/daemon"
 	"singctl/internal/monitor"
@@ -658,6 +659,36 @@ func (e *Executor) UnroutePID(ctx context.Context, pid int) error {
 // StopProxied terminates a proxied process.
 func (e *Executor) StopProxied(ctx context.Context, pid int) error {
 	return e.procRouter().Kill(ctx, pid)
+}
+
+// ListRouted returns the PIDs currently routed through the proxy. It does not
+// build the router on demand: if nothing has been routed yet the result is empty.
+// Surfaced over the control socket (PROC-LIST-ROUTED) so an unprivileged GUI can
+// show the daemon's "currently proxied" list.
+func (e *Executor) ListRouted() []int {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	if !e.routerBuilt || e.router == nil {
+		return nil
+	}
+	return e.router.ListRouted()
+}
+
+// TrafficSnapshot returns the cumulative up/down byte counters from the Clash
+// API so an attached client can chart throughput by sampling deltas. Returns a
+// zero snapshot (no error) when the Clash API is disabled.
+func (e *Executor) TrafficSnapshot(ctx context.Context) (control.Traffic, error) {
+	e.cfgMu.Lock()
+	addr, secret := e.clashAddr, e.clashSecret
+	e.cfgMu.Unlock()
+	if addr == "" {
+		return control.Traffic{}, nil
+	}
+	up, down, err := clashapi.NewClient(addr, secret).Traffic(ctx)
+	if err != nil {
+		return control.Traffic{}, err
+	}
+	return control.Traffic{Up: up, Down: down}, nil
 }
 
 // CurrentSettings returns the live tunables as a ui.Settings (the inverse of

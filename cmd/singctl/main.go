@@ -468,6 +468,84 @@ func registerControl(srv *control.Server, executor *app.Executor, stop func(), s
 		}
 		return string(data), nil
 	})
+	// TRAFFIC: cumulative up/down byte counters so an unprivileged GUI can chart
+	// throughput by sampling deltas (the daemon owns the Clash API).
+	srv.Handle("TRAFFIC", func(string) (string, error) {
+		tr, err := executor.TrafficSnapshot(context.Background())
+		if err != nil {
+			return "", err
+		}
+		data, _ := json.Marshal(tr)
+		return string(data), nil
+	})
+	// PROC-*: per-process routing executed INSIDE the root daemon, so an
+	// unprivileged client (the GUI) can route/launch apps it could not touch
+	// itself (Linux cgroup/nftables need root). Launched children become the
+	// daemon's, and their output flows through the console ring (CONSOLE-POLL).
+	srv.Handle("PROC-LIST", func(string) (string, error) {
+		rows, err := executor.ListProcesses(context.Background())
+		if err != nil {
+			return "", err
+		}
+		data, _ := json.Marshal(rows)
+		return string(data), nil
+	})
+	srv.Handle("PROC-LIST-ROUTED", func(string) (string, error) {
+		data, _ := json.Marshal(executor.ListRouted())
+		return string(data), nil
+	})
+	srv.Handle("PROC-ROUTE", func(arg string) (string, error) {
+		pid, err := parsePID(arg)
+		if err != nil {
+			return "", err
+		}
+		return "OK", executor.RoutePID(context.Background(), pid)
+	})
+	srv.Handle("PROC-UNROUTE", func(arg string) (string, error) {
+		pid, err := parsePID(arg)
+		if err != nil {
+			return "", err
+		}
+		return "OK", executor.UnroutePID(context.Background(), pid)
+	})
+	srv.Handle("PROC-KILL", func(arg string) (string, error) {
+		pid, err := parsePID(arg)
+		if err != nil {
+			return "", err
+		}
+		return "OK", executor.StopProxied(context.Background(), pid)
+	})
+	srv.Handle("PROC-RESTART", func(arg string) (string, error) {
+		pid, err := parsePID(arg)
+		if err != nil {
+			return "", err
+		}
+		newPID, err := executor.RestartProxied(context.Background(), pid)
+		if err != nil {
+			return "", err
+		}
+		return strconv.Itoa(newPID), nil
+	})
+	srv.Handle("PROC-LAUNCH", func(arg string) (string, error) {
+		var argv []string
+		if err := json.Unmarshal([]byte(arg), &argv); err != nil {
+			return "", fmt.Errorf("bad argv json: %w", err)
+		}
+		pid, err := executor.LaunchProxied(context.Background(), argv)
+		if err != nil {
+			return "", err
+		}
+		return strconv.Itoa(pid), nil
+	})
+}
+
+// parsePID parses a decimal PID argument from a control command.
+func parsePID(arg string) (int, error) {
+	pid, err := strconv.Atoi(strings.TrimSpace(arg))
+	if err != nil {
+		return 0, fmt.Errorf("bad pid %q: %w", arg, err)
+	}
+	return pid, nil
 }
 
 // randomSecret returns a 128-bit hex token used as the default Clash API secret

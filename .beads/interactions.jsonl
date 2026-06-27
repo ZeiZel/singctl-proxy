@@ -145,3 +145,5 @@
 {"id":"int-d1915a8a","kind":"field_change","created_at":"2026-06-27T07:17:47.394214131Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-cnl","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-8a20534c","kind":"field_change","created_at":"2026-06-27T07:21:04.381004792Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-cnl","extra":{"field":"status","new_value":"closed","old_value":"in_progress"}}
 {"id":"int-a4e795b1","kind":"field_change","created_at":"2026-06-27T07:22:03.900619833Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-z33","extra":{"field":"status","new_value":"closed","old_value":"open"}}
+{"id":"int-fd367251","kind":"field_change","created_at":"2026-06-27T14:14:34.302621966Z","actor":"unknown","issue_id":"singctl-proxy-k64","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-55f51a9a","kind":"field_change","created_at":"2026-06-27T14:22:54.783789961Z","actor":"unknown","issue_id":"singctl-proxy-k64","extra":{"field":"status","new_value":"closed","old_value":"in_progress"}}
