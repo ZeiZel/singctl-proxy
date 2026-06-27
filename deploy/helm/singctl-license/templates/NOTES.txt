@@ -1,0 +1,17 @@
+singctl-license deployed as {{ include "singctl-license.fullname" . }}.
+
+{{- if .Values.ingress.enabled }}
+Public URL: https{{ if not .Values.ingress.tls.enabled }}{{ end }}://{{ .Values.ingress.host }}
+  - CLI revocation endpoint: GET /v1/status?id=<id>
+  - Health: GET /healthz
+{{- else }}
+No ingress; reach the Service in-cluster on port {{ .Values.service.port }}.
+{{- end }}
+
+Issue a license (admin token from your secret):
+  curl -XPOST -H "Authorization: Bearer <admin-token>" \
+    -d '{"subject":"user@example.com","days":365}' \
+    https://{{ .Values.ingress.host }}/v1/admin/issue
+
+Embed the PUBLIC key into the CLI at build time (see LICENSATION.md):
+  make build LICENSE_PUBKEY=<base64-public-key>

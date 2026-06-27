@@ -1,0 +1,47 @@
+# Default values for singctl-license.
+
+image:
+  repository: ghcr.io/OWNER/singctl-license # set to your GHCR path
+  tag: "latest"                              # deploy.yml overrides with the build SHA/tag
+  pullPolicy: IfNotPresent
+
+replicaCount: 1 # the JSON store is a single file on a RWO PVC — keep at 1
+
+service:
+  port: 8080
+
+ingress:
+  enabled: true
+  className: traefik
+  host: license.example.com
+  tls:
+    enabled: true
+    # k3s+traefik: provide a certificate via cert-manager or a secret name.
+    secretName: singctl-license-tls
+
+persistence:
+  enabled: true
+  size: 1Gi
+  # storageClassName: local-path   # k3s default
+
+# Default license validity (days); 0 = perpetual.
+defaultTTLDays: 365
+
+# Secrets. DO NOT commit real values — set them at deploy time:
+#   helm upgrade ... --set-string secret.privateKey=$(cat priv.b64) \
+#       --set-string secret.adminToken=... --set-string secret.webhookSecret=...
+# Or point at an existing Secret with keys: privateKey, adminToken, webhookSecret.
+secret:
+  create: true
+  existingSecret: ""
+  privateKey: ""    # base64 Ed25519 private key (server keygen)
+  adminToken: ""    # bearer token for /v1/admin/*
+  webhookSecret: "" # HMAC secret; empty disables the payment webhook
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 250m
+    memory: 128Mi
