@@ -168,6 +168,7 @@ gui-dev:
 
 gui-test:
 	cd gui && go test ./...
+	cd gui/frontend && npm run test
 
 clean:
 	rm -rf bin gui/build/bin gui/frontend/dist
