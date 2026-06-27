@@ -32,6 +32,12 @@ private final class TCPRelay {
     private let dest: NWHostEndpoint
     private let log: OSLog
 
+    // teardown is reachable from several async callbacks (both pumps, the state
+    // handler, send/receive errors). Serialise on the main queue and guard with a
+    // flag so the flow/connection are closed exactly once.
+    private let queue = DispatchQueue(label: "com.singctl.proxy.relay")
+    private var closed = false
+
     init(flow: NEAppProxyTCPFlow, conn: NWConnection, dest: NWHostEndpoint, log: OSLog) {
         self.flow = flow; self.conn = conn; self.dest = dest; self.log = log
     }
@@ -164,9 +170,15 @@ private final class TCPRelay {
         }
     }
 
+    /// Close the flow and upstream connection exactly once, regardless of which
+    /// async callback (or how many) trips it.
     private func teardown() {
-        flow.closeReadWithError(nil)
-        flow.closeWriteWithError(nil)
-        conn.cancel()
+        queue.async { [weak self] in
+            guard let self = self, !self.closed else { return }
+            self.closed = true
+            self.flow.closeReadWithError(nil)
+            self.flow.closeWriteWithError(nil)
+            self.conn.cancel()
+        }
     }
 }

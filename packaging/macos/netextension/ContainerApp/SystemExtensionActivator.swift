@@ -18,12 +18,42 @@ final class SystemExtensionActivator: NSObject, OSSystemExtensionRequestDelegate
     private let log = OSLog(subsystem: "com.singctl.proxy", category: "activator")
     private let extensionIdentifier = "com.singctl.proxy.netext"
 
-    /// Step 1: ask the OS to (re)activate the system extension.
-    func activate() {
+    /// Result of an activation request, surfaced to the caller so it only
+    /// configures the manager once the extension is actually usable.
+    enum ActivationResult {
+        case success                 // .completed
+        case rebootRequired          // .willCompleteAfterReboot
+    }
+
+    /// Errors specific to activation (beyond the OS-provided ones).
+    enum ActivationError: LocalizedError {
+        case needsApproval
+        var errorDescription: String? {
+            switch self {
+            case .needsApproval:
+                return "Расширение требует одобрения: System Settings → General → " +
+                    "Login Items & Extensions → Network Extensions."
+            }
+        }
+    }
+
+    private var onActivation: ((Result<ActivationResult, Error>) -> Void)?
+
+    /// Step 1: ask the OS to (re)activate the system extension. `completion` is
+    /// called on the main queue once the request finishes (or fails); configure()
+    /// should only run on `.success`.
+    func activate(completion: ((Result<ActivationResult, Error>) -> Void)? = nil) {
+        onActivation = completion
         let req = OSSystemExtensionRequest.activationRequest(
             forExtensionWithIdentifier: extensionIdentifier, queue: .main)
         req.delegate = self
         OSSystemExtensionManager.shared.submitRequest(req)
+    }
+
+    private func finishActivation(_ result: Result<ActivationResult, Error>) {
+        let cb = onActivation
+        onActivation = nil
+        cb?(result)
     }
 
     /// Step 2: configure the transparent-proxy manager. `targets` are the bundle
@@ -70,16 +100,26 @@ final class SystemExtensionActivator: NSObject, OSSystemExtensionRequestDelegate
 
     func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
         os_log("system extension needs user approval in System Settings", log: log, type: .info)
-        // TODO: surface UI telling the user to approve in Login Items & Extensions.
+        // Not terminal — didFinishWithResult/didFailWithError still arrives after
+        // the user acts. Surface guidance; the caller can show UI on this error.
+        finishActivation(.failure(ActivationError.needsApproval))
     }
 
     func request(_ request: OSSystemExtensionRequest,
                 didFinishWithResult result: OSSystemExtensionRequest.Result) {
         os_log("activation result=%d", log: log, type: .info, result.rawValue)
-        // result == .completed → safe to configure(); .willCompleteAfterReboot → tell user.
+        switch result {
+        case .completed:
+            finishActivation(.success(.success))
+        case .willCompleteAfterReboot:
+            finishActivation(.success(.rebootRequired))
+        @unknown default:
+            finishActivation(.success(.success))
+        }
     }
 
     func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
         os_log("activation failed: %{public}@", log: log, type: .error, error.localizedDescription)
+        finishActivation(.failure(error))
     }
 }

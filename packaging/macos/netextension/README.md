@@ -55,31 +55,30 @@ else go direct.
 
 The Go binary owns the policy; the extension is a dumb relay. Contract:
 
-1. singctl writes `targets` (array of bundle IDs and/or executable paths) and the
-   SOCKS `host:port` into the manager's `providerConfiguration` (via the
-   container app) **and/or** a JSON file the provider re-reads on demand — see
-   `config.example.json`.
-2. When the user routes Cursor (or any app) on macOS *and the extension is
-   installed*, singctl adds that bundle ID to `targets` instead of (or in
-   addition to) the env/flag launch path. The "leaky editors" set in
-   `internal/ui/leaky.go` is the natural default allow-list.
-3. Unroute removes the bundle ID; an empty `targets` list disables capture.
+1. singctl writes `targets` (bundle IDs) + SOCKS `host:port` into the App Group
+   `config.json` (`internal/netext`). The container app reads it and pushes it to
+   the manager's `providerConfiguration`; it also **watches the file** and
+   re-applies on every change (`ContainerApp/main.swift`), so the CLI can update
+   the set live without reinstalling.
+2. On macOS, per-app proxying IS the extension. `internal/procproxy`'s
+   `darwinRouter` (`router_darwin.go`) implements the platform `Router` over
+   `internal/netext`: RoutePID/Launch resolve the app's bundle ID and `AddTarget`;
+   Unroute/Kill `RemoveTarget` (refcounted across a bundle's PIDs, so Electron
+   helpers are handled). Requires `netext.Available()`; otherwise it returns a
+   clear "install/approve the extension" error surfaced in the TUI.
+3. The Linux backend (cgroup/nftables) and Windows env fallback are unchanged —
+   `procproxy.NewRouter` picks the backend by build tag.
 
-**This wiring is implemented in Go** — see `internal/netext`:
-- `netext.Controller` (port) + `netext.New(socks, port)` — a real darwin
-  controller that writes `config.json` into the App Group container, and a no-op
-  controller off macOS. `Available()` probes `systemextensionsctl list` for the
-  approved extension.
-- `netext.BundleID(path)` / `netext.BundleIDForPID(pid)` resolve the bundle ID to
-  capture (via `defaults read` / `ps`); `BundleInfoPlistPath` is pure & tested.
-- The Executor (`internal/app/executor.go`) calls `captureExtension` /
-  `releaseExtension` from RoutePID/LaunchProxied/RestartProxied/UnroutePID/
-  StopProxied. All of it is a **safe no-op until the extension is installed and
-  approved** (`Available()==false`), so routing still falls back to the
-  procproxy env/flag path. Unit-tested with `netext.FakeController`.
+`internal/netext` is the bridge:
+- `netext.Controller` + `netext.New(host, port)` — real darwin controller writes
+  `config.json` into the App Group container (errors wrapped for the TUI); no-op
+  off macOS. `Available()` probes `systemextensionsctl list`.
+- `netext.BundleID(path)` / `netext.BundleIDForPID(pid)` (via `defaults`/`ps`);
+  pure `BundleInfoPlistPath` is unit-tested; `darwinRouter` is tested via
+  `netext.FakeController`.
 
-What remains on the Go side is only what depends on the signed extension existing
-(end-to-end verification, live config-reload signalling).
+What remains depends on the signed extension existing (on-device verification,
+relay hardening) — see the checklist below and LICENSATION.md.
 
 ## Build / sign / notarize (on a Mac with Xcode)
 
@@ -105,22 +104,22 @@ Apple Developer account. Then:
 ## Remaining work (the epic)
 
 Done in this repo (Go + scaffold):
-- [x] Go-side control layer + `extension present?` probe + config writer
-      (`internal/netext`), wired into the Executor (no-op until installed).
-- [x] Source-app matching by bundle ID + bundle-ID resolution from path/PID
-      (`netext.BundleID` / `BundleIDForPID`).
-- [x] Buildable project (`project.yml` + `build.sh`) and container-app activation
-      flow (`SystemExtensionActivator` + `main.swift`).
+- [x] Go-side control layer + `extension present?` probe + config writer with
+      wrapped errors (`internal/netext`).
+- [x] macOS per-app `Router` backed by the extension (`procproxy/router_darwin.go`),
+      bundle-ID resolution + refcount; clear error when the extension is absent.
+- [x] Source-app matching by bundle ID (`netext.BundleID` / `BundleIDForPID`).
+- [x] Buildable project (`project.yml` + `build.sh`, with optional notarize) and
+      container-app activation + **live config.json watch** (`main.swift`,
+      `SystemExtensionActivator` with activation-result completion).
+- [x] FlowRelay idempotent teardown (no double-close races).
 
 Requires a Mac + Apple Developer signing (cannot be finished/verified here):
-- [ ] Finish `FlowRelay` — harden the SOCKS5 handshake + bidirectional pump for
-      TCP; add UDP (`NEAppProxyUDPFlow`) support.
+- [ ] Harden the SOCKS5 pump under load + add UDP (`NEAppProxyUDPFlow`) support.
 - [ ] Confirm `sourceAppSigningIdentifier` covers Electron helper processes on a
       live system (vs `sourceAppAuditToken`).
-- [ ] Live config reload (Darwin notification / file watch) so singctl can change
-      `targets` without reinstalling.
 - [ ] Cisco coexistence: the provider must **yield** when AnyConnect is active,
       mirroring the observe-only policy in `internal/policy`.
 - [ ] On-device verification (the `lsof` check in `build.sh`) + signing/
-      notarization in the release pipeline.
-```
+      notarization + signing the CLI with the App Group entitlement
+      (see LICENSATION.md).

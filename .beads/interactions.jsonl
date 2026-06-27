@@ -124,3 +124,10 @@
 {"id":"int-dcff4876","kind":"field_change","created_at":"2026-06-24T17:21:12.987890168Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-ap8","extra":{"field":"status","new_value":"closed","old_value":"open"}}
 {"id":"int-04c71355","kind":"field_change","created_at":"2026-06-24T17:31:51.43161188Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-wz3","extra":{"field":"status","new_value":"closed","old_value":"open"}}
 {"id":"int-41614e47","kind":"field_change","created_at":"2026-06-24T17:38:50.636301255Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-6vr","extra":{"field":"status","new_value":"closed","old_value":"open"}}
+{"id":"int-2479610b","kind":"field_change","created_at":"2026-06-25T07:45:49.873491591Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-0op","extra":{"field":"status","new_value":"closed","old_value":"open"}}
+{"id":"int-bef6c74c","kind":"field_change","created_at":"2026-06-25T09:07:12.66734392Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-e6n","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-d5015f3f","kind":"field_change","created_at":"2026-06-25T09:10:05.065328014Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-e6n","extra":{"field":"status","new_value":"closed","old_value":"in_progress"}}
+{"id":"int-93661c99","kind":"field_change","created_at":"2026-06-25T16:07:45.569781264Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-gsb","extra":{"field":"status","new_value":"closed","old_value":"open"}}
+{"id":"int-e134d351","kind":"field_change","created_at":"2026-06-25T17:42:51.531683846Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-dzw","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-1fc014d5","kind":"field_change","created_at":"2026-06-25T17:48:56.389283375Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-dzw","extra":{"field":"status","new_value":"closed","old_value":"in_progress"}}
+{"id":"int-c8218501","kind":"field_change","created_at":"2026-06-27T05:57:47.088972425Z","actor":"Lvov, Valery","issue_id":"singctl-proxy-ysr","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
