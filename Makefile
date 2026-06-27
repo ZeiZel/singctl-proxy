@@ -28,7 +28,7 @@ SINGBOX_TAGS := singbox with_utls with_clash_api
 .PHONY: build build-macos build-windows build-linux build-all build-netext \
 	build-unlicensed build-server docker-server \
 	test test-integration tidy run lint clean install-man uninstall-man \
-	install uninstall gui gui-dev gui-test
+	install uninstall gui gui-dev gui-test gui-reset
 
 # Install prefix for the binary (`make install`).
 PREFIX ?= /usr/local
@@ -176,6 +176,12 @@ gui-dev:
 gui-test:
 	cd gui && go test ./...
 	cd gui/frontend && npm run test
+
+# Wipe the frontend's installed deps + lockfile. Needed when switching the OS that
+# builds the GUI on a shared checkout (node_modules holds platform-specific
+# rollup/esbuild binaries); the next `make gui`/`gui-dev` reinstalls them.
+gui-reset:
+	rm -rf gui/frontend/node_modules gui/frontend/package-lock.json gui/frontend/dist
 
 clean:
 	rm -rf bin gui/build/bin gui/frontend/dist

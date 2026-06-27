@@ -181,3 +181,12 @@ state out as Wails events the frontend subscribes to (`shared/api/singctl`):
   and add a key, or run `singctl --daemon`.
 - **`npm install` fails behind a proxy.** Retry — transient proxy 502s can drop
   package fetches; re-running fills the cache until it completes.
+- **`Cannot find module @rollup/rollup-<os>-<arch>` / esbuild platform error.**
+  `node_modules` was installed on a different OS (e.g. a Linux dev container) and
+  reused on a shared checkout. `node_modules` holds platform-specific
+  rollup/esbuild binaries and cannot be shared across OSes. Reset it:
+  ```sh
+  make gui-reset      # rm node_modules + package-lock.json + dist
+  make gui            # reinstalls the correct binaries for this OS
+  ```
+  `package-lock.json` is intentionally **not** committed for the same reason.

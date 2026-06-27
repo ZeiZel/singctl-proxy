@@ -3,3 +3,7 @@ node_modules
 frontend/dist/*
 !frontend/dist/.gitkeep
 frontend/package.json.md5
+# Not committed: it pins platform-specific optional deps (rollup/esbuild), which
+# breaks cross-platform installs (Linux container vs macOS) on a shared checkout.
+# Each environment's `npm install` resolves the correct binaries; CI generates it.
+frontend/package-lock.json
