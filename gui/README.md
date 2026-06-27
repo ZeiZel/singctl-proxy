@@ -25,7 +25,7 @@ state.
 | --- | --- | --- |
 | Go | ≥ 1.24 | the repo's toolchain |
 | Node.js | ≥ 18 | for the Vite/React frontend |
-| Wails CLI | v2 | `go install github.com/wailsapp/wails/v2/cmd/wails@latest` (ensure `$(go env GOPATH)/bin` is on `PATH`) |
+| Wails CLI | v2 | **Optional** — the `make` targets fall back to `go run github.com/wailsapp/wails/v2/cmd/wails@<version>`. Install it for faster repeat builds: `go install github.com/wailsapp/wails/v2/cmd/wails@latest` (then add `$(go env GOPATH)/bin` to `PATH`). |
 | GTK3 + WebKit2GTK | 4.1 | **Linux only** (webview runtime) |
 
 On Debian/Ubuntu:
@@ -53,7 +53,9 @@ make gui-dev      # live dev server   → http://localhost:34115 (hot reload)
 make gui-test     # go bridge tests + frontend vitest suite
 ```
 
-Equivalent manual commands (run inside `gui/`):
+Equivalent manual commands (run inside `gui/`; drop `-tags webkit2_41` on macOS,
+and replace `wails` with `go run github.com/wailsapp/wails/v2/cmd/wails@v2.12.0`
+if the CLI is not installed):
 
 ```sh
 wails build -tags webkit2_41          # full build (frontend + Go + package)

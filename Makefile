@@ -156,15 +156,22 @@ endif
 
 # --- Desktop GUI (Wails: Go + React, drives the daemon over the control socket) ---
 # The GUI lives in its own nested module (gui/) so it never pulls sing-box into
-# the main build. On Linux it needs the webkit2_41 build tag (Ubuntu ships
-# webkit2gtk-4.1, not 4.0 — `wails doctor` falsely reports it missing). Requires
-# the wails CLI on PATH (go install github.com/wailsapp/wails/v2/cmd/wails@latest).
+# the main build. The webkit2_41 build tag is needed only on Linux (Ubuntu ships
+# webkit2gtk-4.1, not 4.0 — `wails doctor` falsely reports it missing); on macOS
+# no tag is passed. WAILS resolves to an installed `wails` (on PATH or in
+# $(go env GOPATH)/bin), else falls back to `go run` so no global install is
+# required. Override with `make gui WAILS=wails` once it is on your PATH.
+WAILS_VERSION ?= v2.12.0
+WAILS ?= $(shell command -v wails 2>/dev/null || ([ -x "$$(go env GOPATH)/bin/wails" ] && echo "$$(go env GOPATH)/bin/wails") || echo "go run github.com/wailsapp/wails/v2/cmd/wails@$(WAILS_VERSION)")
+ifeq ($(UNAME_S),Linux)
 WAILS_TAGS ?= webkit2_41
+endif
+WAILS_TAGFLAG := $(if $(WAILS_TAGS),-tags $(WAILS_TAGS),)
 gui:
-	cd gui && wails build -tags $(WAILS_TAGS)
+	cd gui && $(WAILS) build $(WAILS_TAGFLAG)
 
 gui-dev:
-	cd gui && wails dev -tags $(WAILS_TAGS)
+	cd gui && $(WAILS) dev $(WAILS_TAGFLAG)
 
 gui-test:
 	cd gui && go test ./...
