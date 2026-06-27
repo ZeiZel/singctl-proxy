@@ -50,12 +50,12 @@ build-unlicensed:
 	@echo "Built bin/$(BINARY)-unlicensed — license checks DISABLED (dev only)."
 
 # License server: pure Go (no sing-box, CGO-free), embeds bbolt. Container image
-# is built from deploy/Dockerfile.server.
+# is built from deploy/server.Dockerfile.
 build-server:
 	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-server ./cmd/server
 
 docker-server:
-	docker build -f deploy/Dockerfile.server -t singctl-license:$(VERSION) .
+	docker build -f deploy/server.Dockerfile -t singctl-license:$(VERSION) .
 
 # --- cross-platform builds (bin/<binary>-<os>-<arch>) ---
 #

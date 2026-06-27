@@ -1,6 +1,6 @@
 # Multi-stage build for the singctl license server. Pure Go + CGO-free → a tiny
 # static binary on distroless/nonroot. Build from the repo root:
-#   docker build -f deploy/Dockerfile.server -t singctl-license .
+#   docker build -f deploy/server.Dockerfile -t singctl-license .
 FROM golang:1.24-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./

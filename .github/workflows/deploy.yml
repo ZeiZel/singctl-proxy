@@ -27,7 +27,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: build & push
         run: |
-          docker build -f deploy/Dockerfile.server \
+          docker build -f deploy/server.Dockerfile \
             --build-arg VERSION="${GITHUB_REF_NAME}" \
             -t "${{ steps.meta.outputs.image }}" .
           docker push "${{ steps.meta.outputs.image }}"
