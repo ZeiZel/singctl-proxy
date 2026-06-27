@@ -3,6 +3,8 @@
 package netext
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -75,19 +77,26 @@ func (c *darwinController) Targets() []string {
 	return c.set.list()
 }
 
-// flushLocked persists the current set to config.json (caller holds c.mu).
+// flushLocked persists the current set to config.json (caller holds c.mu). All
+// failures are wrapped with the offending path so the TUI can show why per-app
+// capture didn't take (e.g. the CLI isn't signed with the App Group entitlement,
+// so the shared container isn't writable — see LICENSATION.md).
 func (c *darwinController) flushLocked() error {
 	if c.cfgPath == "" {
-		return nil
+		return errors.New("netext: не удалось определить путь App Group config.json (HOME не задан?)")
 	}
 	data, err := Config{Targets: c.set.list(), SocksHost: c.socks, SocksPort: c.port}.Marshal()
 	if err != nil {
-		return err
+		return fmt.Errorf("netext: marshal config: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(c.cfgPath), 0o755); err != nil {
-		return err
+	dir := filepath.Dir(c.cfgPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("netext: создать каталог конфигурации %s: %w", dir, err)
 	}
-	return os.WriteFile(c.cfgPath, data, 0o644)
+	if err := os.WriteFile(c.cfgPath, data, 0o644); err != nil {
+		return fmt.Errorf("netext: записать %s: %w (CLI подписан с App Group entitlement? см. LICENSATION.md)", c.cfgPath, err)
+	}
+	return nil
 }
 
 // sharedConfigPath resolves ~/Library/Group Containers/<AppGroup>/config.json.

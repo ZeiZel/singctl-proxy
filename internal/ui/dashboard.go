@@ -16,13 +16,13 @@ import (
 // is the status block + the OFF/PROXY/VPN selector, driven by ←→ + Enter (and the
 // global p/v/s shortcuts).
 const (
-	navMode = iota // Режим (status + OFF/PROXY/VPN selector)
-	navConns       // Соединения
-	navApps        // Приложения
-	navLogs        // Логи sing-box
-	navConsole     // Консоль приложений
-	navSettings    // Настройки
-	navKeys        // Ключи
+	navMode     = iota // Режим (status + OFF/PROXY/VPN selector)
+	navConns           // Соединения
+	navApps            // Приложения
+	navLogs            // Логи sing-box
+	navConsole         // Консоль приложений
+	navSettings        // Настройки
+	navKeys            // Ключи
 	navCount
 )
 
@@ -300,10 +300,8 @@ func (m Model) sectionPreview(n, w, h int) string {
 func (m Model) appsSummaryBody(w int) string {
 	s := m.styles
 	var rows []string
-	if m.leakyEditorProxied() {
-		rows = append(rows, s.colored(s.th.Warn, s.clampLine(s.gl.Warn+" Cursor/VS Code течёт мимо — v для VPN (полное покрытие)", w)))
-	} else if m.isDarwin {
-		rows = append(rows, s.Subtle.Render(s.clampLine("Cursor: Chromium авто; extension-host (Node) — полное покрытие через VPN (v)", w)))
+	if m.isDarwin {
+		rows = append(rows, s.Subtle.Render(s.clampLine("macOS: изоляция через системное расширение (LICENSATION.md)", w)))
 	}
 	rows = append(rows, s.Muted.Render("приложений: ")+s.colored(s.th.Accent, strconv.Itoa(len(m.proxied)))+
 		s.Muted.Render("  ·  соединений: ")+s.colored(s.th.Ok, strconv.Itoa(len(m.conns))))
