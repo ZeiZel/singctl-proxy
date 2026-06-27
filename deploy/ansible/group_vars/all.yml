@@ -1,0 +1,12 @@
+---
+# Defaults for the singctl license-server provisioning. Override per-run via
+# bootstrap.sh prompts or `-e key=value`. Never commit real tokens here.
+ssh_port: 2222
+allowed_ports: [80, 443]
+k3s_channel: stable
+
+# Optional integrations (leave empty to skip):
+github_runner_url: ""    # https://github.com/OWNER/REPO
+github_runner_token: ""  # short-lived runner registration token (Settings → Actions → Runners)
+ghcr_user: ""            # GHCR username for pulling the private server image
+ghcr_token: ""           # GHCR PAT (read:packages)

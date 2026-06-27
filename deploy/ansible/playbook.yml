@@ -1,0 +1,184 @@
+---
+# Hardens a fresh Debian/Ubuntu server and installs k3s + helm for the singctl
+# license server, plus (optionally) a self-hosted GitHub Actions runner that the
+# deploy workflow uses. Idempotent. Run via bootstrap.sh (sets ssh_port etc.).
+- name: Provision singctl license server
+  hosts: all
+  become: true
+  vars:
+    ssh_port: 2222
+    allowed_ports: [80, 443]
+    k3s_channel: stable
+    # Optional — set via -e to enable:
+    #   github_runner_url:   https://github.com/OWNER/REPO
+    #   github_runner_token: <runner registration token>
+    #   ghcr_user / ghcr_token: for pulling the private server image
+    github_runner_url: ""
+    github_runner_token: ""
+    ghcr_user: ""
+    ghcr_token: ""
+
+  handlers:
+    - name: restart ssh
+      ansible.builtin.service:
+        name: ssh
+        state: restarted
+    - name: restart fail2ban
+      ansible.builtin.service:
+        name: fail2ban
+        state: restarted
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install base + security packages
+      ansible.builtin.apt:
+        name:
+          - ufw
+          - fail2ban
+          - unattended-upgrades
+          - curl
+          - ca-certificates
+        state: present
+
+    # --- SSH hardening (drop-in; keeps the main config untouched) ------------
+    - name: SSH hardening drop-in
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/99-singctl.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by singctl ansible — do not edit.
+          Port {{ ssh_port }}
+          PermitRootLogin no
+          PasswordAuthentication no
+          PubkeyAuthentication yes
+          ChallengeResponseAuthentication no
+          X11Forwarding no
+          MaxAuthTries 3
+          ClientAliveInterval 300
+          ClientAliveCountMax 2
+      notify: restart ssh
+
+    # --- Firewall ------------------------------------------------------------
+    - name: UFW default policies
+      community.general.ufw:
+        direction: "{{ item.dir }}"
+        policy: "{{ item.policy }}"
+      loop:
+        - { dir: incoming, policy: deny }
+        - { dir: outgoing, policy: allow }
+
+    - name: UFW allow the new + initial SSH ports and web ports
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: "{{ [ssh_port, ansible_port | default(22)] + allowed_ports }}"
+
+    - name: Enable UFW
+      community.general.ufw:
+        state: enabled
+
+    # --- fail2ban ------------------------------------------------------------
+    - name: fail2ban sshd jail
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/jail.d/singctl.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [sshd]
+          enabled = true
+          port = {{ ssh_port }}
+          maxretry = 4
+          bantime = 1h
+      notify: restart fail2ban
+
+    - name: Enable unattended-upgrades
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+
+    # --- GHCR pull creds for k3s (optional) ----------------------------------
+    - name: k3s registries.yaml for private GHCR
+      when: ghcr_user | length > 0 and ghcr_token | length > 0
+      ansible.builtin.copy:
+        dest: /etc/rancher/k3s/registries.yaml
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          configs:
+            ghcr.io:
+              auth:
+                username: {{ ghcr_user }}
+                password: {{ ghcr_token }}
+
+    # --- k3s + helm ----------------------------------------------------------
+    - name: Install k3s (single-node, traefik included)
+      ansible.builtin.shell: >
+        curl -sfL https://get.k3s.io | INSTALL_K3S_CHANNEL={{ k3s_channel }} sh -
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Install helm
+      ansible.builtin.shell: >
+        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: Point helm/kubectl at the k3s kubeconfig (root)
+      ansible.builtin.lineinfile:
+        path: /root/.bashrc
+        line: "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml"
+        create: true
+
+    # --- Self-hosted GitHub Actions runner (optional) ------------------------
+    - name: Install self-hosted runner
+      when: github_runner_url | length > 0 and github_runner_token | length > 0
+      block:
+        - name: Runner user
+          ansible.builtin.user:
+            name: gha-runner
+            home: /opt/gha-runner
+            shell: /bin/bash
+            system: true
+
+        - name: Download runner
+          ansible.builtin.shell: |
+            cd /opt/gha-runner
+            curl -fsSL -o actions-runner.tar.gz \
+              https://github.com/actions/runner/releases/download/v2.319.1/actions-runner-linux-x64-2.319.1.tar.gz
+            tar xzf actions-runner.tar.gz
+          args:
+            creates: /opt/gha-runner/config.sh
+          become_user: gha-runner
+
+        - name: Configure runner (labels self-hosted,singctl)
+          ansible.builtin.shell: |
+            cd /opt/gha-runner
+            ./config.sh --unattended --replace \
+              --url {{ github_runner_url }} \
+              --token {{ github_runner_token }} \
+              --labels singctl --name {{ inventory_hostname }}
+          args:
+            creates: /opt/gha-runner/.runner
+          become_user: gha-runner
+
+        - name: Install + start runner service
+          ansible.builtin.shell: |
+            cd /opt/gha-runner
+            ./svc.sh install gha-runner
+            ./svc.sh start
+          args:
+            creates: /etc/systemd/system/actions.runner.*.service
