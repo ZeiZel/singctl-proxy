@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache: true
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test ./...
+      - name: build license server
+        run: go build ./cmd/server
+      - name: build CLI (stub core)
+        run: go build ./cmd/singctl
+      - name: build CLI (unlicensed tag compiles)
+        run: go build -tags unlicensed ./cmd/singctl

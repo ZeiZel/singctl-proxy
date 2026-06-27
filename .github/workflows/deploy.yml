@@ -1,0 +1,52 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write # push the server image to GHCR
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: image ref (lowercase owner)
+        id: meta
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/singctl-license:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: build & push
+        run: |
+          docker build -f deploy/Dockerfile.server \
+            --build-arg VERSION="${GITHUB_REF_NAME}" \
+            -t "${{ steps.meta.outputs.image }}" .
+          docker push "${{ steps.meta.outputs.image }}"
+
+  deploy:
+    needs: image
+    # The self-hosted runner lives on the k3s server (installed by Ansible) and
+    # has a local kubeconfig + helm — the cluster API never has to be exposed.
+    runs-on: [self-hosted, singctl]
+    steps:
+      - uses: actions/checkout@v4
+      - name: helm upgrade
+        run: |
+          helm upgrade --install singctl-license deploy/helm/singctl-license \
+            --namespace singctl --create-namespace \
+            --set image.repository="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/singctl-license" \
+            --set image.tag="${GITHUB_SHA}" \
+            --set ingress.host="${{ secrets.LICENSE_HOST }}" \
+            --set-string secret.privateKey="${{ secrets.LICENSE_PRIVATE_KEY }}" \
+            --set-string secret.adminToken="${{ secrets.LICENSE_ADMIN_TOKEN }}" \
+            --set-string secret.webhookSecret="${{ secrets.LICENSE_WEBHOOK_SECRET }}" \
+            --wait --timeout 3m

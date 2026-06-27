@@ -5,6 +5,12 @@ image:
   tag: "latest"                              # deploy.yml overrides with the build SHA/tag
   pullPolicy: IfNotPresent
 
+# For a private GHCR image: either create a regcred pull secret and list it here,
+# or configure k3s /etc/rancher/k3s/registries.yaml (the Ansible playbook does the
+# latter). Leave empty if the package is public.
+imagePullSecrets: []
+# - name: ghcr-regcred
+
 replicaCount: 1 # the JSON store is a single file on a RWO PVC — keep at 1
 
 service:
