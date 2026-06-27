@@ -519,6 +519,14 @@ func main() {
 		os.Exit(runControlCommand(c))
 	}
 
+	// License actions (install / status) work without root and exit immediately.
+	if c.lic.install != "" {
+		os.Exit(runLicenseInstall(c.lic.install))
+	}
+	if c.lic.status {
+		os.Exit(runLicenseStatus())
+	}
+
 	// .env (explicit path, or ./.env if present) feeds SINGCTL_KEY/SINGCTL_PORT;
 	// real environment variables win, flags win over both.
 	if c.root.envFile != "" {
@@ -552,6 +560,14 @@ func main() {
 	// actLocal: start our own cores (needs root).
 
 	if err := requireRoot(goruntime.GOOS, os.Geteuid()); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
+	// License gate: starting our own cores requires a valid license (the daemon
+	// child re-enters main and is gated here too). Remote/attach paths above are
+	// unaffected — they drive an already-licensed running instance.
+	if err := enforceLicense(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}

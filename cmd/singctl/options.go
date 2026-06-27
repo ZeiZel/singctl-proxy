@@ -10,6 +10,7 @@ import (
 	"singctl/internal/clashapi"
 	"singctl/internal/control"
 	"singctl/internal/feature"
+	"singctl/internal/license"
 	"singctl/internal/proclist"
 	"singctl/internal/procproxy"
 	"singctl/internal/runtime"
@@ -189,6 +190,18 @@ func (m *controlModule) Bind(fs *flag.FlagSet) {
 	fs.BoolVar(&m.status, "status", false, "print the status of a running singctl instance")
 }
 
+// licenseModule: --license (install token/file), --license-status.
+type licenseModule struct {
+	install string
+	status  bool
+}
+
+func (m *licenseModule) Descriptor() feature.Descriptor { return license.FeatureDescriptor() }
+func (m *licenseModule) Bind(fs *flag.FlagSet) {
+	fs.StringVar(&m.install, "license", "", "install a license (token or path to a file) and exit")
+	fs.BoolVar(&m.status, "license-status", false, "print license status and exit")
+}
+
 // rootModule: global flags --version/-v, --man, --env-file.
 type rootModule struct {
 	version bool
@@ -233,6 +246,7 @@ type cli struct {
 	obs   obsModule
 	proc  procModule
 	ctl   controlModule
+	lic   licenseModule
 	root  rootModule
 }
 
@@ -246,6 +260,7 @@ func (c *cli) buildRegistry() {
 		Add(&c.obs).
 		Add(&c.proc).
 		Add(&c.ctl).
+		Add(&c.lic).
 		Add(&c.root).
 		Add(docModule{proclist.FeatureDescriptor()}).
 		Add(docModule{ui.FeatureDescriptor()})

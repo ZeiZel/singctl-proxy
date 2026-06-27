@@ -4,6 +4,15 @@ PKG := ./...
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION)
 
+# LICENSE_PUBKEY (base64 Ed25519 public key from `bin/singctl-server keygen`) is
+# embedded into the CLI so it can verify licenses offline. Release builds MUST
+# set it; dev builds without it cannot verify any license (use build-unlicensed
+# for local runs). Never embed the PRIVATE key — it lives only on the server.
+LICENSE_PUBKEY ?=
+ifneq ($(LICENSE_PUBKEY),)
+LDFLAGS += -X singctl/internal/license.PublicKeyB64=$(LICENSE_PUBKEY)
+endif
+
 # man page install location: `make install-man` enables `man singctl`.
 MANPREFIX ?= /usr/local/share/man
 MANPAGE := cmd/singctl/singctl.1
@@ -17,6 +26,7 @@ MANPAGE := cmd/singctl/singctl.1
 SINGBOX_TAGS := singbox with_utls with_clash_api
 
 .PHONY: build build-macos build-windows build-linux build-all build-netext \
+	build-unlicensed build-server docker-server \
 	test test-integration tidy run lint clean install-man uninstall-man \
 	install uninstall
 
@@ -29,6 +39,23 @@ UNAME_S := $(shell uname -s)
 # CGO is required for the sing-box TUN on darwin.
 build:
 	CGO_ENABLED=1 $(GO) build -tags "$(SINGBOX_TAGS)" -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/singctl
+
+# Build with license enforcement COMPILED OUT (-tags unlicensed). For local
+# development only — the bypass code is not present in any other build, and this
+# target must never be published (CI release builds omit the tag). GNU make can't
+# use a literal ':' in a target name, so this is `build-unlicensed` (not
+# `build:unlicensed`).
+build-unlicensed:
+	CGO_ENABLED=1 $(GO) build -tags "$(SINGBOX_TAGS) unlicensed" -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-unlicensed ./cmd/singctl
+	@echo "Built bin/$(BINARY)-unlicensed — license checks DISABLED (dev only)."
+
+# License server: pure Go (no sing-box, CGO-free), embeds bbolt. Container image
+# is built from deploy/Dockerfile.server.
+build-server:
+	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-server ./cmd/server
+
+docker-server:
+	docker build -f deploy/Dockerfile.server -t singctl-license:$(VERSION) .
 
 # --- cross-platform builds (bin/<binary>-<os>-<arch>) ---
 #

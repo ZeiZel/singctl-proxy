@@ -34,8 +34,34 @@ func NewStore(fs FS, homeDir string, uid, gid int) *Store {
 	}
 }
 
-func (s *Store) path() string      { return filepath.Join(s.dir, "profile.txt") }
-func (s *Store) introPath() string { return filepath.Join(s.dir, "intro-shown") }
+func (s *Store) path() string        { return filepath.Join(s.dir, "profile.txt") }
+func (s *Store) introPath() string   { return filepath.Join(s.dir, "intro-shown") }
+func (s *Store) licensePath() string { return filepath.Join(s.dir, "license") }
+
+// SaveLicense stores the license token, chowning it back to the real user.
+func (s *Store) SaveLicense(token string) error {
+	if err := s.fs.MkdirAll(s.dir, 0o700); err != nil {
+		return err
+	}
+	if err := s.fs.WriteFile(s.licensePath(), []byte(strings.TrimSpace(token)+"\n"), 0o600); err != nil {
+		return err
+	}
+	_ = s.fs.Chown(s.dir, s.uid, s.gid)
+	_ = s.fs.Chown(s.licensePath(), s.uid, s.gid)
+	return nil
+}
+
+// LoadLicense returns the saved license token, or "" if none.
+func (s *Store) LoadLicense() (string, error) {
+	data, err := s.fs.ReadFile(s.licensePath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
 
 // HasSeenIntro reports whether the first-run intro animation has already played.
 func (s *Store) HasSeenIntro() bool {
