@@ -28,7 +28,7 @@ SINGBOX_TAGS := singbox with_utls with_clash_api
 .PHONY: build build-macos build-windows build-linux build-all build-netext \
 	build-unlicensed build-server docker-server \
 	test test-integration tidy run lint clean install-man uninstall-man \
-	install uninstall
+	install uninstall gui gui-dev gui-test
 
 # Install prefix for the binary (`make install`).
 PREFIX ?= /usr/local
@@ -154,5 +154,20 @@ else
 	PREFIX=$(PREFIX) ./scripts/install-linux.sh uninstall
 endif
 
+# --- Desktop GUI (Wails: Go + React, drives the daemon over the control socket) ---
+# The GUI lives in its own nested module (gui/) so it never pulls sing-box into
+# the main build. On Linux it needs the webkit2_41 build tag (Ubuntu ships
+# webkit2gtk-4.1, not 4.0 — `wails doctor` falsely reports it missing). Requires
+# the wails CLI on PATH (go install github.com/wailsapp/wails/v2/cmd/wails@latest).
+WAILS_TAGS ?= webkit2_41
+gui:
+	cd gui && wails build -tags $(WAILS_TAGS)
+
+gui-dev:
+	cd gui && wails dev -tags $(WAILS_TAGS)
+
+gui-test:
+	cd gui && go test ./...
+
 clean:
-	rm -rf bin
+	rm -rf bin gui/build/bin gui/frontend/dist
