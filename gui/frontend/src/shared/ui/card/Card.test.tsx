@@ -8,6 +8,6 @@ describe("Card", () => {
     render(<Card>body</Card>);
     const node = screen.getByText("body");
     expect(node).toHaveAttribute("data-slot", "card");
-    expect(node).toHaveClass("bg-panel", "border");
+    expect(node).toHaveClass("bg-panel/80", "backdrop-blur-md");
   });
 });

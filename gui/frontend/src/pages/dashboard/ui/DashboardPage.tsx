@@ -64,12 +64,12 @@ export function DashboardPage() {
       )}
 
       <Card>
-        <Stack direction="row" justify="between" align="center">
+        <Box className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <Stack gap="xs">
             <Text tone="dim" size="xs" className="uppercase tracking-wide">Mode</Text>
             <ModeSwitch mode={status.mode} />
           </Stack>
-          <Stack gap="xs" align="end">
+          <Stack gap="xs" className="sm:items-end">
             <Text tone="dim" size="xs" className="uppercase tracking-wide">Selected node</Text>
             <Text size="lg" weight="semibold">
               {selected ? selected.tag : latency.selected || "—"}
@@ -78,10 +78,10 @@ export function DashboardPage() {
               )}
             </Text>
           </Stack>
-        </Stack>
+        </Box>
       </Card>
 
-      <Box className="grid grid-cols-4 gap-4">
+      <Box className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Upload rate" value={lastSample ? formatRate(lastSample.up) : "0 B/s"} tone="accent" />
         <StatCard label="Download rate" value={lastSample ? formatRate(lastSample.down) : "0 B/s"} tone="ok" />
         <StatCard label="Total up" value={formatBytes(totalUp)} />

@@ -18,7 +18,8 @@ export function ProxiedList({ routed, busy, onUnroute, onKill }: ProxiedListProp
     return <EmptyState>No processes routed.</EmptyState>;
   }
   return (
-    <Table>
+    <div className="overflow-x-auto">
+    <Table className="whitespace-nowrap">
       <TableHead>
         <TableRow>
           <TableHeaderCell>PID</TableHeaderCell>
@@ -43,6 +44,7 @@ export function ProxiedList({ routed, busy, onUnroute, onKill }: ProxiedListProp
         ))}
       </TableBody>
     </Table>
+    </div>
   );
 }
 

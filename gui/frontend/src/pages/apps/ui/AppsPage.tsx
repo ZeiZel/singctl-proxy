@@ -26,7 +26,7 @@ export function AppsPage() {
         <LaunchApp onLaunched={refresh} />
       </Card>
 
-      <Box className="grid grid-cols-2 gap-4">
+      <Box className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <Heading level={3} className="mb-3.5">Processes</Heading>
           <ProcessList processes={processes} busy={busy} onRoute={route} />

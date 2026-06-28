@@ -35,8 +35,8 @@ export function ProcessList({ processes, busy, onRoute }: ProcessListProps) {
       {visible.length === 0 ? (
         <EmptyState>No processes with sockets.</EmptyState>
       ) : (
-        <div className="max-h-[calc(100vh-320px)] overflow-y-auto">
-          <Table>
+        <div className="max-h-[calc(100vh-320px)] overflow-auto">
+          <Table className="whitespace-nowrap">
             <TableHead>
               <TableRow>
                 <TableHeaderCell>App</TableHeaderCell>

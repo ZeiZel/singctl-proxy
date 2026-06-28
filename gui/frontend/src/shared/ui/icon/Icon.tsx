@@ -88,6 +88,10 @@ export function IconConsole(props: IconProps) {
   );
 }
 
+export function IconChevronLeft(props: IconProps) {
+  return svg(<path d="m15 18-6-6 6-6" />, props);
+}
+
 export function IconSettings(props: IconProps) {
   return svg(
     <>

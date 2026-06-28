@@ -9,7 +9,10 @@ export function Card({ className, ...rest }: CardProps) {
   return (
     <div
       data-slot="card"
-      className={cn("rounded-card border border-border bg-panel p-[18px]", className)}
+      className={cn(
+        "rounded-card border border-border/60 bg-panel/80 p-[18px] backdrop-blur-md",
+        className
+      )}
       {...rest}
     />
   );

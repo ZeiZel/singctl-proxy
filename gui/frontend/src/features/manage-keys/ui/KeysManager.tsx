@@ -104,7 +104,8 @@ export function KeysManager() {
         {keys.length === 0 ? (
           <EmptyState>No keys loaded.</EmptyState>
         ) : (
-          <Table>
+          <div className="overflow-x-auto">
+          <Table className="whitespace-nowrap">
             <TableHead>
               <TableRow>
                 <TableHeaderCell>#</TableHeaderCell>
@@ -131,6 +132,7 @@ export function KeysManager() {
               ))}
             </TableBody>
           </Table>
+          </div>
         )}
       </Card>
     </Stack>

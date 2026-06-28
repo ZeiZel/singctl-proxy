@@ -35,7 +35,7 @@ export function ModeSwitch({ mode }: ModeSwitchProps) {
 
   return (
     <Stack gap="sm" data-testid="mode-switch">
-      <Stack direction="row" gap="xs" className="rounded-[11px] border border-border bg-bg-soft p-1">
+      <Stack direction="row" gap="xs" className="w-full rounded-[11px] border border-border bg-bg-soft p-1 sm:w-auto">
         {MODE_OPTIONS.map((option) => (
           <button
             key={option.value}
@@ -43,7 +43,7 @@ export function ModeSwitch({ mode }: ModeSwitchProps) {
             disabled={busy}
             onClick={() => handleSelect(option.value)}
             className={cn(
-              "rounded-lg px-6 py-2 text-[14px] font-semibold text-text-dim transition-colors hover:text-text disabled:opacity-60",
+              "flex-1 rounded-lg px-5 py-2 text-[14px] font-semibold text-text-dim transition-colors hover:text-text disabled:opacity-60 sm:flex-none",
               { [option.activeClass]: mode === option.value }
             )}
           >

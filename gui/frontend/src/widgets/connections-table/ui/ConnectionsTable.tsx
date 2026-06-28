@@ -39,8 +39,8 @@ export function ConnectionsTable({ rows }: ConnectionsTableProps) {
       {visible.length === 0 ? (
         <EmptyState>No active connections.</EmptyState>
       ) : (
-        <div className="max-h-[calc(100vh-220px)] overflow-y-auto">
-          <Table>
+        <div className="max-h-[calc(100vh-220px)] overflow-auto">
+          <Table className="whitespace-nowrap">
             <TableHead>
               <TableRow>
                 <TableHeaderCell>Process</TableHeaderCell>
