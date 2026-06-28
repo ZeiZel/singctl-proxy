@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=singctl
+GenericName=Proxy / VPN client
+Comment=VLESS proxy and VPN client (sing-box)
+Exec=singctl-gui
+Icon=singctl
+Terminal=false
+Categories=Network;Utility;
+Keywords=proxy;vpn;vless;sing-box;
+StartupWMClass=singctl

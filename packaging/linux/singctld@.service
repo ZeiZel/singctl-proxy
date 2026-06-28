@@ -1,0 +1,27 @@
+# singctld@.service — system-wide singctl proxy/VPN daemon, per user instance.
+#
+# Installed by the .deb/.rpm package. Enable it for a specific user so the root
+# daemon uses THAT user's ~/.config/singctl (the same dir the desktop GUI reads):
+#
+#     sudo systemctl enable --now singctld@$USER
+#
+# The daemon runs as root (TUN device + cgroup/nftables per-app routing) but is
+# pinned to the user's home via SUDO_USER/HOME. The key is loaded from the saved
+# profile, never the command line. Save one once: `sudo singctl` -> Ключи -> quit.
+[Unit]
+Description=singctl proxy/VPN daemon (%i)
+Documentation=man:singctl(1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=SUDO_USER=%i
+Environment=HOME=/home/%i
+ExecStart=/usr/bin/singctl --headless --vpn
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

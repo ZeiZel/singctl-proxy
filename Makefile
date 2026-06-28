@@ -28,7 +28,8 @@ SINGBOX_TAGS := singbox with_utls with_clash_api
 .PHONY: build build-macos build-windows build-linux build-all build-netext \
 	build-unlicensed build-server docker-server \
 	test test-integration tidy run lint clean install-man uninstall-man \
-	install uninstall gui gui-dev gui-test gui-reset
+	install uninstall gui gui-dev gui-test gui-reset \
+	gui-linux-bin pkg-linux appimage pkg-macos
 
 # Install prefix for the binary (`make install`).
 PREFIX ?= /usr/local
@@ -168,10 +169,13 @@ WAILS ?= $(shell command -v wails 2>/dev/null || ([ -x "$$(go env GOPATH)/bin/wa
 # `GUI_TAGS=` and embeds the pubkey (LICENSE_PUBKEY) to enable real validation.
 # webkit2_41 is appended on Linux (Ubuntu ships webkit2gtk-4.1, not 4.0).
 GUI_TAGS ?= unlicensed
+# Platform tags are kept separate: `+=` is ignored on a command-line-set GUI_TAGS,
+# so combine at the use-site to keep webkit2_41 even when CI passes `GUI_TAGS=`.
 ifeq ($(UNAME_S),Linux)
-GUI_TAGS += webkit2_41
+GUI_PLATFORM_TAGS := webkit2_41
 endif
-GUI_TAGFLAG := $(if $(strip $(GUI_TAGS)),-tags "$(strip $(GUI_TAGS))",)
+GUI_ALL_TAGS := $(strip $(GUI_TAGS) $(GUI_PLATFORM_TAGS))
+GUI_TAGFLAG := $(if $(GUI_ALL_TAGS),-tags "$(GUI_ALL_TAGS)",)
 GUI_LDFLAGS := $(if $(strip $(LICENSE_PUBKEY)),-ldflags "-X singctl/internal/license.PublicKeyB64=$(LICENSE_PUBKEY)",)
 gui:
 	cd gui && $(WAILS) build $(GUI_TAGFLAG) $(GUI_LDFLAGS)
@@ -189,5 +193,34 @@ gui-test:
 gui-reset:
 	rm -rf gui/frontend/node_modules gui/frontend/package-lock.json gui/frontend/dist
 
+# --- Installers / packaging (output to dist/) ---
+# Version without a leading 'v' (deb/rpm reject it); release tags are clean.
+PKG_VERSION ?= $(patsubst v%,%,$(VERSION))
+PKG_ARCH ?= $(shell $(GO) env GOARCH)
+
+# Copy the host-built GUI binary into the arch-named slot the packagers expect.
+gui-linux-bin: gui
+	mkdir -p bin
+	cp gui/build/bin/singctl-gui bin/$(BINARY)-gui-linux-$(PKG_ARCH)
+
+# .deb + .rpm via nfpm. Needs bin/singctl-linux-<arch> (make build-linux) and
+# bin/singctl-gui-linux-<arch> (make gui-linux-bin) present.
+pkg-linux:
+	@command -v nfpm >/dev/null 2>&1 || { echo "nfpm required: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest"; exit 1; }
+	mkdir -p dist
+	sed -e 's|$${PKG_ARCH}|$(PKG_ARCH)|g' -e 's|$${PKG_VERSION}|$(PKG_VERSION)|g' \
+		packaging/linux/nfpm.yaml > dist/nfpm-$(PKG_ARCH).yaml
+	nfpm package -f dist/nfpm-$(PKG_ARCH).yaml -p deb -t dist/
+	nfpm package -f dist/nfpm-$(PKG_ARCH).yaml -p rpm -t dist/
+
+# Portable AppImage (bundles GTK/WebKit). Needs the GUI built (make gui).
+appimage:
+	PKG_VERSION="$(PKG_VERSION)" GOARCH="$(PKG_ARCH)" packaging/linux/appimage/build-appimage.sh
+
+# macOS notarized .pkg + .dmg. Needs the GUI (make gui) + CLI (make build) built;
+# signing/notarization apply only when the identity/cred env vars are set.
+pkg-macos:
+	PKG_VERSION="$(PKG_VERSION)" packaging/macos/build-installers.sh
+
 clean:
-	rm -rf bin gui/build/bin gui/frontend/dist
+	rm -rf bin dist gui/build/bin gui/frontend/dist

@@ -1,0 +1,61 @@
+#!/bin/bash
+#
+# pkg postinstall — installs the singctl boot-start LaunchDaemon after the .pkg
+# lays down the CLI (/usr/local/bin/singctl) and the GUI (/Applications/singctl.app).
+# Runs as root. The daemon is pinned to the logged-in (console) user's
+# ~/.config/singctl so it matches what the per-user GUI reads.
+set -e
+
+LABEL="com.singctl.proxy"
+PLIST="/Library/LaunchDaemons/${LABEL}.plist"
+BIN="/usr/local/bin/singctl"
+
+# Resolve the real desktop user (pkg installers run as root).
+REAL_USER="$(stat -f "%Su" /dev/console 2>/dev/null || echo root)"
+if [ "$REAL_USER" = "root" ] || [ -z "$REAL_USER" ]; then
+	REAL_HOME="/var/root"
+else
+	REAL_HOME="$(dscl . -read "/Users/${REAL_USER}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+	[ -n "$REAL_HOME" ] || REAL_HOME="/Users/${REAL_USER}"
+fi
+
+cat > "$PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${BIN}</string>
+        <string>--headless</string>
+        <string>--vpn</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SUDO_USER</key>
+        <string>${REAL_USER}</string>
+        <key>HOME</key>
+        <string>${REAL_HOME}</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>/var/log/singctl.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/singctl.log</string>
+</dict>
+</plist>
+PLIST
+chown root:wheel "$PLIST"
+
+# (Re)load it. KeepAlive=true means it self-restarts once a key/license exists.
+launchctl bootout system "$PLIST" 2>/dev/null || true
+launchctl bootstrap system "$PLIST" 2>/dev/null || launchctl load -w "$PLIST" 2>/dev/null || true
+
+exit 0

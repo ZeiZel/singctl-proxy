@@ -27,3 +27,31 @@ jobs:
         run: go build ./cmd/singctl
       - name: build CLI (unlicensed tag compiles)
         run: go build -tags unlicensed ./cmd/singctl
+
+  gui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: webkit deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+      - name: frontend deps
+        working-directory: gui/frontend
+        run: npm install --no-audit --no-fund
+      - name: frontend build (tsc + vite)
+        working-directory: gui/frontend
+        run: npm run build
+      - name: frontend tests
+        working-directory: gui/frontend
+        run: npm run test
+      - name: gui go tests
+        working-directory: gui
+        run: go test ./...

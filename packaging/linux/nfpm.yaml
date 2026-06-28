@@ -1,0 +1,53 @@
+# nfpm config for the singctl .deb/.rpm packages.
+# Driven by env vars so one file serves every arch:
+#   PKG_ARCH=amd64|arm64  PKG_VERSION=1.2.3  nfpm package -f packaging/linux/nfpm.yaml -p deb
+# Binaries are expected at bin/singctl-linux-<arch> and bin/singctl-gui-linux-<arch>
+# (see `make pkg-linux`).
+name: singctl
+arch: ${PKG_ARCH}
+platform: linux
+version: ${PKG_VERSION}
+version_schema: none
+section: net
+priority: optional
+maintainer: "singctl <noreply@singctl.app>"
+description: |
+  singctl — VLESS proxy/VPN client on an embedded sing-box core, with a desktop
+  GUI (Wails). Runs a local SOCKS/HTTP proxy and a system-wide VPN (TUN) mode,
+  coexisting passively with Cisco Secure Client.
+homepage: "https://github.com/ZeiZel/singctl-proxy"
+license: "Proprietary"
+
+# The GUI links the system WebKitGTK 4.1 webview at runtime.
+depends:
+  - libwebkit2gtk-4.1-0
+
+contents:
+  - src: ./bin/singctl-linux-${PKG_ARCH}
+    dst: /usr/bin/singctl
+    file_info:
+      mode: 0755
+  - src: ./bin/singctl-gui-linux-${PKG_ARCH}
+    dst: /usr/bin/singctl-gui
+    file_info:
+      mode: 0755
+  # systemd template: enable per-user with `systemctl enable --now singctld@$USER`
+  # so the root daemon uses that user's ~/.config/singctl (matching the GUI).
+  - src: ./packaging/linux/singctld@.service
+    dst: /usr/lib/systemd/system/singctld@.service
+  - src: ./cmd/singctl/singctl.1
+    dst: /usr/share/man/man1/singctl.1
+  - src: ./packaging/linux/singctl.desktop
+    dst: /usr/share/applications/singctl.desktop
+  - src: ./gui/build/appicon.png
+    dst: /usr/share/icons/hicolor/512x512/apps/singctl.png
+
+scripts:
+  postinstall: ./packaging/linux/postinstall.sh
+  preremove: ./packaging/linux/preremove.sh
+
+overrides:
+  rpm:
+    depends:
+      # Fedora/RHEL package name for WebKitGTK 4.1.
+      - webkit2gtk4.1
