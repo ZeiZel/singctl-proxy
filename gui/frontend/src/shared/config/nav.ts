@@ -5,6 +5,7 @@ export type TPage =
   | "apps"
   | "keys"
   | "console"
+  | "license"
   | "settings";
 
 export interface TNavItem {
@@ -19,5 +20,6 @@ export const NAV_ITEMS: TNavItem[] = [
   { id: "apps", label: "Apps" },
   { id: "keys", label: "Keys" },
   { id: "console", label: "Console" },
+  { id: "license", label: "License" },
   { id: "settings", label: "Settings" },
 ];

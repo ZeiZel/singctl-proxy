@@ -58,6 +58,16 @@ export interface TConsoleLine {
   text: string;
 }
 
+export interface TLicenseInfo {
+  enforced: boolean;
+  valid: boolean;
+  subject: string;
+  expiresAt: number; // unix seconds; 0 = perpetual
+  daysLeft: number; // -1 = perpetual
+  features: string[];
+  reason: string;
+}
+
 export interface TTrafficEvent {
   up: number;
   down: number;

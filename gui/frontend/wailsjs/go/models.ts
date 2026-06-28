@@ -16,6 +16,30 @@ export namespace bridge {
 	        this.masked = source["masked"];
 	    }
 	}
+	export class LicenseInfo {
+	    enforced: boolean;
+	    valid: boolean;
+	    subject: string;
+	    expiresAt: number;
+	    daysLeft: number;
+	    features: string[];
+	    reason: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LicenseInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enforced = source["enforced"];
+	        this.valid = source["valid"];
+	        this.subject = source["subject"];
+	        this.expiresAt = source["expiresAt"];
+	        this.daysLeft = source["daysLeft"];
+	        this.features = source["features"];
+	        this.reason = source["reason"];
+	    }
+	}
 	export class ProcInfo {
 	    PID: number;
 	    Name: string;

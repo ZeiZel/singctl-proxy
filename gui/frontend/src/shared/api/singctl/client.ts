@@ -1,6 +1,13 @@
 import * as App from "@wails/go/bridge/App";
 
-import { type TKey, type TMode, type TProcInfo, type TSettings, type TStatus } from "./types";
+import {
+  type TKey,
+  type TLicenseInfo,
+  type TMode,
+  type TProcInfo,
+  type TSettings,
+  type TStatus,
+} from "./types";
 
 // api is the typed wrapper over the generated Wails bindings. It is the single
 // gateway to the Go bridge; only this slice and the live store import "@wails".
@@ -21,4 +28,7 @@ export const api = {
   restartPID: (pid: number): Promise<number> => App.RestartPID(pid),
   launchApp: (argv: string[]): Promise<number> => App.LaunchApp(argv),
   stopDaemon: (): Promise<void> => App.StopDaemon(),
+  getLicense: (): Promise<TLicenseInfo> => App.GetLicense(),
+  activateLicense: (token: string): Promise<void> => App.ActivateLicense(token),
+  removeLicense: (): Promise<void> => App.RemoveLicense(),
 };

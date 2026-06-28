@@ -6,6 +6,7 @@ export {
   IconKeys,
   IconConsole,
   IconSettings,
+  IconShield,
   IconChevronLeft,
   type IconProps,
 } from "./Icon";

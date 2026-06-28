@@ -10,6 +10,7 @@ import {
   IconKeys,
   IconProxies,
   IconSettings,
+  IconShield,
   type IconProps,
 } from "@/shared/ui/icon";
 import { Stack } from "@/shared/ui/stack";
@@ -30,6 +31,7 @@ const ICONS: Record<TPage, (props: IconProps) => JSX.Element> = {
   apps: IconApps,
   keys: IconKeys,
   console: IconConsole,
+  license: IconShield,
   settings: IconSettings,
 };
 

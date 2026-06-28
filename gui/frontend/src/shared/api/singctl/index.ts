@@ -12,4 +12,5 @@ export type {
   TLatencyRow,
   TConsoleLine,
   TTrafficEvent,
+  TLicenseInfo,
 } from "./types";

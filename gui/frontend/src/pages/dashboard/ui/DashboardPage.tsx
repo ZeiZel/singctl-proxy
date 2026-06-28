@@ -7,6 +7,7 @@ import {
   useTotalUp,
   useTraffic,
 } from "@/entities/daemon";
+import { useLicense } from "@/entities/license";
 import { ModeSwitch } from "@/features/mode-switch";
 import { formatBytes, formatRate } from "@/shared/lib/format";
 import { Badge } from "@/shared/ui/badge";
@@ -44,6 +45,8 @@ export function DashboardPage() {
   const connections = useConnections();
   const latency = useLatency();
 
+  const { info: licenseInfo } = useLicense();
+
   const lastSample = traffic.at(-1);
   const selected = latency.rows.find((row) => row.selected);
 
@@ -53,6 +56,15 @@ export function DashboardPage() {
         <Heading level={1}>Dashboard</Heading>
         <StatusBadge status={status} />
       </Stack>
+
+      {licenseInfo.enforced && !licenseInfo.valid && (
+        <Card className="border-danger/30 bg-danger/10">
+          <Text tone="danger">
+            No valid license — open the License section to activate. The proxy service will not start
+            until a license is installed.
+          </Text>
+        </Card>
+      )}
 
       {!status.running && (
         <Card className="border-warn/30 bg-warn/10">

@@ -163,15 +163,21 @@ endif
 # required. Override with `make gui WAILS=wails` once it is on your PATH.
 WAILS_VERSION ?= v2.12.0
 WAILS ?= $(shell command -v wails 2>/dev/null || ([ -x "$$(go env GOPATH)/bin/wails" ] && echo "$$(go env GOPATH)/bin/wails") || echo "go run github.com/wailsapp/wails/v2/cmd/wails@$(WAILS_VERSION)")
+# Dev GUI builds compile out the license gate (like build-unlicensed): the GUI's
+# License screen then shows "development build". Production packaging overrides
+# `GUI_TAGS=` and embeds the pubkey (LICENSE_PUBKEY) to enable real validation.
+# webkit2_41 is appended on Linux (Ubuntu ships webkit2gtk-4.1, not 4.0).
+GUI_TAGS ?= unlicensed
 ifeq ($(UNAME_S),Linux)
-WAILS_TAGS ?= webkit2_41
+GUI_TAGS += webkit2_41
 endif
-WAILS_TAGFLAG := $(if $(WAILS_TAGS),-tags $(WAILS_TAGS),)
+GUI_TAGFLAG := $(if $(strip $(GUI_TAGS)),-tags "$(strip $(GUI_TAGS))",)
+GUI_LDFLAGS := $(if $(strip $(LICENSE_PUBKEY)),-ldflags "-X singctl/internal/license.PublicKeyB64=$(LICENSE_PUBKEY)",)
 gui:
-	cd gui && $(WAILS) build $(WAILS_TAGFLAG)
+	cd gui && $(WAILS) build $(GUI_TAGFLAG) $(GUI_LDFLAGS)
 
 gui-dev:
-	cd gui && $(WAILS) dev $(WAILS_TAGFLAG)
+	cd gui && $(WAILS) dev $(GUI_TAGFLAG) $(GUI_LDFLAGS)
 
 gui-test:
 	cd gui && go test ./...

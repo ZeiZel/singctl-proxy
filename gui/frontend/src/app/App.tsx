@@ -9,6 +9,7 @@ import { ConnectionsPage } from "@/pages/connections";
 import { ConsolePage } from "@/pages/console";
 import { DashboardPage } from "@/pages/dashboard";
 import { KeysPage } from "@/pages/keys";
+import { LicensePage } from "@/pages/license";
 import { ProxiesPage } from "@/pages/proxies";
 import { SettingsPage } from "@/pages/settings";
 import { Sidebar } from "@/widgets/app-sidebar";
@@ -23,6 +24,7 @@ const PAGES: Record<TPage, () => JSX.Element> = {
   apps: AppsPage,
   keys: KeysPage,
   console: ConsolePage,
+  license: LicensePage,
   settings: SettingsPage,
 };
 
