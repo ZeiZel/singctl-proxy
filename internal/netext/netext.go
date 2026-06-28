@@ -35,6 +35,10 @@ type Config struct {
 	Targets   []string `json:"targets"`
 	SocksHost string   `json:"socksHost"`
 	SocksPort int      `json:"socksPort"`
+	// CiscoActive mirrors internal/policy's observe-only Cisco state: when true
+	// the extension yields (captures nothing) so it never fights AnyConnect's
+	// routing. The executor flips it as Cisco connects/disconnects.
+	CiscoActive bool `json:"ciscoActive,omitempty"`
 }
 
 // Marshal renders the config as stable, indented JSON with targets sorted, so
@@ -42,9 +46,10 @@ type Config struct {
 // no needless reload signals to the extension). Pure.
 func (c Config) Marshal() ([]byte, error) {
 	out := Config{
-		Targets:   append([]string(nil), c.Targets...),
-		SocksHost: c.SocksHost,
-		SocksPort: c.SocksPort,
+		Targets:     append([]string(nil), c.Targets...),
+		SocksHost:   c.SocksHost,
+		SocksPort:   c.SocksPort,
+		CiscoActive: c.CiscoActive,
 	}
 	sort.Strings(out.Targets)
 	return json.MarshalIndent(out, "", "  ")

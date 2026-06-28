@@ -1,0 +1,59 @@
+# XcodeGen spec for the singctl App Store SKU (SCAFFOLD).
+# `brew install xcodegen && xcodegen generate` → SingctlAppStore.xcodeproj.
+# Requires: Apple Team ID, the Network Extensions capability (packet-tunnel-
+# provider) granted, and the App Group group.com.singctl.appstore on BOTH targets.
+# See ../../../docs/appstore-sku.md.
+name: SingctlAppStore
+options:
+  bundleIdPrefix: com.singctl.appstore
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+    SWIFT_VERSION: "5.0"
+    ENABLE_APP_SANDBOX: YES
+
+targets:
+  # Sandboxed container app: drives NETunnelProviderManager + edits keys/settings.
+  Singctl:
+    type: application
+    platform: macOS
+    sources:
+      - ContainerApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.singctl.appstore
+        INFOPLIST_FILE: ContainerApp/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ContainerApp/ContainerApp.entitlements
+    dependencies:
+      - target: PacketTunnel
+        embed: true
+      # The gomobile-built core (see runbook). Uncomment once built:
+      # - framework: Libbox.xcframework
+      #   embed: true
+
+  # Packet Tunnel Provider appex: runs sing-box (Libbox) over the tunnel fd.
+  PacketTunnel:
+    type: app-extension
+    platform: macOS
+    sources:
+      - PacketTunnelProvider
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.singctl.appstore.tunnel
+        INFOPLIST_FILE: PacketTunnelProvider/Info.plist
+        CODE_SIGN_ENTITLEMENTS: PacketTunnelProvider/PacketTunnel.entitlements
+      # dependencies:
+      #   - framework: Libbox.xcframework
+
+schemes:
+  Singctl:
+    build:
+      targets:
+        Singctl: all
+    run:
+      config: Debug

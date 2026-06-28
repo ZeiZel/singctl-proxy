@@ -158,3 +158,7 @@
 {"id":"int-f683741d","kind":"field_change","created_at":"2026-06-28T07:52:18.362274416Z","actor":"singctl dev","issue_id":"singctl-proxy-d6q","extra":{"field":"status","new_value":"closed","old_value":"in_progress"}}
 {"id":"int-30b67fe7","kind":"field_change","created_at":"2026-06-28T07:56:24.665217711Z","actor":"singctl dev","issue_id":"singctl-proxy-0u9","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-359fb6d5","kind":"field_change","created_at":"2026-06-28T07:56:25.782788211Z","actor":"singctl dev","issue_id":"singctl-proxy-d18","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-2c643296","kind":"field_change","created_at":"2026-06-28T08:10:34.923500882Z","actor":"singctl dev","issue_id":"singctl-proxy-0u9","extra":{"field":"status","new_value":"closed","old_value":"in_progress"}}
+{"id":"int-ec5680c8","kind":"field_change","created_at":"2026-06-28T08:10:49.089946041Z","actor":"singctl dev","issue_id":"singctl-proxy-d18","extra":{"field":"status","new_value":"closed","old_value":"in_progress"}}
+{"id":"int-f301f77d","kind":"field_change","created_at":"2026-06-28T08:36:07.1684103Z","actor":"ZeiZel","issue_id":"singctl-proxy-4uy","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-3a8cfbee","kind":"field_change","created_at":"2026-06-28T08:36:20.571508167Z","actor":"ZeiZel","issue_id":"singctl-proxy-8zz","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}

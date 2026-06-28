@@ -24,6 +24,11 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
     private var socksHost = "127.0.0.1"
     private var socksPort: UInt16 = 1080
 
+    /// Cisco-yield: mirrors internal/policy observe-only behaviour. When the Go
+    /// side reports AnyConnect active (config.json `ciscoActive`), we capture
+    /// nothing so we never fight its routing. SCAFFOLD: untested on device.
+    private var ciscoActive = false
+
     // MARK: - Lifecycle
 
     override func startProxy(options: [String: Any]? = nil,
@@ -84,8 +89,9 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
     /// signing identifier is the app's bundle ID (covers Electron helper
     /// processes, which share the parent's signing identifier).
     private func shouldCapture(_ flow: NEAppProxyFlow) -> Bool {
-        // TODO: also honour Cisco coexistence — when AnyConnect is active, never
-        // capture (mirror internal/policy observe-only behaviour).
+        // Cisco coexistence: yield entirely while AnyConnect is active (the Go
+        // side sets ciscoActive in config.json from internal/policy).
+        if ciscoActive { return false }
         let appID = flow.metaData.sourceAppSigningIdentifier
         if !appID.isEmpty, targets.contains(appID) { return true }
         return false
@@ -108,6 +114,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         if let t = dict["targets"] as? [String] { targets = Set(t) }
         if let h = dict["socksHost"] as? String, !h.isEmpty { socksHost = h }
         if let p = dict["socksPort"] as? Int, p > 0, p < 65536 { socksPort = UInt16(p) }
+        if let cisco = dict["ciscoActive"] as? Bool { ciscoActive = cisco }
     }
 
     private func loadConfigFile() {
