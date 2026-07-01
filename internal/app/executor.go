@@ -56,6 +56,7 @@ type Executor struct {
 	save        func(string) error
 	introSeen   func() error
 	logPath     string
+	logLevel    string // sing-box log level ("" → builder default "warn")
 	logFile     *os.File
 	ports       singbox.Ports
 	clashAddr   string
@@ -165,6 +166,15 @@ func (e *Executor) SetLogPath(path string) {
 	e.logPath = path
 }
 
+// SetLogLevel sets the sing-box log level for subsequently built configs
+// (""/unset → the builder's quiet "warn" default; "info" restores verbose
+// per-connection logging, e.g. for --verbose). Takes effect on the next LoadLink.
+func (e *Executor) SetLogLevel(level string) {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	e.logLevel = level
+}
+
 // SetClashAPI enables the sing-box Clash API on the given "host:port" with the
 // given secret (empty addr disables it). Takes effect on the next LoadLink.
 func (e *Executor) SetClashAPI(addr, secret string) {
@@ -254,6 +264,7 @@ func (e *Executor) LoadLink(ctx context.Context, link string) error {
 	builder := runtime.ProfileConfigBuilder{
 		Profiles: set,
 		LogPath:  e.logPath,
+		LogLevel: e.logLevel,
 		Ports:    e.ports,
 		ClashAPI: clashAPIConfig(e.clashAddr, e.clashSecret),
 		URLTest:  e.urltest,

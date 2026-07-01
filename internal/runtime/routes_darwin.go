@@ -24,8 +24,10 @@ func (OSRouteController) CleanupOrphans() error {
 	if err != nil {
 		return nil
 	}
-	for _, dev := range OrphanTunDevices(netstate.ParseIfconfig(out), netstate.OurTunAddrPrefix) {
-		_ = exec.CommandContext(ctx, "/sbin/ifconfig", dev, "destroy").Run()
+	// Destroy our leaked TUN devices AND delete their override routes — but only
+	// when such a device is actually present (cleanupCommands returns nil otherwise).
+	for _, argv := range cleanupCommands(netstate.ParseIfconfig(out), netstate.OurTunAddrPrefix) {
+		_ = exec.CommandContext(ctx, argv[0], argv[1:]...).Run()
 	}
 	return nil
 }

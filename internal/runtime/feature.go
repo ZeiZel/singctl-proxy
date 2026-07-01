@@ -18,6 +18,7 @@ func FeatureDescriptor() feature.Descriptor {
 				Usage: "локальный SOCKS-порт (HTTP слушает на порт+1)", Env: []string{"SINGCTL_PORT"}},
 			{Names: []string{"headless"}, Usage: "запуск без терминального интерфейса"},
 			{Names: []string{"l", "logs"}, Usage: "стримить логи в stdout (headless) / открыть логи (TUI)"},
+			{Names: []string{"verbose"}, Usage: "подробные логи sing-box (level=info; по умолчанию тихий warn)"},
 			{Names: []string{"daemon"}, Usage: "запустить отсоединённо в фоне и выйти (управление через --status/--stop)"},
 		},
 	}

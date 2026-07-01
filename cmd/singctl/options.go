@@ -74,6 +74,7 @@ type proxyModule struct {
 	vpn      bool
 	headless bool
 	logs     bool
+	verbose  bool
 	daemon   bool
 	port     int
 }
@@ -87,6 +88,7 @@ func (m *proxyModule) Bind(fs *flag.FlagSet) {
 	fs.BoolVar(&m.headless, "headless", false, "run without the terminal UI")
 	fs.BoolVar(&m.logs, "l", false, "")
 	fs.BoolVar(&m.logs, "logs", false, "stream sing-box logs to stdout")
+	fs.BoolVar(&m.verbose, "verbose", false, "verbose sing-box logging (level=info; default is quiet warn)")
 	fs.BoolVar(&m.daemon, "daemon", false, "run detached in the background and exit (manage with --status/--stop)")
 }
 func (m *proxyModule) applyEnv(getenv func(string) string) error {

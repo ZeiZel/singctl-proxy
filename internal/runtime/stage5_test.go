@@ -11,6 +11,36 @@ import (
 
 const realLink = "vless://4ce58870-27d3-489b-87a0-3109db4fb919@193.188.22.147:443?type=grpc&security=reality&pbk=k&sid=4d04&sni=cursor.com&fp=chrome#t"
 
+func TestProfileConfigBuilder_LogLevel(t *testing.T) {
+	p, err := vless.ParseLink(realLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Default: quiet "warn" on BOTH the proxy and forwarder configs (no info firehose).
+	def := ProfileConfigBuilder{Profiles: vless.SingleSet(p)}
+	for _, gen := range []struct {
+		name string
+		fn   func() ([]byte, error)
+	}{
+		{"proxy", func() ([]byte, error) { return def.ProxyConfig("") }},
+		{"forwarder", def.ForwarderConfig},
+	} {
+		cfg, err := gen.fn()
+		if err != nil {
+			t.Fatalf("%s: %v", gen.name, err)
+		}
+		if !strings.Contains(string(cfg), `"level": "warn"`) {
+			t.Errorf("%s config must default to level=warn:\n%s", gen.name, cfg)
+		}
+	}
+	// Override (e.g. --verbose): level=info.
+	verbose := ProfileConfigBuilder{Profiles: vless.SingleSet(p), LogLevel: "info"}
+	cfg, _ := verbose.ProxyConfig("")
+	if !strings.Contains(string(cfg), `"level": "info"`) {
+		t.Errorf("LogLevel=info must produce level=info:\n%s", cfg)
+	}
+}
+
 func TestProfileConfigBuilder_BindAndForwarder(t *testing.T) {
 	p, err := vless.ParseLink(realLink)
 	if err != nil {
@@ -78,6 +108,37 @@ func TestOrphanTunDevices_NeverMatchesCisco(t *testing.T) {
 		if d == "utun4" {
 			t.Fatal("must never select Cisco's tunnel for destruction")
 		}
+	}
+}
+
+func TestCleanupCommands_OnlyWhenOrphanPresent(t *testing.T) {
+	// With our leaked TUN (utun7 = 198.18.x) present alongside Cisco's utun4:
+	// destroy ONLY utun7, then delete the two auto_route override routes.
+	ifaces := netstate.ParseIfconfig([]byte(ifconfigCiscoAndOurs))
+	cmds := cleanupCommands(ifaces, netstate.OurTunAddrPrefix)
+
+	var destroys, routeDeletes int
+	for _, c := range cmds {
+		joined := strings.Join(c, " ")
+		switch {
+		case strings.Contains(joined, "ifconfig utun4 destroy"):
+			t.Fatalf("must never destroy Cisco's utun4: %v", cmds)
+		case strings.Contains(joined, "ifconfig utun7 destroy"):
+			destroys++
+		case strings.Contains(joined, "route -n delete -net 0.0.0.0/1"),
+			strings.Contains(joined, "route -n delete -net 128.0.0.0/1"):
+			routeDeletes++
+		}
+	}
+	if destroys != 1 || routeDeletes != 2 {
+		t.Fatalf("want 1 destroy + 2 route deletes, got %d/%d: %v", destroys, routeDeletes, cmds)
+	}
+
+	// No orphan (Cisco-only) → no commands at all, so the routing table is never
+	// touched when nothing of ours leaked.
+	ciscoOnly := []netstate.IfaceInfo{{Name: "utun4", IPv4: []string{"172.18.1.2"}}}
+	if got := cleanupCommands(ciscoOnly, netstate.OurTunAddrPrefix); got != nil {
+		t.Fatalf("no orphan must yield no commands, got %v", got)
 	}
 }
 

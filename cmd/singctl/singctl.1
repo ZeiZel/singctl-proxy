@@ -34,6 +34,11 @@ or the saved profile.
 .BR \-l ", " \-\-logs
 Stream sing-box logs to stdout (headless) or open the logs view on start (TUI).
 .TP
+.B \-\-verbose
+Verbose sing-box logging (level=info). The default is a quiet
+.B warn
+level, which keeps errors but drops the per-connection log firehose.
+.TP
 .B \-\-vpn
 Enable VPN (TUN) mode on start.
 .TP

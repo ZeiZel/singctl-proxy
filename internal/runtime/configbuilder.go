@@ -14,6 +14,7 @@ import (
 type ProfileConfigBuilder struct {
 	Profiles vless.ProfileSet
 	LogPath  string
+	LogLevel string // sing-box log level; "" means "warn" (quiet — avoids the per-connection info firehose)
 	Ports    singbox.Ports
 	ClashAPI *singbox.ClashAPI
 	URLTest  singbox.URLTestParams
@@ -43,7 +44,18 @@ func (b ProfileConfigBuilder) ForwarderConfig() ([]byte, error) {
 }
 
 func (b ProfileConfigBuilder) applyLog(cfg *singbox.Config) {
-	if b.LogPath != "" && cfg.Log != nil {
+	if cfg.Log == nil {
+		return
+	}
+	if b.LogPath != "" {
 		cfg.Log.Output = b.LogPath
 	}
+	// Quiet by default: the generated configs default to "info", which logs
+	// every connection and grew the log to hundreds of MB. "warn" keeps errors
+	// (what we actually debug with) while dropping the per-connection firehose.
+	level := b.LogLevel
+	if level == "" {
+		level = "warn"
+	}
+	cfg.Log.Level = level
 }

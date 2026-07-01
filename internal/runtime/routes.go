@@ -25,3 +25,28 @@ func OrphanTunDevices(ifaces []netstate.IfaceInfo, ourPrefix string) []string {
 	}
 	return out
 }
+
+// cleanupCommands returns the argv list that removes leaked forwarder TUN
+// devices AND their auto_route override routes. It is empty when there is no
+// orphan (ourPrefix device) — so we NEVER touch the routing table unless one of
+// our own leaked TUNs is present, which keeps Cisco's routes untouched.
+//
+// The forwarder's TUN uses auto_route, which installs 0.0.0.0/1 + 128.0.0.0/1 to
+// override the default route via our TUN. On a clean stop sing-box removes them;
+// after a crash (kill -9) they linger and black-hole all traffic even once the
+// device is destroyed, so we delete them explicitly.
+func cleanupCommands(ifaces []netstate.IfaceInfo, ourPrefix string) [][]string {
+	devs := OrphanTunDevices(ifaces, ourPrefix)
+	if len(devs) == 0 {
+		return nil
+	}
+	cmds := make([][]string, 0, len(devs)+2)
+	for _, dev := range devs {
+		cmds = append(cmds, []string{"/sbin/ifconfig", dev, "destroy"})
+	}
+	cmds = append(cmds,
+		[]string{"/sbin/route", "-n", "delete", "-net", "0.0.0.0/1"},
+		[]string{"/sbin/route", "-n", "delete", "-net", "128.0.0.0/1"},
+	)
+	return cmds
+}

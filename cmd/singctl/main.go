@@ -137,6 +137,24 @@ func chownTo(path string, uid, gid int) {
 	_ = os.Chown(path, uid, gid)
 }
 
+// maxLogBytes caps singbox.log; past this it is rolled over to singbox.log.1 at
+// startup (sing-box has no built-in rotation).
+const maxLogBytes = 8 << 20 // 8 MiB
+
+// rotateLogIfLarge renames path→path.1 (overwriting any old .1) when path
+// exceeds cap, so the fresh log starts empty. Best-effort; ownership of the
+// rolled-over file is preserved for the real user. No-op if path is small/absent.
+func rotateLogIfLarge(path string, cap int64, uid, gid int) {
+	fi, err := os.Stat(path)
+	if err != nil || fi.Size() <= cap {
+		return
+	}
+	rolled := path + ".1"
+	if os.Rename(path, rolled) == nil {
+		chownTo(rolled, uid, gid)
+	}
+}
+
 // startupAction is what a normal launch should do given a possibly-running peer.
 type startupAction int
 
@@ -703,6 +721,10 @@ func main() {
 		_ = os.MkdirAll(configDir, 0o755)
 		chownTo(configDir, realUID, realGID)
 		logPath = filepath.Join(configDir, "singbox.log")
+		// Startup rotation: sing-box has no built-in rotation, so bound the file
+		// by rolling it over once it exceeds the cap (1-deep: singbox.log.1).
+		// Done before anyone opens it so the fresh file starts empty.
+		rotateLogIfLarge(logPath, maxLogBytes, realUID, realGID)
 		// Pre-create the log owned by the real user (we run as root under sudo):
 		// otherwise sing-box/appendLog create it root-owned 0600 and the user
 		// can't read/tail their own logs ("Permission denied").
@@ -724,6 +746,9 @@ func main() {
 	}
 	if !(c.proxy.headless && c.proxy.logs) {
 		executor.SetLogPath(logPath)
+	}
+	if c.proxy.verbose {
+		executor.SetLogLevel("info") // opt back into verbose per-connection logging
 	}
 
 	// flag/env key overrides the saved profile.
@@ -776,6 +801,18 @@ func main() {
 	// Advertise this instance + serve control (attach/stop/status) so another
 	// tab can follow logs and stop it. Best-effort: failures don't block startup.
 	if configDir != "" {
+		// Guard against a second instance stomping a live one. control.Server.Start
+		// unconditionally unlinks the socket, so without this a second launch would
+		// silently steal it and both would fight over ports/routes. Refuse if a
+		// live instance already owns the advertisement; drop a stale one (dead PID)
+		// so a fresh start can proceed cleanly. Mirrors the --daemon parent guard.
+		if inst, err := control.ReadInstance(configDir); err == nil {
+			if inst.PID != os.Getpid() && control.IsAlive(inst.PID) {
+				fmt.Fprintf(os.Stderr, "error: singctl already running (PID %d) — stop it first: singctl --stop\n", inst.PID)
+				os.Exit(1)
+			}
+			control.RemoveInstance(configDir) // stale advertisement from a dead PID
+		}
 		sockPath := filepath.Join(configDir, "control.sock")
 		srv := control.NewServer(sockPath)
 		registerControl(srv, executor, cancelRun, startedAt)
