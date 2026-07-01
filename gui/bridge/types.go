@@ -20,6 +20,12 @@ type Status struct {
 	Mode      string `json:"mode"` // "off" | "proxy" | "vpn" | "suspended"
 	StartedAt string `json:"startedAt"`
 	ClashAPI  bool   `json:"clashApi"` // whether the Clash API is enabled (charts available)
+	// Cisco-coexistence state. When CiscoActive, ProxyBypass reports whether the
+	// proxy egress is pinned to PhysIface (the physical NIC) to bypass Cisco, vs.
+	// riding it (fallback).
+	CiscoActive bool   `json:"ciscoActive"`
+	ProxyBypass bool   `json:"proxyBypass"`
+	PhysIface   string `json:"physIface"`
 }
 
 // Settings mirrors the daemon's ui.Settings JSON wire format (SETTINGS-GET/SET).

@@ -31,6 +31,7 @@ type Model struct {
 	screen       Screen
 	mode         RunMode // user-chosen running state (OFF until they pick)
 	cisco        bool
+	bypass       bool // proxy egress pinned to the physical NIC to bypass Cisco
 	phys         string
 	width        int
 	height       int

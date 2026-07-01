@@ -21,6 +21,9 @@ const INITIAL_STATUS: TStatus = {
   mode: "off",
   startedAt: "",
   clashApi: false,
+  ciscoActive: false,
+  proxyBypass: false,
+  physIface: "",
 };
 
 interface ILiveState {

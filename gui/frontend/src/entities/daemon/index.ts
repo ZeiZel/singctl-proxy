@@ -11,3 +11,4 @@ export {
 } from "./model/liveStore";
 export { type TTrafficSample } from "./model/types";
 export { StatusBadge, type StatusBadgeProps } from "./ui/StatusBadge";
+export { CiscoBadge, type CiscoBadgeProps } from "./ui/CiscoBadge";

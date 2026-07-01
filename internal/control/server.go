@@ -19,6 +19,12 @@ type Status struct {
 	PID       int    `json:"pid"`
 	Mode      string `json:"mode"`
 	StartedAt string `json:"started_at"`
+	// CiscoActive/ProxyBypass/PhysIface surface the Cisco-coexistence state: when
+	// Cisco AnyConnect is up, ProxyBypass reports whether the proxy's egress is
+	// pinned to PhysIface (the physical NIC) to bypass Cisco, vs. riding it.
+	CiscoActive bool   `json:"cisco_active,omitempty"`
+	ProxyBypass bool   `json:"proxy_bypass,omitempty"`
+	PhysIface   string `json:"phys_iface,omitempty"`
 }
 
 // Traffic is the TRAFFIC payload: cumulative byte counters (running totals, not

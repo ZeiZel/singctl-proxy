@@ -356,6 +356,13 @@ func runControlCommand(c *cli) int {
 			return 1
 		}
 		fmt.Printf("singctl: PID %d, mode %s, started %s\n", st.PID, st.Mode, st.StartedAt)
+		if st.CiscoActive {
+			if st.ProxyBypass {
+				fmt.Printf("  Cisco: активен — proxy в обход Cisco (egress через %s)\n", st.PhysIface)
+			} else {
+				fmt.Println("  Cisco: активен — proxy идёт через Cisco (fallback: физический интерфейс не привязан)")
+			}
+		}
 		return 0
 	default: // --attach
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -407,7 +414,11 @@ func tailFile(ctx context.Context, path string) error {
 // drive this running instance.
 func registerControl(srv *control.Server, executor *app.Executor, stop func(), startedAt string) {
 	srv.Handle("STATUS", func(string) (string, error) {
-		data, _ := json.Marshal(control.Status{PID: os.Getpid(), Mode: executor.StateLabel(), StartedAt: startedAt})
+		cisco, bypass, phys := executor.CoexistStatus()
+		data, _ := json.Marshal(control.Status{
+			PID: os.Getpid(), Mode: executor.StateLabel(), StartedAt: startedAt,
+			CiscoActive: cisco, ProxyBypass: bypass, PhysIface: phys,
+		})
 		return string(data), nil
 	})
 	srv.Handle("STOP", func(string) (string, error) {
@@ -692,6 +703,13 @@ func main() {
 		_ = os.MkdirAll(configDir, 0o755)
 		chownTo(configDir, realUID, realGID)
 		logPath = filepath.Join(configDir, "singbox.log")
+		// Pre-create the log owned by the real user (we run as root under sudo):
+		// otherwise sing-box/appendLog create it root-owned 0600 and the user
+		// can't read/tail their own logs ("Permission denied").
+		if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+			_ = f.Close()
+			chownTo(logPath, realUID, realGID)
+		}
 
 		store = profile.NewStore(profile.OSFS{}, homeDir, realUID, realGID)
 		if !c.keys.noSave {
@@ -778,7 +796,7 @@ func main() {
 
 	// Monitor: event-driven (PF_ROUTE) + 2s polling fallback, debounce 2.
 	monOut := make(chan monitor.Event, 16)
-	mon := monitor.New(detector, 2, executor.Mode, monOut)
+	mon := monitor.New(detector, 2, executor.Mode, executor.ProxyBoundToPhysical, monOut)
 	mon.SetOnPoll(func(ns types.NetState) { executor.PushDisplay(ctx, ns) })
 
 	ticker := time.NewTicker(pollInterval)

@@ -6,6 +6,12 @@ export interface TStatus {
   mode: string;
   startedAt: string;
   clashApi: boolean;
+  // Cisco-coexistence: when ciscoActive, proxyBypass tells whether the proxy
+  // egress is pinned to physIface (the physical NIC) to bypass Cisco, or rides
+  // it (fallback).
+  ciscoActive: boolean;
+  proxyBypass: boolean;
+  physIface: string;
 }
 
 export interface TSettings {

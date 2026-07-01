@@ -61,6 +61,7 @@ func (a *App) GetStatus() Status {
 		if json.Unmarshal([]byte(reply), &s) == nil && s.Mode != "" {
 			st.Mode = s.Mode
 			st.PID = s.PID
+			st.CiscoActive, st.ProxyBypass, st.PhysIface = s.CiscoActive, s.ProxyBypass, s.PhysIface
 		}
 	}
 	return st

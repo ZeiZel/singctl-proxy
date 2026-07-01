@@ -25,10 +25,11 @@ type Event struct {
 
 // Monitor observes network state and emits policy decisions.
 type Monitor struct {
-	det    Detector
-	deb    *Debouncer
-	modeFn func() policy.Mode
-	out    chan<- Event
+	det     Detector
+	deb     *Debouncer
+	modeFn  func() policy.Mode
+	boundFn func() bool // proxy egress currently pinned to the physical NIC
+	out     chan<- Event
 
 	prevCisco policy.CiscoState
 	prevPhys  string
@@ -42,12 +43,15 @@ type Monitor struct {
 func (m *Monitor) SetOnPoll(fn func(types.NetState)) { m.onPoll = fn }
 
 // New builds a Monitor. threshold is the debounce count; modeFn returns the
-// current mode (owned by the runtime); out receives actionable events.
-func New(det Detector, threshold int, modeFn func() policy.Mode, out chan<- Event) *Monitor {
+// current mode (owned by the runtime); boundFn reports whether the proxy egress
+// is currently pinned to the physical NIC (Cisco-coexistence bind), and may be
+// nil (treated as always-false); out receives actionable events.
+func New(det Detector, threshold int, modeFn func() policy.Mode, boundFn func() bool, out chan<- Event) *Monitor {
 	return &Monitor{
 		det:       det,
 		deb:       NewDebouncer(threshold),
 		modeFn:    modeFn,
+		boundFn:   boundFn,
 		out:       out,
 		prevCisco: policy.CiscoUnknown,
 	}
@@ -95,12 +99,18 @@ func (m *Monitor) poll(ctx context.Context) {
 		m.havePhys = true
 	}
 
+	boundPhys := false
+	if m.boundFn != nil {
+		boundPhys = m.boundFn()
+	}
 	res := policy.Decide(policy.DecideInput{
 		Mode:             m.modeFn(),
 		PrevCisco:        m.prevCisco,
 		NewCisco:         committed,
 		Intent:           policy.IntentNone,
 		PhysIfaceChanged: physChanged,
+		ProxyBoundPhys:   boundPhys,
+		CiscoOwnsDefault: ns.CiscoOwnsDefault,
 	})
 	m.prevCisco = committed
 

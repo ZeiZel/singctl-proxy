@@ -20,6 +20,12 @@ type NetState struct {
 	// CiscoActive is the verdict: a foreign tunnel (not ours) is up and carrying
 	// traffic, i.e. Cisco is connected.
 	CiscoActive bool
+	// CiscoOwnsDefault is true when a foreign (non-ours) tunnel currently owns the
+	// unscoped default route (full-tunnel Cisco). It is false for split-tunnel
+	// Cisco, where the physical NIC still owns the default route — in that case
+	// the proxy already egresses physical and must NOT be bound (binding would
+	// also pin the DNS resolver off the tunnel and break the corporate resolver).
+	CiscoOwnsDefault bool
 }
 
 // TunnelIface describes one tunnel interface.

@@ -68,6 +68,23 @@ type Executor struct {
 	pollMu     sync.Mutex
 	pollCancel context.CancelFunc
 
+	// coexistMu guards the Cisco-coexistence display state: the last observed
+	// Cisco/physical-iface snapshot and the current coexistence mode. It is read
+	// by the control STATUS handler and the monitor's boundFn, and written from
+	// the (single) monitor apply/display path. Independent of mu/cfgMu.
+	coexistMu sync.Mutex
+	coexist   coexistState
+	lastCisco bool
+	lastPhys  string
+
+	// netDiag* holds the last net snapshot we logged a transition for, so
+	// PushDisplay (called every poll) only logs when something actually changes.
+	netDiagInit bool
+	netDiagCd   bool   // last logged CiscoActive
+	netDiagOwns bool   // last logged CiscoOwnsDefault
+	netDiagPhys string // last logged PhysicalIface
+	netDiagDef  string // last logged DefaultRouteIface
+
 	listerOnce sync.Once
 	lister     proclist.Lister
 
@@ -482,13 +499,20 @@ func (e *Executor) appendLog(line string) {
 		return
 	}
 	if e.logFile == nil {
-		f, err := os.OpenFile(e.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		f, err := os.OpenFile(e.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 		if err != nil {
 			return
 		}
 		e.logFile = f // kept open for the process lifetime (no per-line fd churn)
 	}
 	fmt.Fprintln(e.logFile, line)
+}
+
+// diag writes a timestamped "[coexist]" diagnostic line to the same sink as the
+// sing-box log, so Cisco-coexistence decisions (detection, bind/unbind, mode)
+// are visible alongside connection logs when troubleshooting.
+func (e *Executor) diag(format string, args ...any) {
+	e.appendLog("[coexist " + time.Now().Format("15:04:05") + "] " + fmt.Sprintf(format, args...))
 }
 
 // --- monitor integration ---
@@ -508,44 +532,121 @@ func (e *Executor) Loop(ctx context.Context, in <-chan monitor.Event) {
 // Apply enacts a policy decision on the manager and notifies the UI.
 func (e *Executor) Apply(ctx context.Context, ev monitor.Event) {
 	mgr := e.manager()
-	var stop, refresh bool
+	var stop, refresh, bindPhys, unbind bool
 	for _, a := range ev.Decision.Actions {
 		switch a {
 		case policy.ActFailClosed, policy.ActStopForwarder:
 			stop = true
 		case policy.ActRefreshProxy:
 			refresh = true
+		case policy.ActBindPhysical:
+			bindPhys = true
+		case policy.ActUnbindProxy:
+			unbind = true
 		}
+	}
+	ns := ev.NetState
+	if stop || bindPhys || unbind || refresh {
+		e.diag("decision: stop=%v bind=%v unbind=%v refresh=%v | cisco=%v ownsDefault=%v defRoute=%q phys=%q mode=%s",
+			stop, bindPhys, unbind, refresh, ns.CiscoActive, ns.CiscoOwnsDefault, ns.DefaultRouteIface, ns.PhysicalIface, e.StateLabel())
 	}
 	if mgr != nil {
 		if stop {
 			// Yield fully (forwarder + proxy down) and STAY down while Cisco is
 			// present: AnyConnect aborts ("can't verify IP forwarding table
 			// changes") if any process touches the routing table during its
-			// connect. We resume only once Cisco disconnects (the refresh path).
-			_ = mgr.SuspendForCisco(ctx)
+			// connect. This path is now reached only when Cisco appears while we
+			// hold our OWN VPN tunnel (rule b); proxy-only coexistence binds
+			// instead of suspending. We resume once Cisco disconnects.
+			if err := mgr.SuspendForCisco(ctx); err != nil {
+				e.diag("suspend-for-cisco FAILED: %v", err)
+			} else {
+				e.diag("suspended (fail-closed) while Cisco holds the tunnel")
+			}
+		}
+		if bindPhys {
+			// Primary coexistence: pin the proxy's egress to the physical NIC so
+			// the upstream dial escapes Cisco's default route. Fall back to the
+			// unbound proxy (rides Cisco) when no physical NIC can be resolved or
+			// the rebind fails — BindProxyToPhysical rolls back to the working
+			// proxy on error, so the fallback never leaves us proxy-less.
+			iface := ns.PhysicalIface
+			if iface == "" {
+				iface, _ = e.prober.PhysicalDefault()
+			}
+			if iface == "" {
+				e.diag("bind: no physical NIC resolved — staying unbound (fallback: rides default route)")
+			} else if err := mgr.BindProxyToPhysical(ctx, iface); err != nil {
+				e.diag("bind to %s FAILED: %v (fallback: rolled back to unbound proxy)", iface, err)
+			} else {
+				e.diag("bound proxy egress to %s (bypassing Cisco default route)", iface)
+			}
+		}
+		if unbind {
+			if err := mgr.UnbindProxy(ctx); err != nil { // Cisco gone — release bind + re-dial
+				e.diag("unbind FAILED: %v", err)
+			} else {
+				e.diag("unbound proxy — re-dialing over the default route")
+			}
 		}
 		if refresh {
 			if mgr.State() == runtime.StateSuspended {
-				_ = mgr.ResumeProxy(ctx) // Cisco disconnected — safe to come back
-			} else {
-				_ = mgr.RefreshProxy(ctx)
+				if err := mgr.ResumeProxy(ctx); err != nil { // Cisco disconnected — safe to come back
+					e.diag("resume FAILED: %v", err)
+				} else {
+					e.diag("resumed proxy after Cisco disconnect")
+				}
+			} else if err := mgr.RefreshProxy(ctx); err != nil {
+				e.diag("refresh FAILED: %v", err)
 			}
 		}
 	}
-	if note := noteFor(stop, refresh); note != "" {
-		e.push(ctx, ui.StatusMsg{Mode: e.runMode(), Note: note})
-		// The UI never initiates these (Cisco auto-suspend / reconnect), so also
-		// surface them in the action log: a suspend is a warning, a resume is info.
-		e.pushNonBlocking(ui.ActionMsg{Level: actionLevelFor(stop, refresh), Text: note})
-	}
+	e.updateCoexist(ctx, mgr, ev.NetState)
 	e.PushDisplay(ctx, ev.NetState)
 }
 
 // PushDisplay sends the live Cisco/interface status to the UI (used as the
-// monitor's per-poll callback).
+// monitor's per-poll callback). It also records the snapshot + derived
+// coexistence state for the control STATUS handler.
 func (e *Executor) PushDisplay(ctx context.Context, ns types.NetState) {
-	e.push(ctx, ui.NetStateMsg{Cisco: ns.CiscoActive, PhysIface: ns.PhysicalIface})
+	bypass := e.coexistFor(e.manager(), ns) == coexistBypass
+	e.coexistMu.Lock()
+	e.lastCisco, e.lastPhys = ns.CiscoActive, ns.PhysicalIface
+	changed := !e.netDiagInit || e.netDiagCd != ns.CiscoActive || e.netDiagOwns != ns.CiscoOwnsDefault ||
+		e.netDiagPhys != ns.PhysicalIface || e.netDiagDef != ns.DefaultRouteIface
+	if changed {
+		e.netDiagInit = true
+		e.netDiagCd, e.netDiagOwns = ns.CiscoActive, ns.CiscoOwnsDefault
+		e.netDiagPhys, e.netDiagDef = ns.PhysicalIface, ns.DefaultRouteIface
+	}
+	e.coexistMu.Unlock()
+	if changed {
+		tunnel := "none"
+		if ns.CiscoActive && ns.CiscoOwnsDefault {
+			tunnel = "full-tunnel (Cisco owns default → bind physical)"
+		} else if ns.CiscoActive {
+			tunnel = "split-tunnel (physical owns default → no bind needed)"
+		}
+		e.diag("netstate: cisco=%v ownsDefault=%v defRoute=%q phys=%q → %s", ns.CiscoActive, ns.CiscoOwnsDefault, ns.DefaultRouteIface, ns.PhysicalIface, tunnel)
+	}
+	e.push(ctx, ui.NetStateMsg{Cisco: ns.CiscoActive, PhysIface: ns.PhysicalIface, Bypass: bypass})
+}
+
+// ProxyBoundToPhysical reports whether the proxy is running in proxy-only mode
+// with its egress pinned to the physical NIC (the Cisco-coexistence bind). It is
+// the monitor's boundFn, making the bind/unbind policy decisions level-triggered.
+func (e *Executor) ProxyBoundToPhysical() bool {
+	m := e.manager()
+	return m != nil && m.State() == runtime.StateProxyOnly && m.BoundInterface() != ""
+}
+
+// CoexistStatus reports the live Cisco-coexistence state for the control STATUS
+// command (surfaced in the CLI --status output and the GUI). bypass is true when
+// the proxy egress is pinned to the physical NIC to bypass Cisco.
+func (e *Executor) CoexistStatus() (ciscoActive, bypass bool, physIface string) {
+	e.coexistMu.Lock()
+	defer e.coexistMu.Unlock()
+	return e.lastCisco, e.coexist == coexistBypass, e.lastPhys
 }
 
 // Mode maps the manager state to the policy mode (the monitor's modeFn).
@@ -837,25 +938,81 @@ func (e *Executor) push(ctx context.Context, msg tea.Msg) {
 	}
 }
 
-// actionLevelFor maps a Cisco-coexistence transition to an action-log level:
-// suspending (yielding to Cisco) is a warning, resuming/reconnecting is info.
-func actionLevelFor(stop, refresh bool) int {
-	if stop {
-		return ui.ActWarn
+// coexistState describes how the proxy currently relates to a third-party VPN
+// (Cisco AnyConnect). It drives a single, deduplicated user notification on each
+// transition (the bind decision is level-triggered, so without dedup the same
+// note would repeat every poll).
+type coexistState int
+
+const (
+	coexistNone      coexistState = iota // no Cisco — normal proxy
+	coexistBypass                        // Cisco active, proxy egress pinned to the physical NIC (bypassing)
+	coexistFallback                      // Cisco active, couldn't bind — proxy rides Cisco
+	coexistSuspended                     // failed closed: Cisco appeared while we held our own VPN tunnel
+)
+
+// coexistFor derives the coexistence state from the live runtime + observation.
+func (e *Executor) coexistFor(mgr *runtime.Manager, ns types.NetState) coexistState {
+	if mgr == nil {
+		return coexistNone
 	}
-	if refresh {
-		return ui.ActInfo
+	switch mgr.State() {
+	case runtime.StateSuspended:
+		return coexistSuspended
+	case runtime.StateProxyOnly:
+		if ns.CiscoActive {
+			if mgr.BoundInterface() != "" {
+				return coexistBypass
+			}
+			return coexistFallback
+		}
 	}
-	return ui.ActInfo
+	return coexistNone
 }
 
-func noteFor(stop, refresh bool) string {
-	switch {
-	case stop:
-		return "Cisco активен — VPN и proxy остановлены, вернёмся после отключения Cisco"
-	case refresh:
-		return "Cisco отключён — переподключаю proxy"
+// updateCoexist recomputes the coexistence state and notifies the UI only when
+// it changes, so the action log and status line get one line per transition.
+func (e *Executor) updateCoexist(ctx context.Context, mgr *runtime.Manager, ns types.NetState) {
+	next := e.coexistFor(mgr, ns)
+	e.coexistMu.Lock()
+	prev := e.coexist
+	e.coexist = next
+	e.coexistMu.Unlock()
+	if next == prev {
+		return
+	}
+	// Returning to "none" while Cisco is still up means the proxy was just
+	// stopped, not that Cisco disconnected — don't claim a Cisco-down event.
+	if next == coexistNone && ns.CiscoActive {
+		return
+	}
+	note, level := coexistNote(next, ns.PhysicalIface)
+	if note == "" {
+		return
+	}
+	e.push(ctx, ui.StatusMsg{Mode: e.runMode(), Note: note})
+	// The UI never initiates these (driven by Cisco connect/disconnect), so also
+	// surface them in the action log.
+	e.pushNonBlocking(ui.ActionMsg{Level: level, Text: note})
+}
+
+// coexistNote returns the user-facing message + action-log level for a
+// coexistence state (empty for the steady "no Cisco" state).
+func coexistNote(s coexistState, physIface string) (string, int) {
+	switch s {
+	case coexistBypass:
+		iface := physIface
+		if iface == "" {
+			iface = "физический интерфейс"
+		}
+		return "Cisco активен — proxy работает в обход Cisco (egress через " + iface + ")", ui.ActOk
+	case coexistFallback:
+		return "Cisco активен — не удалось привязать proxy к физическому интерфейсу, трафик идёт через Cisco (fallback)", ui.ActWarn
+	case coexistSuspended:
+		return "Cisco активен — наш VPN остановлен (fail-closed), вернёмся после отключения Cisco", ui.ActWarn
+	case coexistNone:
+		return "Cisco отключён — proxy вернулся на основной маршрут", ui.ActInfo
 	default:
-		return ""
+		return "", ui.ActInfo
 	}
 }

@@ -94,6 +94,16 @@ func (s Styles) ciscoBadge(active bool) string {
 	return s.Muted.Render(s.gl.DotOff + " неактивен")
 }
 
+// bypassBadge renders the Cisco-coexistence indicator: a green dot + "включён"
+// when the proxy egress is pinned to the physical NIC (bypassing Cisco), or an
+// amber dot + "через Cisco (fallback)" when it couldn't bind and rides Cisco.
+func (s Styles) bypassBadge(active bool) string {
+	if active {
+		return s.colored(s.th.Ok, s.gl.DotOn+" включён")
+	}
+	return s.colored(s.th.Warn, s.gl.DotOn+" через Cisco (fallback)")
+}
+
 // kv renders an aligned "key   value" status row. The key is padded to keyW
 // cells (measured, ANSI/cyrillic-aware).
 func (s Styles) kv(key, val string, keyW int) string {

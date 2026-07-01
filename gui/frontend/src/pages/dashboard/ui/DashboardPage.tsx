@@ -1,4 +1,5 @@
 import {
+  CiscoBadge,
   StatusBadge,
   useConnections,
   useLatency,
@@ -54,7 +55,10 @@ export function DashboardPage() {
     <Stack gap="md">
       <Stack direction="row" justify="between" align="center">
         <Heading level={1}>Dashboard</Heading>
-        <StatusBadge status={status} />
+        <Stack direction="row" gap="xs" align="center">
+          <CiscoBadge status={status} />
+          <StatusBadge status={status} />
+        </Stack>
       </Stack>
 
       {licenseInfo.enforced && !licenseInfo.valid && (

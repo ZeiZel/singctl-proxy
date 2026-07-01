@@ -30,6 +30,7 @@ type Log struct {
 
 type DNS struct {
 	Servers  []DNSServer `json:"servers"`
+	Rules    []DNSRule   `json:"rules,omitempty"`
 	Final    string      `json:"final,omitempty"`
 	Strategy string      `json:"strategy,omitempty"`
 }
@@ -39,6 +40,16 @@ type DNSServer struct {
 	Tag    string `json:"tag"`
 	Server string `json:"server,omitempty"`
 	Detour string `json:"detour,omitempty"`
+}
+
+// DNSRule routes matching DNS queries to a specific server. We use it in
+// multi-server mode to resolve the urltest probe host via the "local" (system)
+// resolver instead of the DoH server that detours through the urltest group —
+// otherwise the group's health check can never bootstrap (it would need DNS
+// that routes back through the not-yet-healthy group).
+type DNSRule struct {
+	Domain []string `json:"domain,omitempty"`
+	Server string   `json:"server,omitempty"`
 }
 
 // --- Inbounds ---

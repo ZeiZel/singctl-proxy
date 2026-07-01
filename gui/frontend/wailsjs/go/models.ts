@@ -88,6 +88,9 @@ export namespace bridge {
 	    mode: string;
 	    startedAt: string;
 	    clashApi: boolean;
+	    ciscoActive: boolean;
+	    proxyBypass: boolean;
+	    physIface: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Status(source);
@@ -100,6 +103,9 @@ export namespace bridge {
 	        this.mode = source["mode"];
 	        this.startedAt = source["startedAt"];
 	        this.clashApi = source["clashApi"];
+	        this.ciscoActive = source["ciscoActive"];
+	        this.proxyBypass = source["proxyBypass"];
+	        this.physIface = source["physIface"];
 	    }
 	}
 

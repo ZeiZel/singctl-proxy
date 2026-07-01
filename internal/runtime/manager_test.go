@@ -41,6 +41,77 @@ func TestManager_StartProxy_Idempotent_AndRunsCleanupFirst(t *testing.T) {
 	}
 }
 
+func TestManager_BindProxyToPhysical_CiscoCoexistence(t *testing.T) {
+	m, ff, _, _, _ := newTestManager(t)
+	ctx := context.Background()
+	if err := m.StartProxy(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Cisco appears while proxy-only: pin egress to the physical NIC (bypass),
+	// staying in proxy-only mode (no forwarder).
+	if err := m.BindProxyToPhysical(ctx, "en0"); err != nil {
+		t.Fatalf("BindProxyToPhysical: %v", err)
+	}
+	if m.State() != StateProxyOnly {
+		t.Errorf("state = %v, want proxy-only (bind must not enter VPN)", m.State())
+	}
+	if m.BoundInterface() != "en0" {
+		t.Errorf("bound = %q, want en0", m.BoundInterface())
+	}
+	proxies := ff.BuiltFor("proxy")
+	if len(proxies) != 2 || string(proxies[1].Config) != `{"proxy":"en0"}` {
+		t.Fatalf("want proxy recreated bound to en0, got %d cores (last=%q)", len(proxies), lastCfg(proxies))
+	}
+	// Idempotent: binding to the same NIC again is a no-op.
+	if err := m.BindProxyToPhysical(ctx, "en0"); err != nil {
+		t.Fatal(err)
+	}
+	if got := ff.BuiltFor("proxy"); len(got) != 2 {
+		t.Errorf("rebind to same NIC must be a no-op, cores = %d, want 2", len(got))
+	}
+	// Cisco leaves: unbind + re-dial over the restored default route.
+	if err := m.UnbindProxy(ctx); err != nil {
+		t.Fatalf("UnbindProxy: %v", err)
+	}
+	if m.BoundInterface() != "" {
+		t.Errorf("after unbind bound = %q, want empty", m.BoundInterface())
+	}
+	if got := ff.BuiltFor("proxy"); len(got) != 3 || string(got[2].Config) != `{"proxy":""}` {
+		t.Errorf("unbind should re-dial unbound, cores = %d (last=%q)", len(got), lastCfg(ff.BuiltFor("proxy")))
+	}
+}
+
+func TestManager_BindProxyToPhysical_FallbackContract(t *testing.T) {
+	ctx := context.Background()
+
+	// No-op (no error) when not in proxy-only mode, so the executor's fallback
+	// path never sees a spurious failure before the proxy is up.
+	m, _, _, _, _ := newTestManager(t)
+	if err := m.BindProxyToPhysical(ctx, "en0"); err != nil {
+		t.Fatalf("bind before StartProxy should be a no-op, got %v", err)
+	}
+
+	// An empty iface errors (so the caller keeps the unbound proxy) but leaves
+	// the running proxy intact.
+	m2, _, _, _, _ := newTestManager(t)
+	if err := m2.StartProxy(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := m2.BindProxyToPhysical(ctx, ""); err == nil {
+		t.Error("empty iface should error so the caller falls back to riding the default route")
+	}
+	if m2.State() != StateProxyOnly || m2.BoundInterface() != "" {
+		t.Errorf("rejected bind must leave proxy unbound+running, state=%v bound=%q", m2.State(), m2.BoundInterface())
+	}
+}
+
+func lastCfg(cores []*core.FakeCore) string {
+	if len(cores) == 0 {
+		return ""
+	}
+	return string(cores[len(cores)-1].Config)
+}
+
 func TestManager_EnableVPN_RebindsProxyAndStartsForwarder(t *testing.T) {
 	m, ff, _, _, _ := newTestManager(t)
 	ctx := context.Background()

@@ -35,7 +35,16 @@ import { initLive, useLiveStore } from "./liveStore";
 
 afterEach(() => {
   useLiveStore.setState({
-    status: { running: false, pid: 0, mode: "off", startedAt: "", clashApi: false },
+    status: {
+      running: false,
+      pid: 0,
+      mode: "off",
+      startedAt: "",
+      clashApi: false,
+      ciscoActive: false,
+      proxyBypass: false,
+      physIface: "",
+    },
     traffic: [],
     totalUp: 0,
     totalDown: 0,
@@ -48,7 +57,18 @@ afterEach(() => {
 describe("liveStore", () => {
   it("subscribes and updates status from a status event", () => {
     const teardown = initLive();
-    act(() => handlers.status({ running: true, pid: 7, mode: "vpn", startedAt: "t", clashApi: true }));
+    act(() =>
+      handlers.status({
+        running: true,
+        pid: 7,
+        mode: "vpn",
+        startedAt: "t",
+        clashApi: true,
+        ciscoActive: false,
+        proxyBypass: false,
+        physIface: "",
+      }),
+    );
     expect(useLiveStore.getState().status.mode).toBe("vpn");
     expect(useLiveStore.getState().status.pid).toBe(7);
     teardown();

@@ -123,6 +123,9 @@ func TestObserve_CiscoConnected(t *testing.T) {
 	if !ns.CiscoActive {
 		t.Error("want CiscoActive=true")
 	}
+	if !ns.CiscoOwnsDefault {
+		t.Error("want CiscoOwnsDefault=true (full-tunnel: utun4 owns the default route)")
+	}
 	if ns.DefaultRouteIface != "utun4" {
 		t.Errorf("DefaultRouteIface = %q, want utun4", ns.DefaultRouteIface)
 	}
@@ -131,6 +134,26 @@ func TestObserve_CiscoConnected(t *testing.T) {
 	}
 	if !ns.CiscoProcessPresent {
 		t.Error("want CiscoProcessPresent=true")
+	}
+}
+
+// TestObserve_CiscoSplitTunnel is the user's real setup: Cisco is connected
+// (utun4 NOARP with an IPv4) but the physical NIC still owns the default route.
+// CiscoActive must be true, CiscoOwnsDefault false — so the policy will NOT bind
+// the proxy to the physical NIC.
+func TestObserve_CiscoSplitTunnel(t *testing.T) {
+	ns, err := New(runnerFor(scenario{ifconfigCisco, routeDefaultNoCisco, netstatNoCisco, psCisco})).Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ns.CiscoActive {
+		t.Error("want CiscoActive=true (utun4 NOARP present)")
+	}
+	if ns.CiscoOwnsDefault {
+		t.Error("want CiscoOwnsDefault=false (split-tunnel: en0 owns the default route)")
+	}
+	if ns.DefaultRouteIface != "en0" || ns.PhysicalIface != "en0" {
+		t.Errorf("ifaces = default %q phys %q, want en0/en0", ns.DefaultRouteIface, ns.PhysicalIface)
 	}
 }
 

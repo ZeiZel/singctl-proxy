@@ -80,6 +80,7 @@ func (p *poller) tick(ctx context.Context) {
 			var s control.Status
 			if json.Unmarshal([]byte(reply), &s) == nil && s.Mode != "" {
 				st.Mode, st.PID = s.Mode, s.PID
+				st.CiscoActive, st.ProxyBypass, st.PhysIface = s.CiscoActive, s.ProxyBypass, s.PhysIface
 			}
 		}
 	}

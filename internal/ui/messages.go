@@ -30,6 +30,10 @@ func (m RunMode) String() string {
 type NetStateMsg struct {
 	Cisco     bool
 	PhysIface string
+	// Bypass is true when Cisco is active AND the proxy egress is pinned to the
+	// physical NIC to bypass it (the coexistence mode); false means the proxy is
+	// riding Cisco (no Cisco, or the fallback).
+	Bypass bool
 }
 
 // StatusMsg reflects a runtime mode change or notification from the executor

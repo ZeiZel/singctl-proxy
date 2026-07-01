@@ -153,6 +153,11 @@ func (m Model) statusBody(contentW int) string {
 		s.kv("Cisco", s.ciscoBadge(m.cisco), keyW),
 		s.kv("iface", s.colored(s.th.Accent, s.clampLine(phys, valW)), keyW),
 	}
+	// While Cisco is up, show whether the proxy bypasses it (egress pinned to the
+	// physical NIC) or falls back to riding it.
+	if m.cisco && m.mode != RunOff {
+		rows = append(rows, s.kv("обход", s.bypassBadge(m.bypass), keyW))
+	}
 	if sum := m.latencySummary(); sum != "" {
 		rows = append(rows, s.kv("сервер", s.clampLine(sum, valW), keyW))
 	}

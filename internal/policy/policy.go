@@ -42,6 +42,15 @@ const (
 	ActRefreshProxy
 	ActFailClosed // immediately stop forwarding (drop) before tearing down TUN
 	ActNotify
+	// ActBindPhysical pins the proxy's egress to the physical NIC so its
+	// upstream dial escapes a third-party VPN (Cisco) that owns the default
+	// route — the primary coexistence strategy in proxy-only mode. Level-
+	// triggered: emitted whenever Cisco is active and the proxy is not yet
+	// bound, so it also fires when singctl starts with Cisco already up.
+	ActBindPhysical
+	// ActUnbindProxy releases the physical bind and re-dials the proxy over the
+	// restored default route once Cisco disconnects.
+	ActUnbindProxy
 )
 
 // DecideInput is the full input to a decision.
@@ -51,6 +60,18 @@ type DecideInput struct {
 	NewCisco         CiscoState
 	Intent           UserIntent
 	PhysIfaceChanged bool
+	// ProxyBoundPhys reports whether the proxy's egress is currently pinned to
+	// the physical NIC (the Cisco-coexistence bind). It makes the bind/unbind
+	// decisions level-triggered rather than edge-triggered, so a steady "Cisco
+	// active but proxy still unbound" state (e.g. singctl launched after Cisco
+	// was already connected) reconciles to a bound proxy.
+	ProxyBoundPhys bool
+	// CiscoOwnsDefault is true only when Cisco holds the unscoped default route
+	// (full-tunnel). Informational now (surfaced in diagnostics): we no longer
+	// bind the proxy to the physical NIC in any case — riding the default route
+	// is correct for no-Cisco, split-tunnel, and (measured) full-tunnel Cisco,
+	// whose tunnel reaches the internet while non-tunnel egress is blocked.
+	CiscoOwnsDefault bool
 }
 
 // DecisionResult is the decision output.
@@ -95,16 +116,21 @@ func Decide(in DecideInput) DecisionResult {
 	}
 
 	ciscoUp := in.PrevCisco == CiscoInactive && in.NewCisco == CiscoActive
-	ciscoDown := in.PrevCisco == CiscoActive && in.NewCisco == CiscoInactive
 
 	switch {
 	case ciscoUp && in.Mode == ModeVPN:
 		// Rule (b): Cisco appeared while we hold the tunnel — fail closed and
 		// drop our VPN immediately so not a single packet rides our tunnel.
 		return only(ModeProxy, ActFailClosed, ActStopForwarder, ActNotify)
-	case ciscoDown && in.Mode == ModeProxy:
-		// Rule (c): Cisco left — re-dial the proxy upstream so apps recover.
-		return only(ModeProxy, ActRefreshProxy)
+	case in.Mode == ModeProxy && in.ProxyBoundPhys:
+		// Rule (c): proxy-only coexistence NO LONGER binds the egress to the
+		// physical NIC. Measured on a real corporate full-tunnel Cisco: the
+		// TUNNEL reaches the internet (so the proxy works by riding the default
+		// route), while non-tunnel (en0) egress is firewall-blocked — so binding
+		// to en0 BREAKS the proxy instead of helping. Split-tunnel already rides
+		// en0. In every observed case riding the default route is correct, so we
+		// never bind; if we somehow hold a stale bind, release it here.
+		return only(ModeProxy, ActUnbindProxy)
 	case in.PhysIfaceChanged && in.Mode == ModeVPN:
 		// Physical interface changed under our TUN — rebind the proxy.
 		return only(ModeVPN, ActRefreshProxy)

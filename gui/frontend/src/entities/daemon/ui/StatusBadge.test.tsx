@@ -5,7 +5,16 @@ import { type TStatus } from "@/shared/api/singctl";
 
 import { StatusBadge } from "./StatusBadge";
 
-const base: TStatus = { running: false, pid: 0, mode: "off", startedAt: "", clashApi: false };
+const base: TStatus = {
+  running: false,
+  pid: 0,
+  mode: "off",
+  startedAt: "",
+  clashApi: false,
+  ciscoActive: false,
+  proxyBypass: false,
+  physIface: "",
+};
 
 describe("StatusBadge", () => {
   it("shows offline when the daemon is not running", () => {

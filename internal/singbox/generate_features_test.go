@@ -99,6 +99,119 @@ func TestMulti_BindInterfaceOnEachMember(t *testing.T) {
 	}
 }
 
+// dnsRuleFor returns the DNS server that resolves the given domain, or "".
+func dnsRuleFor(cfg Config, domain string) string {
+	if cfg.DNS == nil {
+		return ""
+	}
+	for _, r := range cfg.DNS.Rules {
+		for _, d := range r.Domain {
+			if d == domain {
+				return r.Server
+			}
+		}
+	}
+	return ""
+}
+
+// hasDNSServer reports whether a DNS server with the given tag exists. The
+// bootstrap DoH server must be detour-less (a `detour: direct` to an empty
+// direct outbound is rejected by sing-box at start), so we also assert no detour.
+func hasDNSServer(cfg Config, tag string) bool {
+	if cfg.DNS == nil {
+		return false
+	}
+	for _, s := range cfg.DNS.Servers {
+		if s.Tag == tag && s.Detour == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// TestMulti_ProbeHostResolvesViaBootstrap locks in the bootstrap fix: in
+// multi-server mode the urltest probe host must resolve via the bootstrap DoH
+// (detour=direct), not via the DoH server that detours through the urltest
+// group — otherwise the group's health check can never bootstrap.
+func TestMulti_ProbeHostResolvesViaBootstrap(t *testing.T) {
+	cfg, err := GenerateProxyConfigOpts(mustSet(t, realLink, secondLink), ProxyOpts{})
+	if err != nil {
+		t.Fatalf("GenerateProxyConfigOpts multi: %v", err)
+	}
+	if got := dnsRuleFor(cfg, "www.gstatic.com"); got != bootDNSTag {
+		t.Errorf("probe host www.gstatic.com resolves via %q, want %q", got, bootDNSTag)
+	}
+	if !hasDNSServer(cfg, bootDNSTag) {
+		t.Errorf("expected a detour-less %q DNS server", bootDNSTag)
+	}
+}
+
+// TestMulti_CustomProbeHostResolvesViaBootstrap ensures the bootstrap rule tracks
+// a user-configured probe URL rather than the default host.
+func TestMulti_CustomProbeHostResolvesViaBootstrap(t *testing.T) {
+	cfg, _ := GenerateProxyConfigOpts(mustSet(t, realLink, secondLink), ProxyOpts{
+		URLTest: URLTestParams{URL: "https://cp.cloudflare.com/generate_204"},
+	})
+	if got := dnsRuleFor(cfg, "cp.cloudflare.com"); got != bootDNSTag {
+		t.Errorf("custom probe host resolves via %q, want %q", got, bootDNSTag)
+	}
+	if got := dnsRuleFor(cfg, "www.gstatic.com"); got != "" {
+		t.Errorf("default host should not have a rule for a custom probe URL, got %q", got)
+	}
+}
+
+// TestMulti_DomainServersResolveViaBootstrap is the regression for the real-world
+// break: when the VLESS servers are addressed by domain (Reality servers like
+// usa.cloudpath.live), their hostnames MUST resolve via the bootstrap DoH over
+// "direct" — else they loop through the proxy (lands on 1.1.1.1, TLS fails) or
+// hit the corporate resolver under Cisco ("lookup ...: i/o timeout").
+func TestMulti_DomainServersResolveViaBootstrap(t *testing.T) {
+	const a = "vless://4ce58870-27d3-489b-87a0-3109db4fb919@usa.cloudpath.live:443?type=tcp&security=reality&pbk=MLWbCmCus3crtCxy2QAuO1zp74nbDE1zMvO1azp-F0k&sid=0cf78906&sni=microsoft.com&fp=chrome#usa"
+	const b = "vless://4ce58870-27d3-489b-87a0-3109db4fb919@auto.cloudpath.live:443?type=tcp&security=reality&pbk=MLWbCmCus3crtCxy2QAuO1zp74nbDE1zMvO1azp-F0k&sid=085ba77f&sni=microsoft.com&fp=chrome#auto"
+	cfg, err := GenerateProxyConfigOpts(mustSet(t, a, b), ProxyOpts{})
+	if err != nil {
+		t.Fatalf("GenerateProxyConfigOpts multi domains: %v", err)
+	}
+	for _, host := range []string{"usa.cloudpath.live", "auto.cloudpath.live", "www.gstatic.com"} {
+		if got := dnsRuleFor(cfg, host); got != bootDNSTag {
+			t.Errorf("%s resolves via %q, want %q", host, got, bootDNSTag)
+		}
+	}
+	if !hasDNSServer(cfg, bootDNSTag) {
+		t.Errorf("expected a detour-less %q DNS server", bootDNSTag)
+	}
+}
+
+// TestSingle_DomainServerResolvesViaBootstrap ensures the fix also covers the
+// single-server case: a domain-addressed server must resolve via the bootstrap
+// DoH, not the corporate/system resolver.
+func TestSingle_DomainServerResolvesViaBootstrap(t *testing.T) {
+	const link = "vless://4ce58870-27d3-489b-87a0-3109db4fb919@usa.cloudpath.live:443?type=tcp&security=reality&pbk=MLWbCmCus3crtCxy2QAuO1zp74nbDE1zMvO1azp-F0k&sid=0cf78906&sni=microsoft.com&fp=chrome#usa"
+	cfg, err := GenerateProxyConfigOpts(mustSet(t, link), ProxyOpts{})
+	if err != nil {
+		t.Fatalf("GenerateProxyConfigOpts single domain: %v", err)
+	}
+	if got := dnsRuleFor(cfg, "usa.cloudpath.live"); got != bootDNSTag {
+		t.Errorf("single-server domain resolves via %q, want %q", got, bootDNSTag)
+	}
+	if !hasDNSServer(cfg, bootDNSTag) {
+		t.Errorf("expected a detour-less %q DNS server", bootDNSTag)
+	}
+}
+
+// TestSingle_IPServerNoBootstrapRule guards the historical single-server config
+// with an IP-addressed server: no hostname to resolve, so no bootstrap rule and
+// no boot-dns server — the config stays byte-identical to the golden.
+func TestSingle_IPServerNoBootstrapRule(t *testing.T) {
+	cfg, _ := GenerateProxyConfigOpts(vless.SingleSet(mustProfile(t)), ProxyOpts{})
+	if cfg.DNS == nil || len(cfg.DNS.Rules) != 0 {
+		t.Errorf("IP-server config must have no dns rules, got %v", cfg.DNS.Rules)
+	}
+	if hasDNSServer(cfg, bootDNSTag) {
+		t.Error("IP-server config must not add a boot-dns server")
+	}
+}
+
 func TestMulti_ForwarderLoopGuardPerLiteralIP(t *testing.T) {
 	cfg, _ := GenerateForwarderConfigSet(mustSet(t, realLink, secondLink), DefaultPorts())
 	want := map[string]bool{"193.188.22.147/32": false, "45.10.20.30/32": false}

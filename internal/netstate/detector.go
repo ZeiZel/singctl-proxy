@@ -43,6 +43,7 @@ func (d *Detector) Observe(ctx context.Context) (types.NetState, error) {
 	tunnels := classifyTunnels(ifaces, defIface, d.ourAddrPrefix)
 
 	ciscoActive := false
+	ciscoOwnsDefault := false
 	for _, t := range tunnels {
 		if t.IsOurs {
 			continue
@@ -52,6 +53,11 @@ func (d *Detector) Observe(ctx context.Context) (types.NetState, error) {
 		if t.HasIPv4 && (t.NoARP || t.OwnsDefault) {
 			ciscoActive = true
 		}
+		// Full-tunnel: a foreign tunnel holds the default route. Split-tunnel
+		// leaves the default on the physical NIC, so this stays false there.
+		if t.OwnsDefault {
+			ciscoOwnsDefault = true
+		}
 	}
 
 	return types.NetState{
@@ -60,5 +66,6 @@ func (d *Detector) Observe(ctx context.Context) (types.NetState, error) {
 		Tunnels:             tunnels,
 		CiscoProcessPresent: parseCiscoProcs(psOut),
 		CiscoActive:         ciscoActive,
+		CiscoOwnsDefault:    ciscoOwnsDefault,
 	}, nil
 }

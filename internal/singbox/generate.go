@@ -3,6 +3,7 @@ package singbox
 import (
 	"fmt"
 	"net"
+	"net/url"
 
 	"singctl/internal/vless"
 )
@@ -17,6 +18,7 @@ const (
 	socksOutTag   = "socks-out"
 	proxyDNSTag   = "proxy-dns"
 	fwdDNSTag     = "fwd-dns"
+	bootDNSTag    = "boot-dns"
 	localDNSTag   = "local"
 	listenAddr    = "127.0.0.1"
 	socksPort     = 1080
@@ -169,6 +171,36 @@ func vlessOutbound(p vless.ServerProfile, tag, physIface string) VLESSOutbound {
 // proxyServerTag is the per-server outbound tag in a multi-server set.
 func proxyServerTag(i int) string { return fmt.Sprintf("%s-%d", proxyTag, i) }
 
+// probeHost extracts the DNS-resolvable hostname from a urltest probe URL. It
+// returns "" for a URL that needs no DNS (parse failure, no host, or a literal
+// IP) — in those cases no bootstrap DNS rule is needed.
+func probeHost(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	host := u.Hostname()
+	if host == "" || net.ParseIP(host) != nil {
+		return ""
+	}
+	return host
+}
+
+// dedupeHosts returns hosts with duplicates removed, preserving first-seen
+// order (so the generated config stays deterministic).
+func dedupeHosts(hosts []string) []string {
+	seen := make(map[string]bool, len(hosts))
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		if h == "" || seen[h] {
+			continue
+		}
+		seen[h] = true
+		out = append(out, h)
+	}
+	return out
+}
+
 // GenerateProxyConfigOpts builds the persistent PROXY instance from a set of one
 // or more servers. PhysIface is non-empty ONLY in VPN mode (decision D3): then
 // bind_interface/default_interface pin egress to the physical NIC so it escapes
@@ -184,22 +216,61 @@ func GenerateProxyConfigOpts(set vless.ProfileSet, opts ProxyOpts) (Config, erro
 	ports := opts.Ports.withDefaults()
 
 	var outbounds []any
+	// bootHosts collects the VLESS server hostnames (when addressed by domain)
+	// and, in multi-server mode, the urltest probe host. These must be resolved
+	// by the bootstrap resolver (public DoH via "direct"), NOT by the system/
+	// corporate resolver and NOT through the proxy itself:
+	//   - Resolving a proxy server's own address through the proxy is a bootstrap
+	//     loop (in multi-server mode it lands the dial on the DoH IP 1.1.1.1 and
+	//     fails TLS).
+	//   - Under a corporate VPN (Cisco split-tunnel) the system resolver is the
+	//     corporate DNS (CGNAT 100.64.x), which is unreachable/unresponsive for
+	//     public names from our egress → "lookup <server>: i/o timeout".
+	// Routing them through "direct" (which rides the physical/default route where
+	// plain internet works) sidesteps both.
+	var bootHosts []string
 	if set.Multi() {
 		tags := make([]string, set.Len())
 		for i, p := range set.Profiles {
 			tag := proxyServerTag(i)
 			tags[i] = tag
 			outbounds = append(outbounds, vlessOutbound(p, tag, opts.PhysIface))
+			if net.ParseIP(p.Host) == nil {
+				bootHosts = append(bootHosts, p.Host)
+			}
 		}
 		ut := opts.URLTest.withDefaults()
 		outbounds = append(outbounds, URLTestOutbound{
 			Type: "urltest", Tag: proxyTag, Outbounds: tags,
 			URL: ut.URL, Interval: ut.Interval, Tolerance: ut.Tolerance,
 		})
+		bootHosts = append(bootHosts, probeHost(ut.URL))
 	} else {
-		outbounds = append(outbounds, vlessOutbound(set.Primary(), proxyTag, opts.PhysIface))
+		p := set.Primary()
+		outbounds = append(outbounds, vlessOutbound(p, proxyTag, opts.PhysIface))
+		if net.ParseIP(p.Host) == nil {
+			bootHosts = append(bootHosts, p.Host)
+		}
 	}
 	outbounds = append(outbounds, DirectOutbound{Type: "direct", Tag: directTag, BindInterface: opts.PhysIface})
+
+	// Bootstrap DNS: resolve bootHosts via DoH 1.1.1.1 over "direct" so the
+	// server/probe hostnames never depend on the corporate resolver or the proxy.
+	var dnsRules []DNSRule
+	dnsServers := []DNSServer{
+		{Type: "https", Tag: proxyDNSTag, Server: "1.1.1.1", Detour: proxyTag},
+		{Type: "local", Tag: localDNSTag},
+	}
+	if hosts := dedupeHosts(bootHosts); len(hosts) > 0 {
+		// No detour: sing-box dials a detour-less DNS server directly (the default
+		// dial IS direct), which is exactly what we want — resolve the server/
+		// probe hostnames over the physical/default route, bypassing both the
+		// proxy (no loop) and the corporate resolver. NB: `detour: direct` is
+		// rejected at start ("detour to an empty direct outbound makes no sense")
+		// because direct carries no special config here, so we omit it.
+		dnsServers = append(dnsServers, DNSServer{Type: "https", Tag: bootDNSTag, Server: "1.1.1.1"})
+		dnsRules = append(dnsRules, DNSRule{Domain: hosts, Server: bootDNSTag})
+	}
 
 	rules := []RouteRule{
 		{Action: "sniff", Timeout: "3s"},
@@ -219,10 +290,8 @@ func GenerateProxyConfigOpts(set vless.ProfileSet, opts ProxyOpts) (Config, erro
 	cfg := Config{
 		Log: ptrLog(),
 		DNS: &DNS{
-			Servers: []DNSServer{
-				{Type: "https", Tag: proxyDNSTag, Server: "1.1.1.1", Detour: proxyTag},
-				{Type: "local", Tag: localDNSTag},
-			},
+			Servers:  dnsServers,
+			Rules:    dnsRules,
 			Final:    proxyDNSTag,
 			Strategy: "ipv4_only",
 		},

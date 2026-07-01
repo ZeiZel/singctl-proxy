@@ -217,6 +217,47 @@ func (m *Manager) ResumeProxy(ctx context.Context) error {
 	return nil
 }
 
+// BindProxyToPhysical rebinds the proxy's egress to physIface while STAYING in
+// proxy-only mode, so its upstream dial escapes a third-party VPN (Cisco) that
+// owns the default route — the primary coexistence strategy. No-op unless the
+// proxy is running in proxy-only mode and the target differs from the current
+// bind. On failure it rolls back to the previous (usually unbound) proxy so the
+// caller can fall back to riding the default route, and returns the error.
+func (m *Manager) BindProxyToPhysical(ctx context.Context, physIface string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.state != StateProxyOnly || m.proxy == nil {
+		return nil
+	}
+	if physIface == "" {
+		return fmt.Errorf("bind proxy for cisco: no physical interface")
+	}
+	if m.bound == physIface {
+		return nil // already pinned to this NIC
+	}
+	prevBound := m.bound
+	if err := m.recreateProxyLocked(ctx, physIface); err != nil {
+		m.rollbackProxyLocked(ctx, prevBound) // restore the working unbound proxy
+		return fmt.Errorf("bind proxy to %s: %w", physIface, err)
+	}
+	return nil
+}
+
+// UnbindProxy releases any physical bind and re-dials the proxy over the current
+// default route (rule c: Cisco disconnected). No-op unless in proxy-only mode.
+func (m *Manager) UnbindProxy(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.state != StateProxyOnly {
+		return nil
+	}
+	if err := m.recreateProxyLocked(ctx, ""); err != nil {
+		m.state = StateStopped
+		return fmt.Errorf("unbind proxy: %w", err)
+	}
+	return nil
+}
+
 // RefreshProxy re-dials the proxy upstream by recreating it with the same
 // binding (rule c: reconnect after Cisco turns off). Accepts the sub-second
 // listener gap (D3/R2).

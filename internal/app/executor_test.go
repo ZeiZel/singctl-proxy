@@ -169,6 +169,56 @@ func TestExecutor_Apply_NotifiesUIWithRunMode(t *testing.T) {
 	}
 }
 
+func TestExecutor_Apply_CiscoBypass_BindsPhysical_AndUnbinds(t *testing.T) {
+	e, notes := newExecutor()
+	ctx := context.Background()
+	_ = e.LoadLink(ctx, validLink)
+	_ = e.EnableProxy(ctx) // proxy-only, unbound (rides default route)
+
+	if e.ProxyBoundToPhysical() {
+		t.Fatal("proxy should start unbound")
+	}
+
+	// Cisco appears while proxy-only -> pin egress to the physical NIC (bypass),
+	// staying in proxy-only mode so AnyConnect can still connect.
+	e.Apply(ctx, monitor.Event{
+		NetState: types.NetState{CiscoActive: true, PhysicalIface: "en0"},
+		Decision: policy.DecisionResult{Actions: []policy.Action{policy.ActBindPhysical}},
+	})
+	if e.manager().State() != runtime.StateProxyOnly {
+		t.Fatalf("bind must stay proxy-only, got %v", e.manager().State())
+	}
+	if !e.ProxyBoundToPhysical() {
+		t.Fatal("proxy egress should be pinned to the physical NIC after bind")
+	}
+	if cisco, bypass, phys := e.CoexistStatus(); !cisco || !bypass || phys != "en0" {
+		t.Errorf("CoexistStatus = (%v,%v,%q), want (true,true,en0)", cisco, bypass, phys)
+	}
+
+	// Cisco leaves -> unbind + re-dial over the restored default route.
+	e.Apply(ctx, monitor.Event{
+		NetState: types.NetState{CiscoActive: false, PhysicalIface: "en0"},
+		Decision: policy.DecisionResult{Actions: []policy.Action{policy.ActUnbindProxy}},
+	})
+	if e.ProxyBoundToPhysical() {
+		t.Error("proxy should be unbound after Cisco leaves")
+	}
+	if _, bypass, _ := e.CoexistStatus(); bypass {
+		t.Error("bypass should be cleared after Cisco leaves")
+	}
+
+	// The bind/unbind transitions must have surfaced a status note to the UI.
+	var sawStatus bool
+	for len(notes) > 0 {
+		if _, ok := (<-notes).(ui.StatusMsg); ok {
+			sawStatus = true
+		}
+	}
+	if !sawStatus {
+		t.Error("expected a StatusMsg for the coexistence transition")
+	}
+}
+
 func TestExecutor_Apply_RefreshFromProxyOnly(t *testing.T) {
 	e, _ := newExecutor()
 	ctx := context.Background()
