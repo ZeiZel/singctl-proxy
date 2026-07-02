@@ -9,7 +9,6 @@
 <dict>
     <key>com.apple.developer.networking.networkextension</key>
     <array>
-        <string>packet-tunnel-provider-systemextension</string>
         <string>app-proxy-provider-systemextension</string>
     </array>
     <key>com.apple.security.application-groups</key>

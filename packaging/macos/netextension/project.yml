@@ -6,7 +6,7 @@ name: SingctlProxy
 options:
   bundleIdPrefix: com.singctl
   deploymentTarget:
-    macOS: "13.0"
+    macOS: "26.0"
   createIntermediateGroups: true
 
 settings:
@@ -29,6 +29,12 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.singctl.proxy
         INFOPLIST_FILE: ContainerApp/Info.plist
         CODE_SIGN_ENTITLEMENTS: ContainerApp/ContainerApp.entitlements
+        # Manual Developer ID signing: the auto-generated development profile
+        # lacks the *-systemextension NE entitlement, so distribution requires an
+        # explicit Developer ID provisioning profile (created in the portal).
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Developer ID Application"
+        PROVISIONING_PROFILE_SPECIFIER: "singctl proxy DevID"
     dependencies:
       - target: ProxyExtension
         embed: true
@@ -44,6 +50,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.singctl.proxy.netext
         INFOPLIST_FILE: ProxyExtension/Info.plist
         CODE_SIGN_ENTITLEMENTS: ProxyExtension/ProxyExtension.entitlements
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Developer ID Application"
+        PROVISIONING_PROFILE_SPECIFIER: "singctl netext DevID"
 
   # Unit tests for the pure SOCKS5 (RFC 1928) framing helpers. Socks5.swift is
   # Foundation-only (plus libc address parsing), so its source is compiled

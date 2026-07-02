@@ -14,3 +14,8 @@
 
 # Compose deployment secrets (private key, admin token, webhook secret)
 deploy/compose/.env
+
+# macOS netextension build artifacts (xcodegen output + Xcode DerivedData)
+/packaging/macos/netextension/build/
+/packaging/macos/netextension/SingctlProxy.xcodeproj/
+/singctl

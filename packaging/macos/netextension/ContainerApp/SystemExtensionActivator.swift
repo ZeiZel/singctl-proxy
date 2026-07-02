@@ -100,8 +100,7 @@ final class SystemExtensionActivator: NSObject, OSSystemExtensionRequestDelegate
     }
 
     func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
-        os_log("system extension needs user approval: open System Settings → General → " +
-            "Login Items & Extensions → Network Extensions and allow \"singctl\"", log: log, type: .info)
+        os_log("system extension needs user approval: open System Settings → General → Login Items & Extensions → Network Extensions and allow \"singctl\"", log: log, type: .info)
         // Not terminal — didFinishWithResult/didFailWithError still arrives after
         // the user acts (approve or dismiss). Do NOT finishActivation() here: that
         // would nil out onActivation, so when the user approves a moment later the
