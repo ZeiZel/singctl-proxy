@@ -28,7 +28,7 @@ Ed25519-ключом, а CLI проверяет его встроенным пу
 | Образ контейнера | `deploy/server.Dockerfile` |
 | Helm-чарт | `deploy/helm/singctl-license` |
 | Провижининг (SSH+хардненинг+k3s+runner) | `deploy/ansible` |
-| CI/CD | `.github/workflows/{release,deploy}.yml` |
+| CI/CD | `.gitlab-ci.yml` |
 
 Сборка бинаря сервера локально: `make build-server` → `bin/singctl-server`
 (чистый Go, CGO-free, без sing-box). Команды: `serve`, `keygen`, `issue`,
@@ -47,9 +47,10 @@ bin/singctl-server keygen
 
 - `LICENSE_PUBKEY=…`  — **публичный** ключ. Встраивается в CLI при сборке
   (`make build LICENSE_PUBKEY=…`, см. `Makefile`), безопасен для коммита. В CI
-  это секрет репо `LICENSE_PUBKEY`, который `release.yml` подставляет в сборку.
-- `LICENSE_PRIVATE_KEY=…` — **приватный** ключ. Только на сервере (секрет репо
-  `LICENSE_PRIVATE_KEY` → Helm-секрет). **Никогда не коммить.**
+  это CI/CD-переменная `LICENSE_PUBKEY`, которую джобы `release:linux`/
+  `release:macos` из `.gitlab-ci.yml` подставляют в сборку.
+- `LICENSE_PRIVATE_KEY=…` — **приватный** ключ. Только на сервере (CI/CD-
+  переменная `LICENSE_PRIVATE_KEY` → Helm-секрет). **Никогда не коммить.**
 
 ### Шаг 2 — провижининг сервера (Ansible)
 
@@ -58,41 +59,62 @@ cd deploy/ansible
 ./bootstrap.sh
 ```
 
-Интерактивно спросит host / логин / пароль / кастомный SSH-порт, затем установит
-SSH-ключ, пропишет алиас `remote-singctl-server` в `~/.ssh/config` и прогонит
-`playbook.yml` (UFW + fail2ban + SSH drop-in, k3s + traefik + helm). Чтобы в том же
-прогоне зарегистрировать self-hosted раннер деплоя (и GHCR-креды для приватного
-образа):
+Интерактивно спросит host / логин / пароль / кастомный SSH-порт, а также
+(опционально) GitLab-токены, затем установит SSH-ключ, пропишет алиас
+`remote-singctl-server` в `~/.ssh/config` и прогонит `playbook.yml` (UFW +
+fail2ban + SSH drop-in, k3s + traefik + helm). Чтобы в том же прогоне
+зарегистрировать self-hosted раннер деплоя (и registry-креды для приватного
+образа), ответь на дополнительные промпты скрипта:
 
-```sh
-./bootstrap.sh -e github_runner_url=https://github.com/OWNER/REPO \
-               -e github_runner_token=<runner-token> \
-               -e ghcr_user=<user> -e ghcr_token=<ghcr-PAT>
+```
+GitLab runner authentication token (glrt-..., empty to skip): glrt-...
+GitLab deploy token username (empty to skip): <deploy-token-user>
+GitLab deploy token secret (empty to skip): <deploy-token-pass>
 ```
 
-`github_runner_token` — короткоживущий токен регистрации
-(**Settings → Actions → Runners → New self-hosted runner**). Раннер получает метки
-`self-hosted,singctl` и держит локальный kubeconfig + helm, поэтому API кластера
-наружу не выставляется. Требования локально: `ssh`, `ssh-keygen`, `ssh-copy-id`,
-`sshpass`, `ansible` + коллекция `community.general`. Подробности —
-`deploy/ansible/README.md`.
+либо передай их как extra vars неинтерактивно:
 
-### Шаг 3 — секреты репозитория → push → deploy
+```sh
+./bootstrap.sh -e gitlab_runner_token=glrt-... \
+               -e gitlab_deploy_token_user=<user> \
+               -e gitlab_deploy_token_pass=<token>
+```
 
-В **Settings → Secrets and variables → Actions** задай:
+`gitlab_runner_token` (вида `glrt-…`) — это **runner authentication token**
+нового формата, который GitLab выдаёт один раз при создании project runner
+(**Settings → CI/CD → Runners → New project runner**, тег `singctl-deploy`,
+Protected=on, без untagged) — не путать с deploy token'ом ниже. Раннер держит
+локальный kubeconfig + helm, поэтому API кластера наружу не выставляется.
+`gitlab_deploy_token_user`/`gitlab_deploy_token_pass` — логин/пароль project
+deploy token'а (**Settings → Repository → Deploy tokens**, scope
+`read_registry`), они уходят в `/etc/rancher/k3s/registries.yaml` для доступа
+к приватному GitLab Container Registry. Требования локально: `ssh`,
+`ssh-keygen`, `ssh-copy-id`, `sshpass`, `ansible` + коллекция
+`community.general`. Подробности — `deploy/ansible/README.md` и
+[docs/deploy-gitlab.md](docs/deploy-gitlab.md).
 
-| Секрет | Значение | Кто использует |
+### Шаг 3 — CI/CD-переменные → push → deploy
+
+В **Settings → CI/CD → Variables** задай (полная таблица форматов/masked/
+protected — в [docs/deploy-gitlab.md](docs/deploy-gitlab.md)):
+
+| Переменная | Значение | Кто использует |
 |---|---|---|
-| `LICENSE_PRIVATE_KEY` | приватный ключ из шага 1 | `deploy.yml` → Helm-секрет |
-| `LICENSE_ADMIN_TOKEN` | bearer-токен для `/v1/admin/*` | `deploy.yml` → Helm-секрет |
-| `LICENSE_WEBHOOK_SECRET` | HMAC-секрет платёжного вебхука | `deploy.yml` → Helm-секрет |
-| `LICENSE_HOST` | внешний хост (FQDN для ingress/TLS) | `deploy.yml` → `ingress.host` |
-| `LICENSE_PUBKEY` | публичный ключ из шага 1 | `release.yml` → встраивание в CLI |
+| `LICENSE_PRIVATE_KEY` | приватный ключ из шага 1 | `deploy:helm` → Helm-секрет |
+| `LICENSE_ADMIN_TOKEN` | bearer-токен для `/v1/admin/*` | `deploy:helm` → Helm-секрет |
+| `LICENSE_WEBHOOK_SECRET` | HMAC-секрет платёжного вебхука | `deploy:helm` → Helm-секрет |
+| `LICENSE_HOST` | внешний хост (FQDN для ingress/TLS) | `deploy:helm` → `ingress.host` |
+| `LICENSE_PUBKEY` | публичный ключ из шага 1 | `release:linux`/`release:macos` → встраивание в CLI |
 
-Затем `git push` в `main` (или тег `v*`) запускает `deploy.yml`: сборка образа →
-push в GHCR → `helm upgrade --install singctl-license` на раннере (namespace
-`singctl`). Тег `v*` дополнительно запускает `release.yml` — сборку CLI с
-встроенным `LICENSE_PUBKEY` и публикацию релиза.
+Затем `git push` в `main` (или тег `vX.Y.Z`) запускает пайплайн из
+`.gitlab-ci.yml`: `test` → `build:image` (сборка образа, push в GitLab
+Container Registry, `$CI_REGISTRY_IMAGE`) → `deploy:helm` (раннер
+`singctl-deploy`, `helm upgrade --install singctl-license`, namespace
+`singctl`). Тег `vX.Y.Z` дополнительно запускает `release:linux` (авто) и
+`release:macos` (ручная джоба на раннере с тегом `macos`) — сборку CLI/GUI с
+встроенным `LICENSE_PUBKEY`, а `release:publish` публикует GitLab Release.
+Подробный пошаговый разбор (включая создание раннеров и protected tags) —
+[docs/deploy-gitlab.md](docs/deploy-gitlab.md).
 
 ### Шаг 4 — выдать лицензию
 
@@ -164,10 +186,19 @@ LICENSE_DB=/data/licenses.json bin/singctl-server revoke --id <license-id>
   **не подойдёт**: entitlement Network Extensions и нотаризация доступны только
   платным аккаунтам.
 - **Xcode** (+ command line tools) и **XcodeGen** (`brew install xcodegen`).
-- **Team ID** (10 символов). Где взять:
+- **Team ID** (10 символов). Проектный Team ID — `S3UCF4USYC` (используется по
+  умолчанию в `build.sh`/`Makefile`; переопределяется через `DEVELOPMENT_TEAM=`
+  для другого аккаунта). Где взять свой:
   - `security find-identity -v -p codesigning` → в скобках в конце строки;
   - или developer.apple.com/account → **Membership details** → Team ID;
   - или Xcode → Settings → Accounts → команда.
+- **Developer ID Network Extension entitlement** — распространение системного
+  расширения (Network Extension) с подписью **Developer ID** требует отдельного
+  одобрения Apple. Запроси его как можно раньше на
+  https://developer.apple.com/contact/request/network-extension (выбери Developer
+  ID distribution) — рассмотрение занимает от нескольких дней до нескольких
+  недель. Локальные Development-сборки работают и без него — через
+  `systemextensionsctl developer on` (см. «Траблшутинг» ниже).
 
 ## 1. Идентификаторы (App IDs) и capabilities
 
@@ -217,14 +248,15 @@ entitlements-файл для CLI:
 ```sh
 codesign --force --options runtime \
   --entitlements singctl.entitlements \
-  --sign "Developer ID Application: <Your Name> (<TEAM_ID>)" \
+  --sign "Developer ID Application: <Your Name> (S3UCF4USYC)" \
   bin/singctl
 ```
 
 ## 4. Сборка расширения + контейнера
 
 ```sh
-make build-netext DEVELOPMENT_TEAM=<TEAM_ID>
+make build-netext                    # defaults to DEVELOPMENT_TEAM=S3UCF4USYC
+make build-netext DEVELOPMENT_TEAM=OTHERTEAMID   # override for another Apple account
 # = packaging/macos/netextension/build.sh: xcodegen generate + xcodebuild Release
 ```
 
@@ -248,7 +280,7 @@ Product → Archive.
 ```sh
 # один раз сохранить креды notarytool:
 xcrun notarytool store-credentials singctl-notary \
-  --apple-id <you@example.com> --team-id <TEAM_ID> --password <app-specific-pwd>
+  --apple-id <you@example.com> --team-id S3UCF4USYC --password <app-specific-pwd>
 
 # собрать .pkg/.zip с .app, затем:
 xcrun notarytool submit SingctlProxy.zip --keychain-profile singctl-notary --wait

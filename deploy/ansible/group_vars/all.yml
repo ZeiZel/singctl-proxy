@@ -6,7 +6,7 @@ allowed_ports: [80, 443]
 k3s_channel: stable
 
 # Optional integrations (leave empty to skip):
-github_runner_url: ""    # https://github.com/OWNER/REPO
-github_runner_token: ""  # short-lived runner registration token (Settings → Actions → Runners)
-ghcr_user: ""            # GHCR username for pulling the private server image
-ghcr_token: ""           # GHCR PAT (read:packages)
+gitlab_url: "https://gitlab.com"
+gitlab_runner_token: ""        # glrt-... project runner authentication token (GitLab UI: Settings → CI/CD → Runners)
+gitlab_deploy_token_user: ""   # project deploy token username (Settings → Repository → Deploy tokens, scope read_registry)
+gitlab_deploy_token_pass: ""   # deploy token secret

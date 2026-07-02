@@ -1,7 +1,8 @@
 ---
 # Hardens a fresh Debian/Ubuntu server and installs k3s + helm for the singctl
-# license server, plus (optionally) a self-hosted GitHub Actions runner that the
-# deploy workflow uses. Idempotent. Run via bootstrap.sh (sets ssh_port etc.).
+# license server, plus (optionally) a self-hosted GitLab Runner (shell executor)
+# that the GitLab CI deploy job uses to run `helm upgrade` locally. Idempotent.
+# Run via bootstrap.sh (sets ssh_port etc.).
 - name: Provision singctl license server
   hosts: all
   become: true
@@ -10,13 +11,14 @@
     allowed_ports: [80, 443]
     k3s_channel: stable
     # Optional — set via -e to enable:
-    #   github_runner_url:   https://github.com/OWNER/REPO
-    #   github_runner_token: <runner registration token>
-    #   ghcr_user / ghcr_token: for pulling the private server image
-    github_runner_url: ""
-    github_runner_token: ""
-    ghcr_user: ""
-    ghcr_token: ""
+    #   gitlab_runner_token: glrt-... project runner authentication token
+    #     (GitLab UI: Settings → CI/CD → Runners → New project runner)
+    #   gitlab_deploy_token_user / gitlab_deploy_token_pass: project deploy
+    #     token for pulling the private server image from registry.gitlab.com
+    gitlab_url: "https://gitlab.com"
+    gitlab_runner_token: ""
+    gitlab_deploy_token_user: ""
+    gitlab_deploy_token_pass: ""
 
   handlers:
     - name: restart ssh
@@ -26,6 +28,10 @@
     - name: restart fail2ban
       ansible.builtin.service:
         name: fail2ban
+        state: restarted
+    - name: restart k3s
+      ansible.builtin.service:
+        name: k3s
         state: restarted
 
   tasks:
@@ -42,6 +48,7 @@
           - unattended-upgrades
           - curl
           - ca-certificates
+          - git
         state: present
 
     # --- SSH hardening (drop-in; keeps the main config untouched) ------------
@@ -109,9 +116,9 @@
           APT::Periodic::Update-Package-Lists "1";
           APT::Periodic::Unattended-Upgrade "1";
 
-    # --- GHCR pull creds for k3s (optional) ----------------------------------
-    - name: k3s registries.yaml for private GHCR
-      when: ghcr_user | length > 0 and ghcr_token | length > 0
+    # --- GitLab registry pull creds for k3s (optional) -----------------------
+    - name: k3s registries.yaml for registry.gitlab.com
+      when: gitlab_deploy_token_user | length > 0 and gitlab_deploy_token_pass | length > 0
       ansible.builtin.copy:
         dest: /etc/rancher/k3s/registries.yaml
         owner: root
@@ -119,10 +126,11 @@
         mode: "0600"
         content: |
           configs:
-            ghcr.io:
+            registry.gitlab.com:
               auth:
-                username: {{ ghcr_user }}
-                password: {{ ghcr_token }}
+                username: {{ gitlab_deploy_token_user }}
+                password: {{ gitlab_deploy_token_pass }}
+      notify: restart k3s
 
     # --- k3s + helm ----------------------------------------------------------
     - name: Install k3s (single-node, traefik included)
@@ -143,42 +151,56 @@
         line: "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml"
         create: true
 
-    # --- Self-hosted GitHub Actions runner (optional) ------------------------
-    - name: Install self-hosted runner
-      when: github_runner_url | length > 0 and github_runner_token | length > 0
+    # --- Self-hosted GitLab Runner, shell executor (optional) ----------------
+    # NOTE: create the project runner in GitLab UI *first*: Settings → CI/CD →
+    # Runners → New project runner, tag `singctl-deploy`, Protected=on,
+    # run-untagged=off. Copy the glrt-... authentication token it gives you
+    # into gitlab_runner_token. With these new-style authentication tokens the
+    # tag list / run-untagged / access-level are fixed in the UI when the
+    # runner is created, so `gitlab-runner register` must NOT be passed
+    # --tag-list, --run-untagged or --access-level (rejected/ignored).
+    - name: Install self-hosted GitLab Runner
+      when: gitlab_runner_token | length > 0
       block:
-        - name: Runner user
-          ansible.builtin.user:
-            name: gha-runner
-            home: /opt/gha-runner
-            shell: /bin/bash
-            system: true
-
-        - name: Download runner
-          ansible.builtin.shell: |
-            cd /opt/gha-runner
-            curl -fsSL -o actions-runner.tar.gz \
-              https://github.com/actions/runner/releases/download/v2.319.1/actions-runner-linux-x64-2.319.1.tar.gz
-            tar xzf actions-runner.tar.gz
+        - name: Add the gitlab-runner apt repository
+          ansible.builtin.shell: >
+            curl -fsSL https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh | bash
           args:
-            creates: /opt/gha-runner/config.sh
-          become_user: gha-runner
+            creates: /etc/apt/sources.list.d/runner_gitlab-runner.list
 
-        - name: Configure runner (labels self-hosted,singctl)
-          ansible.builtin.shell: |
-            cd /opt/gha-runner
-            ./config.sh --unattended --replace \
-              --url {{ github_runner_url }} \
-              --token {{ github_runner_token }} \
-              --labels singctl --name {{ inventory_hostname }}
-          args:
-            creates: /opt/gha-runner/.runner
-          become_user: gha-runner
+        - name: Install gitlab-runner
+          ansible.builtin.apt:
+            name: gitlab-runner
+            state: present
 
-        - name: Install + start runner service
+        - name: Register gitlab-runner (non-interactive) and mark it done
           ansible.builtin.shell: |
-            cd /opt/gha-runner
-            ./svc.sh install gha-runner
-            ./svc.sh start
+            gitlab-runner register --non-interactive \
+              --url {{ gitlab_url }} \
+              --token {{ gitlab_runner_token }} \
+              --executor shell
+            touch /etc/gitlab-runner/.singctl-registered
           args:
-            creates: /etc/systemd/system/actions.runner.*.service
+            creates: /etc/gitlab-runner/.singctl-registered
+
+        - name: Remove gitlab-runner .bash_logout (corrupts shell-executor job logs)
+          ansible.builtin.file:
+            path: /home/gitlab-runner/.bash_logout
+            state: absent
+
+        - name: Ensure gitlab-runner .kube directory
+          ansible.builtin.file:
+            path: /home/gitlab-runner/.kube
+            state: directory
+            owner: gitlab-runner
+            group: gitlab-runner
+            mode: "0700"
+
+        - name: Copy k3s kubeconfig for gitlab-runner (helm/kubectl in jobs)
+          ansible.builtin.copy:
+            src: /etc/rancher/k3s/k3s.yaml
+            dest: /home/gitlab-runner/.kube/config
+            remote_src: true
+            owner: gitlab-runner
+            group: gitlab-runner
+            mode: "0600"

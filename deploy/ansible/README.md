@@ -1,7 +1,7 @@
 # Provisioning the singctl license server
 
 One-command bootstrap of a fresh Debian/Ubuntu box: SSH key + hardening + k3s +
-helm + (optionally) a self-hosted GitHub Actions runner.
+helm + (optionally) a self-hosted GitLab Runner.
 
 ## 1. Bootstrap
 
@@ -10,23 +10,30 @@ cd deploy/ansible
 ./bootstrap.sh
 ```
 
-It prompts for the server host, login, password, and a custom SSH port, then:
+It prompts for the server host, login, password, a custom SSH port, and
+(optionally) GitLab integration values, then:
 1. generates `~/.ssh/singctl_server` (if absent) and installs it on the server,
 2. writes a `~/.ssh/config` entry so you can later just `ssh remote-singctl-server`
    (it points at the custom port the playbook switches SSH to),
-3. runs `playbook.yml` (hardening + k3s + helm).
+3. runs `playbook.yml` (hardening + k3s + helm + optional gitlab-runner).
 
 Requirements locally: `ssh`, `ssh-keygen`, `ssh-copy-id`, `sshpass`, `ansible`,
 plus the `community.general` collection (`ansible-galaxy collection install
 community.general`).
 
-To also register the deploy runner and GHCR pull creds in the same run:
+To also register the deploy runner and the registry pull creds in the same run,
+answer the extra prompts (`GitLab runner authentication token`, `GitLab deploy
+token username`, `GitLab deploy token secret`) — or pass them non-interactively
+as extra vars:
 
 ```sh
-./bootstrap.sh -e github_runner_url=https://github.com/OWNER/REPO \
-               -e github_runner_token=<runner-token> \
-               -e ghcr_user=<user> -e ghcr_token=<ghcr-PAT>
+./bootstrap.sh -e gitlab_runner_token=glrt-... \
+               -e gitlab_deploy_token_user=<user> \
+               -e gitlab_deploy_token_pass=<token>
 ```
+
+Get these from the GitLab UI first — see "Full end-to-end runbook" below for
+exactly where.
 
 ## 2. What the playbook does
 
@@ -34,18 +41,28 @@ To also register the deploy runner and GHCR pull creds in the same run:
   (sshd jail on the custom port), SSH drop-in (`Port`, no root, no password auth),
   `unattended-upgrades`.
 - **k3s** (single node, traefik ingress included) + **helm**.
-- Optional `/etc/rancher/k3s/registries.yaml` for pulling the private GHCR image.
-- Optional **self-hosted runner** (labels `self-hosted,singctl`) as a service —
-  this is what `.github/workflows/deploy.yml` runs `helm upgrade` on.
+- Optional `/etc/rancher/k3s/registries.yaml` with a GitLab **deploy token**
+  (scope `read_registry`), so k3s can pull the private image from
+  `registry.gitlab.com` without `imagePullSecrets`.
+- Optional **self-hosted GitLab Runner** (shell executor, project runner tagged
+  `singctl-deploy`) as a service — this is what the `deploy:helm` job in
+  `.gitlab-ci.yml` runs `helm upgrade` on. Its `~/.kube/config` is copied from
+  the k3s kubeconfig so `helm`/`kubectl` work out of the box in CI jobs.
 
 ## 3. Deploy
 
-After the runner is up, set the repo secrets (`LICENSE_PRIVATE_KEY`,
-`LICENSE_ADMIN_TOKEN`, `LICENSE_WEBHOOK_SECRET`, `LICENSE_HOST`, `LICENSE_PUBKEY`)
-and push to `main` (or tag) — the deploy workflow builds the image, pushes to
-GHCR, and `helm upgrade --install`s the chart on the runner. Generate the keypair
-first with `bin/singctl-server keygen` (private → `LICENSE_PRIVATE_KEY` secret;
-public → `LICENSE_PUBKEY` secret + the CLI build).
+After the runner is up, set the CI/CD variables (Settings → CI/CD → Variables)
+and push to `main` (or tag `vX.Y.Z`) — the GitLab CI pipeline (`.gitlab-ci.yml`)
+builds the image, pushes it to the GitLab Container Registry, and
+`helm upgrade --install`s `deploy/helm/singctl-license` on the runner
+(namespace `singctl`).
+
+For the full variable list, values/formats, and the complete step-by-step
+(including registering the runners in the GitLab UI, protected tags, and
+issuing licenses), see **[docs/deploy-gitlab.md](../../docs/deploy-gitlab.md)**.
+Generate the keypair first with `bin/singctl-server keygen` (private →
+`LICENSE_PRIVATE_KEY` variable; public → `LICENSE_PUBKEY` variable + the CLI
+build).
 
 ## Notes
 

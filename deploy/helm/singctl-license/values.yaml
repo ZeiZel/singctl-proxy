@@ -1,15 +1,18 @@
 # Default values for singctl-license.
 
 image:
-  repository: ghcr.io/OWNER/singctl-license # set to your GHCR path
-  tag: "latest"                              # deploy.yml overrides with the build SHA/tag
+  repository: registry.gitlab.com/GROUP/singctl-proxy # set to your GitLab container registry path
+  tag: "latest"                              # .gitlab-ci.yml overrides with the build SHA/tag
   pullPolicy: IfNotPresent
 
-# For a private GHCR image: either create a regcred pull secret and list it here,
-# or configure k3s /etc/rancher/k3s/registries.yaml (the Ansible playbook does the
-# latter). Leave empty if the package is public.
+# For a private GitLab Container Registry image: pulls use a project deploy
+# token (Settings > Repository > Deploy tokens, scope `read_registry`) written
+# into k3s's /etc/rancher/k3s/registries.yaml by the Ansible playbook — the
+# node authenticates to registry.gitlab.com directly, so no imagePullSecrets
+# are needed for the default flow. Leave this list empty unless you'd rather
+# use a per-namespace pull secret instead.
 imagePullSecrets: []
-# - name: ghcr-regcred
+# - name: gitlab-regcred
 
 replicaCount: 1 # the JSON store is a single file on a RWO PVC — keep at 1
 

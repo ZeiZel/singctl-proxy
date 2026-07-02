@@ -88,8 +88,12 @@ build-all: build-macos build-linux build-windows
 # way to fully proxy Cursor/VS Code per-app on macOS. After building, run the
 # .app once to approve the extension, then notarize (see the script's output).
 #
-#   make build-netext DEVELOPMENT_TEAM=<your-team-id>
+#   make build-netext                          # uses the default team below
+#   make build-netext DEVELOPMENT_TEAM=<your-team-id>   # override for another account
 #
+# DEVELOPMENT_TEAM defaults to the project's Apple Developer Team ID; override it
+# on the command line to build/sign with a different account.
+DEVELOPMENT_TEAM ?= S3UCF4USYC
 NETEXT_DIR := packaging/macos/netextension
 build-netext:
 ifeq ($(UNAME_S),Darwin)

@@ -1,0 +1,209 @@
+# singctl-proxy CI/CD — migrated from GitHub Actions (.github/workflows/{ci,deploy,release}.yml).
+#
+# Operational notes (read before touching runners/variables):
+#  - deploy:helm runs on a shell-executor runner living on the k3s host (Ansible
+#    provisioned). Create it in the GitLab UI as a PROJECT runner tagged
+#    "singctl-deploy", with Protected = on and "Run untagged jobs" = off, so it
+#    never picks up jobs from untrusted branches.
+#  - Settings > Repository > Protected tags must have a wildcard "v*" rule (with
+#    at least "Maintainers" allowed to create), otherwise tag pipelines won't be
+#    able to see protected CI/CD variables (LICENSE_PUBKEY, LICENSE_PRIVATE_KEY,
+#    APPLE_CERT_P12, CODESIGN_IDENTITY, ...) and release:* jobs will fail.
+#  - release:macos runs on the user's own Mac, registered as a shell-executor
+#    project runner tagged "macos". gitlab.com has no free shared macOS runners.
+
+stages:
+  - test
+  - build
+  - deploy
+  - release
+
+workflow:
+  # Standard pattern to avoid duplicate branch+MR pipelines: only create a
+  # pipeline for merge requests, the default branch, and release tags.
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+
+variables:
+  GOMODCACHE: $CI_PROJECT_DIR/.cache/go-mod
+  GOCACHE: $CI_PROJECT_DIR/.cache/go-build
+
+.go_cache: &go_cache
+  key:
+    files:
+      - go.sum
+  paths:
+    - .cache/go-mod
+    - .cache/go-build
+
+# --- test stage (mirrors .github/workflows/ci.yml) ---------------------------
+
+test:go:
+  stage: test
+  image: golang:1.24-bookworm
+  cache:
+    <<: *go_cache
+  script:
+    - go vet ./...
+    - go test ./...
+    - go build ./cmd/server
+    - go build ./cmd/singctl
+    - go build -tags unlicensed ./cmd/singctl
+
+test:gui:
+  stage: test
+  image: golang:1.24-bookworm
+  cache:
+    - <<: *go_cache
+    - key:
+        files:
+          - gui/frontend/package-lock.json
+      paths:
+        - gui/frontend/node_modules
+  before_script:
+    - apt-get update
+    - apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+    - curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    - apt-get install -y nodejs
+  script:
+    - cd gui/frontend
+    - npm ci --no-audit --no-fund
+    - npm run build
+    - npm run test
+    - cd $CI_PROJECT_DIR/gui
+    - go test ./...
+
+# --- build stage (mirrors .github/workflows/deploy.yml "image" job) ----------
+
+build:image:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    # Disable dind TLS setup — simplest way to talk to the linked "docker" host
+    # from the docker:27 client image (not in the original GitHub workflow,
+    # but required for docker-in-docker to work on gitlab.com shared runners).
+    DOCKER_TLS_CERTDIR: ""
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker build -f deploy/server.Dockerfile --build-arg VERSION="${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" .
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        docker tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+        docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+      fi
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        docker tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" "$CI_REGISTRY_IMAGE:latest"
+        docker push "$CI_REGISTRY_IMAGE:latest"
+      fi
+
+# --- deploy stage (mirrors .github/workflows/deploy.yml "deploy" job) --------
+
+deploy:helm:
+  stage: deploy
+  tags:
+    - singctl-deploy
+  needs:
+    - build:image
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  script:
+    # Shell executor on the k3s host: helm/kubectl already on PATH and reading
+    # the gitlab-runner user's ~/.kube/config (provisioned by Ansible). No
+    # KUBECONFIG juggling, no image/GIT_STRATEGY tricks needed.
+    - >
+      helm upgrade --install singctl-license deploy/helm/singctl-license
+      --namespace singctl --create-namespace
+      --set image.repository="$CI_REGISTRY_IMAGE"
+      --set image.tag="$CI_COMMIT_SHA"
+      --set ingress.host="$LICENSE_HOST"
+      --set-string secret.privateKey="$LICENSE_PRIVATE_KEY"
+      --set-string secret.adminToken="$LICENSE_ADMIN_TOKEN"
+      --set-string secret.webhookSecret="$LICENSE_WEBHOOK_SECRET"
+      --wait --timeout 3m
+
+# --- release stage (mirrors .github/workflows/release.yml) -------------------
+
+release:linux:
+  stage: release
+  image: golang:1.24-bookworm
+  cache:
+    <<: *go_cache
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  before_script:
+    - apt-get update
+    - apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev fuse libfuse2
+    - curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    - apt-get install -y nodejs
+    - go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+    - export PATH="$PATH:$(go env GOPATH)/bin"
+  script:
+    - make build-linux LICENSE_PUBKEY="$LICENSE_PUBKEY"
+    - make gui-linux-bin GUI_TAGS= PKG_ARCH=amd64 LICENSE_PUBKEY="$LICENSE_PUBKEY"
+    - make pkg-linux PKG_ARCH=amd64 PKG_VERSION="${CI_COMMIT_TAG#v}"
+    - APPIMAGE_EXTRACT_AND_RUN=1 make appimage PKG_ARCH=amd64 PKG_VERSION="${CI_COMMIT_TAG#v}"
+    - mkdir -p out
+    - cp bin/singctl-linux-* dist/*.deb dist/*.rpm dist/*.AppImage out/ 2>/dev/null || true
+  artifacts:
+    paths:
+      - out/
+    expire_in: 1 week
+
+release:macos:
+  stage: release
+  tags:
+    - macos
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+      when: manual
+  allow_failure: true
+  script:
+    # Developer ID signing/notarization identities are assumed to already live
+    # in this Mac's login keychain (interactive user's machine, registered as
+    # the "macos" runner). CODESIGN_IDENTITY / INSTALLER_IDENTITY / AC_APPLE_ID
+    # / AC_PASSWORD / AC_TEAM_ID come from GitLab CI/CD variables (protected)
+    # and are picked up as env vars automatically. If this ever moves to a
+    # dedicated/headless CI Mac, import $APPLE_CERT_P12 into a CI keychain
+    # first (the GitHub Actions equivalent was apple-actions/import-codesign-certs) —
+    # deliberately NOT scripted here since it isn't needed on this runner.
+    - make build-macos LICENSE_PUBKEY="$LICENSE_PUBKEY"
+    - make gui GUI_TAGS= LICENSE_PUBKEY="$LICENSE_PUBKEY"
+    - make pkg-macos PKG_VERSION="${CI_COMMIT_TAG#v}" CLI_BIN=bin/singctl-darwin-arm64
+    - mkdir -p out
+    - cp bin/singctl-darwin-* dist/*.pkg dist/*.dmg out/ 2>/dev/null || true
+  artifacts:
+    paths:
+      - out/
+    expire_in: 1 week
+
+release:publish:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  needs:
+    - release:linux
+    - job: release:macos
+      optional: true
+  script:
+    - sha256sum out/* > out/SHA256SUMS
+    - |
+      set --
+      for f in out/*; do
+        name=$(basename "$f")
+        url="$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/singctl/$CI_COMMIT_TAG/$name"
+        echo "==> uploading $name"
+        curl --fail --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$f" "$url"
+        set -- "$@" --assets-link "{\"name\":\"$name\",\"url\":\"$url\"}"
+      done
+      release-cli create --tag-name "$CI_COMMIT_TAG" --description "singctl $CI_COMMIT_TAG" "$@"

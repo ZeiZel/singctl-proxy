@@ -26,6 +26,11 @@ read -rsp "Password: " PASSWORD; echo
 read -rp "Initial SSH port [22]: " INIT_PORT; INIT_PORT="${INIT_PORT:-22}"
 read -rp "Custom SSH port to set [2222]: " SSH_PORT; SSH_PORT="${SSH_PORT:-2222}"
 
+# Optional GitLab integration values (empty answer = skip / leave default).
+read -rp "GitLab runner authentication token (glrt-..., empty to skip): " GITLAB_RUNNER_TOKEN
+read -rp "GitLab deploy token username (empty to skip): " GITLAB_DEPLOY_TOKEN_USER
+read -rsp "GitLab deploy token secret (empty to skip): " GITLAB_DEPLOY_TOKEN_PASS; echo
+
 # 1. key
 if [[ ! -f "$KEY" ]]; then
   echo "==> generating SSH key $KEY"
@@ -72,6 +77,9 @@ ansible-playbook playbook.yml \
   -e ansible_port="$INIT_PORT" \
   -e ssh_port="$SSH_PORT" \
   -e ansible_python_interpreter=/usr/bin/python3 \
+  -e gitlab_runner_token="$GITLAB_RUNNER_TOKEN" \
+  -e gitlab_deploy_token_user="$GITLAB_DEPLOY_TOKEN_USER" \
+  -e gitlab_deploy_token_pass="$GITLAB_DEPLOY_TOKEN_PASS" \
   "$@"
 
 cat <<EOF
@@ -79,6 +87,9 @@ cat <<EOF
 Done. SSH now listens on port $SSH_PORT. Connect with:
     ssh $ALIAS
 
-Next: set the GitHub runner token / GHCR creds (see deploy/ansible/README.md) and
-push to trigger the deploy workflow.
+Next:
+  1. Create the project runner in the GitLab UI (Settings → CI/CD → Runners →
+     New project runner), tag "singctl-deploy", Protected=on.
+  2. Set the CI/CD variables per docs/deploy-gitlab.md.
+  3. Push to main to trigger the deploy pipeline.
 EOF
