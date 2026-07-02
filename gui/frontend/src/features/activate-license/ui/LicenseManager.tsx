@@ -89,9 +89,9 @@ export function LicenseManager() {
               Expires: {formatExpiry(info.expiresAt)}
               {info.daysLeft >= 0 ? ` (${info.daysLeft} days left)` : ""}
             </Text>
-            {info.features.length > 0 && (
+            {info.features?.length ? (
               <Text tone="dim" size="sm">Features: {info.features.join(", ")}</Text>
-            )}
+            ) : null}
           </Stack>
         ) : (
           <Text tone="danger">Not licensed: {info.reason}</Text>

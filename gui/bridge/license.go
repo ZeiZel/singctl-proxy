@@ -82,12 +82,19 @@ func licenseInfoIn(dir string, now time.Time) LicenseInfo {
 	if err != nil {
 		return LicenseInfo{Enforced: true, Valid: false, Reason: err.Error()}
 	}
+	// Default Features to a non-nil slice: a nil slice marshals to JSON null,
+	// but the GUI types it as string[] and reads .length unconditionally, so a
+	// token without a feat claim would crash the License page.
+	features := claims.Features
+	if features == nil {
+		features = []string{}
+	}
 	info := LicenseInfo{
 		Enforced:  true,
 		Valid:     true,
 		Subject:   claims.Subject,
 		ExpiresAt: claims.ExpiresAt,
-		Features:  claims.Features,
+		Features:  features,
 		DaysLeft:  -1,
 	}
 	if claims.ExpiresAt != 0 {
