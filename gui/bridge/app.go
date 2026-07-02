@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"singctl/internal/control"
+	"singctl/internal/license"
 )
 
 // App is the Wails-bound bridge. Each exported method becomes callable from the
@@ -15,9 +17,10 @@ import (
 // over the daemon's control socket; live data is pushed via Wails events from
 // the pollers in poller.go.
 type App struct {
-	ctx    context.Context
-	daemon *Daemon
-	poll   *poller
+	ctx               context.Context
+	daemon            *Daemon
+	poll              *poller
+	licenseLoopCancel context.CancelFunc
 }
 
 // NewApp builds the bridge.
@@ -25,11 +28,13 @@ func NewApp() *App {
 	return &App{daemon: NewDaemon()}
 }
 
-// Startup is called by Wails with the app context; it starts the event pollers.
+// Startup is called by Wails with the app context; it starts the event pollers
+// and, for licensed builds, the license activation-state refresh loop.
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 	a.poll = newPoller(a.ctx, a.daemon)
 	a.poll.start()
+	a.startLicenseLoop()
 }
 
 // Shutdown stops the pollers (called by Wails on exit).
@@ -37,6 +42,43 @@ func (a *App) Shutdown(context.Context) {
 	if a.poll != nil {
 		a.poll.stop()
 	}
+	if a.licenseLoopCancel != nil {
+		a.licenseLoopCancel()
+	}
+}
+
+// startLicenseLoop re-checks the license server once per day while the GUI
+// runs (plus once immediately, so a freshly-launched GUI reflects a
+// revocation/reactivation without waiting a full day) and persists the result,
+// so GetLicense reflects it without the user having to reopen the app. No-op
+// in unlicensed builds. Mirrors poller's start/stop lifecycle.
+//
+// TODO(license): this is a simple wall-clock ticker tied to process uptime
+// (like cmd/singctl/main.go's licenseRefreshLoop) — a GUI left running
+// continuously re-checks daily; one that's relaunched more often than that
+// effectively only gets the startup check, which is the "re-checks once a day
+// when reachable" requirement's weakest point for the GUI. Revisit if that
+// ever matters in practice (e.g. wire a "reachability changed" hook instead of
+// polling).
+func (a *App) startLicenseLoop() {
+	if !license.Enabled() {
+		return
+	}
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.licenseLoopCancel = cancel
+	go func() {
+		refreshLicenseIn(ctx, a.daemon.configDir, time.Now())
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				refreshLicenseIn(ctx, a.daemon.configDir, time.Now())
+			}
+		}
+	}()
 }
 
 // --- status ---

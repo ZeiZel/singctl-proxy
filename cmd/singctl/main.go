@@ -34,6 +34,7 @@ import (
 	"singctl/internal/control"
 	"singctl/internal/core"
 	"singctl/internal/daemon"
+	"singctl/internal/license"
 	"singctl/internal/monitor"
 	"singctl/internal/netext"
 	"singctl/internal/netstate"
@@ -844,6 +845,18 @@ func main() {
 
 	go mon.Run(ctx, ticker.C, events)
 	go executor.Loop(ctx, monOut)
+
+	// Daily license re-check while running: enforceLicense already gated startup
+	// (including first-activation); this catches a revocation/expiry that
+	// happens later without requiring a restart. No-op without a configured
+	// server (nothing to re-check against).
+	if license.Enabled() {
+		if base := license.ServerURL(); base != "" {
+			if claims, err := license.Check(loadLicenseToken(), time.Now()); err == nil {
+				go licenseRefreshLoop(ctx, store, base, claims.ID, cancelRun)
+			}
+		}
+	}
 
 	if c.proxy.headless {
 		if err := runHeadless(ctx, executor, notes, initialLink, c); err != nil {

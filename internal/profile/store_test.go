@@ -84,6 +84,38 @@ func TestStore_Load_RoundTrip_AndMissing(t *testing.T) {
 	}
 }
 
+func TestLicenseState_RoundTrip_AndMissing(t *testing.T) {
+	fs := newFakeFS()
+	s := NewStore(fs, "/home/u", 1000, 1000)
+
+	if got, err := s.LoadLicenseState(); err != nil || got != (LicenseState{}) {
+		t.Fatalf("missing state = (%+v,%v), want (zero value,nil)", got, err)
+	}
+
+	want := LicenseState{ActivatedOnce: true, LastCheckUnix: 1_700_000_000, LastStatus: "active"}
+	if err := s.SaveLicenseState(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.LoadLicenseState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("loaded %+v, want %+v", got, want)
+	}
+
+	wantPath := filepath.Join("/home/u", ".config", "singctl", "license-state.json")
+	var fileChowned bool
+	for _, c := range fs.chowns {
+		if c.name == wantPath {
+			fileChowned = true
+		}
+	}
+	if !fileChowned {
+		t.Error("license state file was not chowned back to the real user")
+	}
+}
+
 func TestIntroMarker(t *testing.T) {
 	fs := newFakeFS()
 	s := NewStore(fs, "/home/u", 1000, 1000)

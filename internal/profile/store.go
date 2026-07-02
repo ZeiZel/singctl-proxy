@@ -4,6 +4,7 @@
 package profile
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,9 +35,22 @@ func NewStore(fs FS, homeDir string, uid, gid int) *Store {
 	}
 }
 
-func (s *Store) path() string        { return filepath.Join(s.dir, "profile.txt") }
-func (s *Store) introPath() string   { return filepath.Join(s.dir, "intro-shown") }
-func (s *Store) licensePath() string { return filepath.Join(s.dir, "license") }
+func (s *Store) path() string             { return filepath.Join(s.dir, "profile.txt") }
+func (s *Store) introPath() string        { return filepath.Join(s.dir, "intro-shown") }
+func (s *Store) licensePath() string      { return filepath.Join(s.dir, "license") }
+func (s *Store) licenseStatePath() string { return filepath.Join(s.dir, "license-state.json") }
+
+// LicenseState is the persisted record of the license activation lifecycle: it
+// lets the CLI remember that it once reached the license server successfully
+// (ActivatedOnce) so it can keep working offline indefinitely afterwards, and
+// remember the last status the server reported (for display/diagnostics).
+// LastCheckUnix/LastStatus are updated on every reachable check, whether it
+// allowed or blocked startup.
+type LicenseState struct {
+	ActivatedOnce bool   `json:"activated_once"`
+	LastCheckUnix int64  `json:"last_check_unix"`
+	LastStatus    string `json:"last_status"`
+}
 
 // SaveLicense stores the license token, chowning it back to the real user.
 func (s *Store) SaveLicense(token string) error {
@@ -61,6 +75,41 @@ func (s *Store) LoadLicense() (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(data)), nil
+}
+
+// LoadLicenseState returns the persisted license activation state, or the zero
+// value (never activated) if no state file exists yet.
+func (s *Store) LoadLicenseState() (LicenseState, error) {
+	data, err := s.fs.ReadFile(s.licenseStatePath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return LicenseState{}, nil
+		}
+		return LicenseState{}, err
+	}
+	var st LicenseState
+	if err := json.Unmarshal(data, &st); err != nil {
+		return LicenseState{}, err
+	}
+	return st, nil
+}
+
+// SaveLicenseState persists the license activation state, chowning it back to
+// the real user like SaveLicense.
+func (s *Store) SaveLicenseState(st LicenseState) error {
+	data, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	if err := s.fs.MkdirAll(s.dir, 0o700); err != nil {
+		return err
+	}
+	if err := s.fs.WriteFile(s.licenseStatePath(), data, 0o600); err != nil {
+		return err
+	}
+	_ = s.fs.Chown(s.dir, s.uid, s.gid)
+	_ = s.fs.Chown(s.licenseStatePath(), s.uid, s.gid)
+	return nil
 }
 
 // HasSeenIntro reports whether the first-run intro animation has already played.

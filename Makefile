@@ -13,6 +13,15 @@ ifneq ($(LICENSE_PUBKEY),)
 LDFLAGS += -X singctl/internal/license.PublicKeyB64=$(LICENSE_PUBKEY)
 endif
 
+# LICENSE_SERVER_URL is the baked-in default license/revocation server base URL
+# (SINGCTL_LICENSE_SERVER still overrides it at runtime without a rebuild).
+# Release builds should set it so a normal install activates/re-checks without
+# any extra configuration.
+LICENSE_SERVER_URL ?=
+ifneq ($(LICENSE_SERVER_URL),)
+LDFLAGS += -X singctl/internal/license.LicenseServerDefault=$(LICENSE_SERVER_URL)
+endif
+
 # man page install location: `make install-man` enables `man singctl`.
 MANPREFIX ?= /usr/local/share/man
 MANPAGE := cmd/singctl/singctl.1
@@ -180,7 +189,9 @@ GUI_PLATFORM_TAGS := webkit2_41
 endif
 GUI_ALL_TAGS := $(strip $(GUI_TAGS) $(GUI_PLATFORM_TAGS))
 GUI_TAGFLAG := $(if $(GUI_ALL_TAGS),-tags "$(GUI_ALL_TAGS)",)
-GUI_LDFLAGS := $(if $(strip $(LICENSE_PUBKEY)),-ldflags "-X singctl/internal/license.PublicKeyB64=$(LICENSE_PUBKEY)",)
+GUI_LDX := $(if $(strip $(LICENSE_PUBKEY)),-X singctl/internal/license.PublicKeyB64=$(LICENSE_PUBKEY),)
+GUI_LDX += $(if $(strip $(LICENSE_SERVER_URL)),-X singctl/internal/license.LicenseServerDefault=$(LICENSE_SERVER_URL),)
+GUI_LDFLAGS := $(if $(strip $(GUI_LDX)),-ldflags "$(strip $(GUI_LDX))",)
 gui:
 	cd gui && $(WAILS) build $(GUI_TAGFLAG) $(GUI_LDFLAGS)
 

@@ -32,15 +32,23 @@ func TestCheck_Licensed(t *testing.T) {
 	}
 }
 
-func TestCheckRevoked(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func statusTestServer() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Query().Get("id") {
 		case "revoked-id":
 			_, _ = w.Write([]byte(`{"status":"revoked"}`))
+		case "expired-id":
+			_, _ = w.Write([]byte(`{"status":"expired"}`))
+		case "unknown-id":
+			_, _ = w.Write([]byte(`{"status":"unknown"}`))
 		default:
 			_, _ = w.Write([]byte(`{"status":"active"}`))
 		}
 	}))
+}
+
+func TestCheckRevoked(t *testing.T) {
+	srv := statusTestServer()
 	defer srv.Close()
 
 	if revoked, err := CheckRevoked(context.Background(), srv.URL, "revoked-id"); err != nil || !revoked {
@@ -56,5 +64,37 @@ func TestCheckRevoked(t *testing.T) {
 	// No baseURL → no-op.
 	if revoked, err := CheckRevoked(context.Background(), "", "x"); err != nil || revoked {
 		t.Errorf("empty baseURL: got (%v,%v), want (false,nil)", revoked, err)
+	}
+}
+
+func TestFetchStatus(t *testing.T) {
+	srv := statusTestServer()
+	defer srv.Close()
+
+	cases := []struct {
+		id   string
+		want Status
+	}{
+		{"ok-id", StatusActive},
+		{"revoked-id", StatusRevoked},
+		{"expired-id", StatusExpired},
+		{"unknown-id", StatusUnknown},
+	}
+	for _, tc := range cases {
+		if got, err := FetchStatus(context.Background(), srv.URL, tc.id); err != nil || got != tc.want {
+			t.Errorf("%s: got (%v,%v), want (%v,nil)", tc.id, got, err, tc.want)
+		}
+	}
+
+	// Unreachable server → fail-CLOSED: an error, not a guessed status.
+	if status, err := FetchStatus(context.Background(), "http://127.0.0.1:1", "x"); err == nil {
+		t.Errorf("unreachable server should error, got status=%q", status)
+	}
+	// Empty baseURL / id → error, no request attempted.
+	if _, err := FetchStatus(context.Background(), "", "x"); err == nil {
+		t.Error("empty baseURL should error")
+	}
+	if _, err := FetchStatus(context.Background(), srv.URL, ""); err == nil {
+		t.Error("empty id should error")
 	}
 }
