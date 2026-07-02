@@ -92,6 +92,20 @@ func TestDecideEnforcement(t *testing.T) {
 			wantWarn:  true,
 			wantState: profile.LicenseState{ActivatedOnce: true, LastCheckUnix: now.Unix(), LastStatus: "unknown"},
 		},
+		{
+			name:      "activated: superseded blocks (activated elsewhere)",
+			state:     profile.LicenseState{ActivatedOnce: true, LastCheckUnix: 1, LastStatus: "active"},
+			status:    StatusSuperseded,
+			wantAllow: false,
+			wantState: profile.LicenseState{ActivatedOnce: true, LastCheckUnix: now.Unix(), LastStatus: "superseded"},
+		},
+		{
+			name:      "first activation: superseded blocks",
+			state:     profile.LicenseState{},
+			status:    StatusSuperseded,
+			wantAllow: false,
+			wantState: profile.LicenseState{ActivatedOnce: false, LastCheckUnix: now.Unix(), LastStatus: "superseded"},
+		},
 	}
 
 	for _, tc := range cases {

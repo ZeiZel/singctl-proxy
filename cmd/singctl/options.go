@@ -192,16 +192,19 @@ func (m *controlModule) Bind(fs *flag.FlagSet) {
 	fs.BoolVar(&m.status, "status", false, "print the status of a running singctl instance")
 }
 
-// licenseModule: --license (install token/file), --license-status.
+// licenseModule: --license (install token/file), --license-status, --email
+// (contact address sent with --license for activation/re-activation).
 type licenseModule struct {
 	install string
 	status  bool
+	email   string
 }
 
 func (m *licenseModule) Descriptor() feature.Descriptor { return license.FeatureDescriptor() }
 func (m *licenseModule) Bind(fs *flag.FlagSet) {
 	fs.StringVar(&m.install, "license", "", "install a license (token or path to a file) and exit")
 	fs.BoolVar(&m.status, "license-status", false, "print license status and exit")
+	fs.StringVar(&m.email, "email", "", "contact email to register with --license (used for device activation)")
 }
 
 // rootModule: global flags --version/-v, --man, --env-file.

@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -67,9 +68,33 @@ func withServer(t *testing.T, url string) {
 	})
 }
 
+// statusServer stubs both GET /v1/status (used by refreshLicenseIn) and
+// POST /v1/activate (used by activateLicenseIn), both returning status. It
+// records the last device query param / posted device_id it saw in gotDevice,
+// if non-nil, so tests can assert device binding was sent.
 func statusServer(t *testing.T, status string) *httptest.Server {
+	return statusServerRecording(t, status, nil)
+}
+
+func statusServerRecording(t *testing.T, status string, gotDevice *string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/activate":
+			var body struct {
+				ID       string `json:"id"`
+				DeviceID string `json:"device_id"`
+				Email    string `json:"email"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if gotDevice != nil {
+				*gotDevice = body.DeviceID
+			}
+		default: // /v1/status
+			if gotDevice != nil {
+				*gotDevice = r.URL.Query().Get("device")
+			}
+		}
 		_, _ = w.Write([]byte(`{"status":"` + status + `"}`))
 	}))
 	t.Cleanup(srv.Close)
@@ -92,7 +117,7 @@ func TestLicense_ActivateValidateRemove(t *testing.T) {
 
 	// Activate a valid token.
 	token := sign("alice@example.com", 30*24*time.Hour, now)
-	if err := activateLicenseIn(context.Background(), dir, token, now); err != nil {
+	if err := activateLicenseIn(context.Background(), dir, token, "alice@example.com", now); err != nil {
 		t.Fatalf("activate: %v", err)
 	}
 	info := licenseInfoIn(dir, now)
@@ -124,10 +149,10 @@ func TestLicense_RejectsGarbageAndEmpty(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	withEmbeddedKey(t)
 
-	if err := activateLicenseIn(context.Background(), dir, "   ", now); err == nil {
+	if err := activateLicenseIn(context.Background(), dir, "   ", "alice@example.com", now); err == nil {
 		t.Error("empty token should be rejected")
 	}
-	if err := activateLicenseIn(context.Background(), dir, "SINGCTL-LIC.v1.not-a-real-token", now); err == nil {
+	if err := activateLicenseIn(context.Background(), dir, "SINGCTL-LIC.v1.not-a-real-token", "alice@example.com", now); err == nil {
 		t.Error("garbage token should be rejected")
 	}
 	// removeLicenseIn is a no-op when nothing is stored.
@@ -150,7 +175,7 @@ func TestLicense_ActivationRequiresServer(t *testing.T) {
 
 	t.Run("unreachable server blocks activation", func(t *testing.T) {
 		withServer(t, "http://127.0.0.1:1")
-		if err := activateLicenseIn(context.Background(), dir, token, now); err == nil {
+		if err := activateLicenseIn(context.Background(), dir, token, "alice@example.com", now); err == nil {
 			t.Error("expected activation to fail without server confirmation")
 		}
 		if licenseInfoIn(dir, now).Valid {
@@ -161,7 +186,7 @@ func TestLicense_ActivationRequiresServer(t *testing.T) {
 	t.Run("server confirms active → activation succeeds", func(t *testing.T) {
 		srv := statusServer(t, "active")
 		withServer(t, srv.URL)
-		if err := activateLicenseIn(context.Background(), dir, token, now); err != nil {
+		if err := activateLicenseIn(context.Background(), dir, token, "alice@example.com", now); err != nil {
 			t.Fatalf("activate: %v", err)
 		}
 		if info := licenseInfoIn(dir, now); !info.Valid {
@@ -173,7 +198,7 @@ func TestLicense_ActivationRequiresServer(t *testing.T) {
 		dir := t.TempDir()
 		srv := statusServer(t, "revoked")
 		withServer(t, srv.URL)
-		if err := activateLicenseIn(context.Background(), dir, token, now); err == nil {
+		if err := activateLicenseIn(context.Background(), dir, token, "alice@example.com", now); err == nil {
 			t.Error("expected activation to fail for a revoked id")
 		}
 	})
@@ -194,7 +219,7 @@ func TestLicense_OfflineContinuationAfterActivation(t *testing.T) {
 
 	activeSrv := statusServer(t, "active")
 	withServer(t, activeSrv.URL)
-	if err := activateLicenseIn(context.Background(), dir, token, now); err != nil {
+	if err := activateLicenseIn(context.Background(), dir, token, "alice@example.com", now); err != nil {
 		t.Fatalf("activate: %v", err)
 	}
 
@@ -211,5 +236,69 @@ func TestLicense_OfflineContinuationAfterActivation(t *testing.T) {
 	refreshLicenseIn(context.Background(), dir, now.Add(2*time.Hour))
 	if info := licenseInfoIn(dir, now.Add(2*time.Hour)); info.Valid {
 		t.Errorf("expected revoked verdict to invalidate the license, got %+v", info)
+	}
+}
+
+// TestLicense_ActivationSendsDeviceAndEmail checks that activateLicenseIn
+// binds this device (platform.DeviceID) and the given email to the license,
+// and that refreshLicenseIn's status recheck is scoped to the same device.
+func TestLicense_ActivationSendsDeviceAndEmail(t *testing.T) {
+	if !license.Enabled() {
+		t.Skip("unlicensed build")
+	}
+	dir := t.TempDir()
+	now := time.Unix(1_700_000_000, 0)
+	sign := withEmbeddedKey(t)
+	token := sign("dave@example.com", 30*24*time.Hour, now)
+
+	var gotDevice string
+	srv := statusServerRecording(t, "active", &gotDevice)
+	withServer(t, srv.URL)
+
+	if err := activateLicenseIn(context.Background(), dir, token, "dave@example.com", now); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	if gotDevice == "" {
+		t.Error("expected activation to send a non-empty device id")
+	}
+
+	gotDevice = ""
+	refreshLicenseIn(context.Background(), dir, now.Add(time.Hour))
+	if gotDevice == "" {
+		t.Error("expected status recheck to send a non-empty device id")
+	}
+}
+
+// TestLicense_Superseded covers the device-rebinding case: the server reports
+// this device was replaced by a newer activation elsewhere, which must be
+// treated as a blocking/invalid state, mirroring revoked/expired.
+func TestLicense_Superseded(t *testing.T) {
+	if !license.Enabled() {
+		t.Skip("unlicensed build")
+	}
+	dir := t.TempDir()
+	now := time.Unix(1_700_000_000, 0)
+	sign := withEmbeddedKey(t)
+	token := sign("erin@example.com", 30*24*time.Hour, now)
+
+	activeSrv := statusServer(t, "active")
+	withServer(t, activeSrv.URL)
+	if err := activateLicenseIn(context.Background(), dir, token, "erin@example.com", now); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	if info := licenseInfoIn(dir, now); !info.Valid {
+		t.Fatalf("expected valid right after activation, got %+v", info)
+	}
+
+	// Another device takes over the license: the next recheck reports superseded.
+	supersededSrv := statusServer(t, "superseded")
+	withServer(t, supersededSrv.URL)
+	refreshLicenseIn(context.Background(), dir, now.Add(time.Hour))
+	info := licenseInfoIn(dir, now.Add(time.Hour))
+	if info.Valid {
+		t.Errorf("expected superseded verdict to invalidate the license, got %+v", info)
+	}
+	if info.Reason == "" {
+		t.Error("expected a non-empty Reason for a superseded license")
 	}
 }

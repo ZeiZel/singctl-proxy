@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"singctl/internal/license"
+	"singctl/internal/platform"
 	"singctl/internal/profile"
 )
 
@@ -44,8 +45,10 @@ func loadLicenseToken() string {
 	return strings.TrimSpace(os.Getenv(envLicenseToken))
 }
 
-// runLicenseInstall validates a token (or file) and saves it. Returns an exit code.
-func runLicenseInstall(arg string) int {
+// runLicenseInstall validates a token (or file) and saves it, along with the
+// contact email (--email) used to (re-)activate it against the license
+// server. Returns an exit code.
+func runLicenseInstall(arg, email string) int {
 	token := strings.TrimSpace(arg)
 	if data, err := os.ReadFile(arg); err == nil { // arg is a path
 		token = strings.TrimSpace(string(data))
@@ -61,6 +64,19 @@ func runLicenseInstall(arg string) int {
 	}
 	if err := store.SaveLicense(token); err != nil {
 		fmt.Fprintln(os.Stderr, "error: не удалось сохранить лицензию:", err)
+		return 1
+	}
+	// Installing a (possibly new/different) token invalidates any previous
+	// activation: force a fresh Activate call (not just a status recheck) on
+	// the next run. Preserve a previously-captured email when --email is
+	// omitted on a re-install, so re-activation doesn't silently lose it.
+	state, _ := store.LoadLicenseState()
+	state.ActivatedOnce = false
+	if email = strings.TrimSpace(email); email != "" {
+		state.Email = email
+	}
+	if err := store.SaveLicenseState(state); err != nil {
+		fmt.Fprintln(os.Stderr, "error: не удалось сохранить состояние лицензии:", err)
 		return 1
 	}
 	fmt.Println("Лицензия установлена.")
@@ -130,7 +146,7 @@ func enforceLicense() error {
 		state, _ = store.LoadLicenseState() // missing file → zero value (never activated)
 	}
 
-	dec := decideLicenseNow(store, base, claims.ID, state)
+	dec := decideLicenseNow(store, base, claims.ID, platform.DeviceID(), state)
 	if dec.Warn != "" {
 		fmt.Fprintln(os.Stderr, "⚠", dec.Warn)
 	}
@@ -140,17 +156,33 @@ func enforceLicense() error {
 	return nil
 }
 
-// decideLicenseNow does one online status round-trip and runs the shared
+// decideLicenseNow does one online round-trip and runs the shared
 // license.DecideEnforcement decision table, persisting the resulting state
 // (best-effort — a missing config dir just means state can't be remembered
 // across runs, so activation is required every time). Shared by enforceLicense
 // and licenseRefreshLoop's daily tick.
-func decideLicenseNow(store *profile.Store, base, id string, state profile.LicenseState) license.Decision {
+//
+// The first time this id is seen on this install (!state.ActivatedOnce), it
+// calls license.Activate — the write/binding call that registers deviceID
+// (and state.Email, if captured via --license --email) as the license's
+// current device. Every subsequent call is a read-only license.FetchStatus
+// scoped to the same device, so the server can report StatusSuperseded if a
+// different device has since activated the same id.
+func decideLicenseNow(store *profile.Store, base, id, deviceID string, state profile.LicenseState) license.Decision {
 	ctx, cancel := context.WithTimeout(context.Background(), licenseFetchTimeout)
-	status, ferr := license.FetchStatus(ctx, base, id)
+	var status license.Status
+	var ferr error
+	if !state.ActivatedOnce {
+		status, ferr = license.Activate(ctx, base, id, deviceID, state.Email)
+	} else {
+		status, ferr = license.FetchStatus(ctx, base, id, deviceID)
+	}
 	cancel()
 
 	dec := license.DecideEnforcement(state, status, ferr, time.Now())
+	// DecideEnforcement builds its returned State from scratch and doesn't know
+	// about Email; carry it forward so it survives every persisted rewrite.
+	dec.State.Email = state.Email
 	if store != nil {
 		_ = store.SaveLicenseState(dec.State)
 	}
@@ -169,6 +201,7 @@ func decideLicenseNow(store *profile.Store, base, id string, state profile.Licen
 func licenseRefreshLoop(ctx context.Context, store *profile.Store, base, id string, cancel context.CancelFunc) {
 	ticker := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
+	deviceID := platform.DeviceID()
 	for {
 		select {
 		case <-ctx.Done():
@@ -178,7 +211,7 @@ func licenseRefreshLoop(ctx context.Context, store *profile.Store, base, id stri
 			if store != nil {
 				state, _ = store.LoadLicenseState()
 			}
-			dec := decideLicenseNow(store, base, id, state)
+			dec := decideLicenseNow(store, base, id, deviceID, state)
 			if dec.Warn != "" {
 				fmt.Fprintln(os.Stderr, "⚠", dec.Warn)
 			}

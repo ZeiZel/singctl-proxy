@@ -34,6 +34,6 @@ export const api = {
   launchApp: (argv: string[]): Promise<number> => App.LaunchApp(argv),
   stopDaemon: (): Promise<void> => App.StopDaemon(),
   getLicense: (): Promise<TLicenseInfo> => App.GetLicense(),
-  activateLicense: (token: string): Promise<void> => App.ActivateLicense(token),
+  activateLicense: (token: string, email: string): Promise<void> => App.ActivateLicense(token, email),
   removeLicense: (): Promise<void> => App.RemoveLicense(),
 };

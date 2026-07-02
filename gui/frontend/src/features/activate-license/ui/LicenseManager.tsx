@@ -4,9 +4,17 @@ import { LicenseStatusBadge, useLicense } from "@/entities/license";
 import { api } from "@/shared/api/singctl";
 import { Button } from "@/shared/ui/button";
 import { Card } from "@/shared/ui/card";
+import { Input } from "@/shared/ui/input";
 import { Stack } from "@/shared/ui/stack";
 import { Heading, Text } from "@/shared/ui/text";
 import { Textarea } from "@/shared/ui/textarea";
+
+// A pragmatic non-empty-and-has-an-@ check: this only gates the button, the
+// server is the authority on whether the address is usable.
+function isValidEmail(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.length > 0 && /\S+@\S+\.\S+/.test(trimmed);
+}
 
 function formatExpiry(expiresAt: number): string {
   if (expiresAt === 0) {
@@ -21,17 +29,20 @@ function formatExpiry(expiresAt: number): string {
 export function LicenseManager() {
   const { info, refresh } = useLicense();
   const [token, setToken] = useState("");
+  const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
+  const canActivate = token.trim().length > 0 && isValidEmail(email);
+
   const handleActivate = useCallback(async () => {
-    if (!token.trim()) {
+    if (!token.trim() || !isValidEmail(email)) {
       return;
     }
     setBusy(true);
     setMessage("");
     try {
-      await api.activateLicense(token.trim());
+      await api.activateLicense(token.trim(), email.trim());
       setToken("");
       setMessage("License activated. The service will apply it automatically.");
       refresh();
@@ -40,7 +51,7 @@ export function LicenseManager() {
     } finally {
       setBusy(false);
     }
-  }, [token, refresh]);
+  }, [token, email, refresh]);
 
   const handleRemove = useCallback(async () => {
     if (!window.confirm("Remove the stored license?")) {
@@ -102,6 +113,13 @@ export function LicenseManager() {
         <Card>
           <Heading level={3} className="mb-3">Activate</Heading>
           <Stack gap="sm">
+            <Input
+              aria-label="license-email"
+              type="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
             <Textarea
               aria-label="license-token"
               rows={4}
@@ -110,7 +128,7 @@ export function LicenseManager() {
               onChange={(event) => setToken(event.target.value)}
             />
             <Stack direction="row" gap="sm" align="center" wrap>
-              <Button variant="primary" disabled={busy || !token.trim()} onClick={handleActivate}>
+              <Button variant="primary" disabled={busy || !canActivate} onClick={handleActivate}>
                 Activate
               </Button>
               <label className="cursor-pointer text-sm text-text-dim hover:text-text">

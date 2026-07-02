@@ -24,6 +24,7 @@ const (
 	msgRevoked          = "лицензия отозвана — обратитесь к поставщику"
 	msgExpiredOnServer  = "срок лицензии истёк"
 	msgUnknownAfterOnce = "не удалось подтвердить статус лицензии на сервере (ответ неизвестен) — продолжаем работу"
+	msgSuperseded       = "Ключ активирован на другом устройстве. Активируйте его заново здесь."
 )
 
 // DecideEnforcement is the pure state machine behind the license activation
@@ -40,8 +41,9 @@ const (
 //     outcome (network error, revoked, expired, unknown) blocks.
 //   - Activated at least once: a network error means "offline" and startup
 //     proceeds using the previously persisted state (indefinite offline use).
-//     A reachable server reporting "revoked" or "expired" blocks; "active"
-//     keeps going; "unknown" (e.g. the id was purged) is treated as
+//     A reachable server reporting "revoked", "expired", or "superseded"
+//     (this device was replaced by a newer activation elsewhere) blocks;
+//     "active" keeps going; "unknown" (e.g. the id was purged) is treated as
 //     inconclusive and only warns, so a flaky/misconfigured server can't brick
 //     an already-activated install.
 //
@@ -64,6 +66,8 @@ func DecideEnforcement(state profile.LicenseState, status Status, fetchErr error
 			return Decision{Allow: true, State: newState}
 		case StatusRevoked:
 			return Decision{Allow: false, Reason: msgRevoked, State: newState}
+		case StatusSuperseded:
+			return Decision{Allow: false, Reason: msgSuperseded, State: newState}
 		case StatusExpired:
 			return Decision{Allow: false, Reason: msgExpiredOnServer, State: newState}
 		default: // StatusUnknown or anything unrecognized
@@ -85,6 +89,8 @@ func DecideEnforcement(state profile.LicenseState, status Status, fetchErr error
 		return Decision{Allow: true, State: newState}
 	case StatusRevoked:
 		return Decision{Allow: false, Reason: msgRevoked, State: newState}
+	case StatusSuperseded:
+		return Decision{Allow: false, Reason: msgSuperseded, State: newState}
 	case StatusExpired:
 		return Decision{Allow: false, Reason: msgExpiredOnServer, State: newState}
 	default: // StatusUnknown

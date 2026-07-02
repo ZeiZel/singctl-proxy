@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"singctl/internal/license"
+	"singctl/internal/platform"
 	"singctl/internal/profile"
 )
 
@@ -105,19 +106,25 @@ func licenseInfoIn(dir string, now time.Time) LicenseInfo {
 		info.Valid, info.Reason = false, "лицензия отозвана — обратитесь к поставщику"
 	case license.StatusExpired:
 		info.Valid, info.Reason = false, "срок лицензии истёк"
+	case license.StatusSuperseded:
+		info.Valid, info.Reason = false, "Ключ активирован на другом устройстве. Активируйте его заново здесь."
 	}
 	return info
 }
 
 // activateLicenseIn validates a token offline, then — mirroring the CLI's
 // "must contact the server successfully at least once" activation gate —
-// requires a reachable license server confirming "active" before the token is
-// accepted at all (when a server is configured; license.ServerURL() == ""
-// keeps the old offline-only behavior, e.g. for isolated/dev deployments).
-// On success it writes both the token and the activation state to dir; the
-// running daemon's restart policy (KeepAlive/Restart) re-reads the token
-// within seconds, so no explicit restart is needed.
-func activateLicenseIn(ctx context.Context, dir, token string, now time.Time) error {
+// calls license.Activate to bind this device (identified by platform.DeviceID)
+// and email to the license id, requiring the server to confirm "active"
+// before the token is accepted at all (when a server is configured;
+// license.ServerURL() == "" keeps the old offline-only behavior, e.g. for
+// isolated/dev deployments). Activation is last-wins server-side: doing this
+// again from a different device supersedes this one (see StatusSuperseded).
+// On success it writes both the token and the activation state (including
+// email, so subsequent re-activation/rechecks don't need it re-entered) to
+// dir; the running daemon's restart policy (KeepAlive/Restart) re-reads the
+// token within seconds, so no explicit restart is needed.
+func activateLicenseIn(ctx context.Context, dir, token, email string, now time.Time) error {
 	if !license.Enabled() {
 		return errors.New("development build: license enforcement is disabled")
 	}
@@ -132,9 +139,10 @@ func activateLicenseIn(ctx context.Context, dir, token string, now time.Time) er
 
 	if base := license.ServerURL(); base != "" {
 		fctx, cancel := context.WithTimeout(ctx, licenseFetchTimeout)
-		status, ferr := license.FetchStatus(fctx, base, claims.ID)
+		status, ferr := license.Activate(fctx, base, claims.ID, platform.DeviceID(), email)
 		cancel()
 		dec := license.DecideEnforcement(profile.LicenseState{}, status, ferr, now)
+		dec.State.Email = strings.TrimSpace(email)
 		if err := writeLicenseState(dir, dec.State); err != nil {
 			return err
 		}
@@ -179,10 +187,12 @@ func refreshLicenseIn(ctx context.Context, dir string, now time.Time) {
 	if err != nil {
 		return
 	}
+	state := readLicenseState(dir)
 	fctx, cancel := context.WithTimeout(ctx, licenseFetchTimeout)
-	status, ferr := license.FetchStatus(fctx, base, claims.ID)
+	status, ferr := license.FetchStatus(fctx, base, claims.ID, platform.DeviceID())
 	cancel()
-	dec := license.DecideEnforcement(readLicenseState(dir), status, ferr, now)
+	dec := license.DecideEnforcement(state, status, ferr, now)
+	dec.State.Email = state.Email // DecideEnforcement doesn't know about Email
 	_ = writeLicenseState(dir, dec.State)
 }
 
@@ -193,10 +203,11 @@ func (a *App) GetLicense() LicenseInfo {
 	return licenseInfoIn(a.daemon.configDir, time.Now())
 }
 
-// ActivateLicense validates a pasted token and stores it; the daemon applies it
-// on its next (auto-)restart.
-func (a *App) ActivateLicense(token string) error {
-	return activateLicenseIn(a.appCtx(), a.daemon.configDir, token, time.Now())
+// ActivateLicense validates a pasted token and email, activates the device
+// against the license server, and stores the token; the daemon applies it on
+// its next (auto-)restart.
+func (a *App) ActivateLicense(token, email string) error {
+	return activateLicenseIn(a.appCtx(), a.daemon.configDir, token, email, time.Now())
 }
 
 // RemoveLicense deletes the stored license token.

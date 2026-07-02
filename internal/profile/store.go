@@ -45,11 +45,17 @@ func (s *Store) licenseStatePath() string { return filepath.Join(s.dir, "license
 // (ActivatedOnce) so it can keep working offline indefinitely afterwards, and
 // remember the last status the server reported (for display/diagnostics).
 // LastCheckUnix/LastStatus are updated on every reachable check, whether it
-// allowed or blocked startup.
+// allowed or blocked startup. Email is the contact address captured at
+// activation time (--license --email or the GUI activation form); it is
+// resent with every activation/status call so a re-activation (e.g. after
+// StatusSuperseded) or the daily recheck doesn't need it re-entered. Added
+// after the original fields; omitempty keeps old state files (without it)
+// parsing as "" rather than failing.
 type LicenseState struct {
 	ActivatedOnce bool   `json:"activated_once"`
 	LastCheckUnix int64  `json:"last_check_unix"`
 	LastStatus    string `json:"last_status"`
+	Email         string `json:"email,omitempty"`
 }
 
 // SaveLicense stores the license token, chowning it back to the real user.

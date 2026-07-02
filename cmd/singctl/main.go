@@ -655,7 +655,7 @@ func main() {
 
 	// License actions (install / status) work without root and exit immediately.
 	if c.lic.install != "" {
-		os.Exit(runLicenseInstall(c.lic.install))
+		os.Exit(runLicenseInstall(c.lic.install, c.lic.email))
 	}
 	if c.lic.status {
 		os.Exit(runLicenseStatus())
