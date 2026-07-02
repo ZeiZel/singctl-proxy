@@ -11,7 +11,50 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
+
+// Supported is true on darwin: the system extension is a real (if possibly
+// unapproved) mechanism here, vs. entirely inapplicable elsewhere.
+const Supported = true
+
+// availTTL bounds how often Available shells out to systemextensionsctl: the
+// approval state changes only when the user visits System Settings, so a short
+// cache avoids re-probing on every status poll (control STATUS + TUI monitor
+// tick both call it, one process-wide cache serves both).
+const availTTL = 5 * time.Second
+
+var (
+	availMu    sync.Mutex
+	availAt    time.Time
+	availCache bool
+)
+
+// Available is the free-function form of darwinController.Available: probes
+// (with a short cache) whether the extension is installed AND approved.
+func Available() bool {
+	availMu.Lock()
+	defer availMu.Unlock()
+	if time.Since(availAt) < availTTL {
+		return availCache
+	}
+	availCache = probeExtension()
+	availAt = time.Now()
+	return availCache
+}
+
+func probeExtension() bool {
+	out, err := exec.Command("systemextensionsctl", "list").Output()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, ExtensionID) && strings.Contains(line, "activated enabled") {
+			return true
+		}
+	}
+	return false
+}
 
 // darwinController is the real Controller: it tracks the captured-app set and,
 // when the system extension is approved, writes the singctl<->extension
@@ -41,16 +84,7 @@ func New(socksHost string, socksPort int) Controller {
 // `systemextensionsctl list` shows each extension's state in brackets, e.g.
 // "[activated enabled]" once the user approved it in System Settings.
 func (c *darwinController) Available() bool {
-	out, err := exec.Command("systemextensionsctl", "list").Output()
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.Contains(line, ExtensionID) && strings.Contains(line, "activated enabled") {
-			return true
-		}
-	}
-	return false
+	return Available()
 }
 
 func (c *darwinController) AddTarget(bundleID string) error {

@@ -81,6 +81,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Watch config.json for writes so the CLI can change the target set live
     /// without relaunching the app or the extension.
+    ///
+    /// Note: the container app runs in the user session, so `configURL` above
+    /// resolves to the *user's* `~/Library/Group Containers/...` — while the
+    /// provider (root) and the root daemon see
+    /// `/var/root/Library/Group Containers/...`. Those are different files.
+    /// The provider's own file-watch (TransparentProxyProvider.startWatchingConfigFile)
+    /// is therefore the authoritative live-reload channel; this watcher only
+    /// covers configs written from the user session.
     private func watchConfig() {
         guard let url = configURL else { return }
         // Ensure the directory exists so we can open a descriptor on the file.

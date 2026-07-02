@@ -45,6 +45,22 @@ targets:
         INFOPLIST_FILE: ProxyExtension/Info.plist
         CODE_SIGN_ENTITLEMENTS: ProxyExtension/ProxyExtension.entitlements
 
+  # Unit tests for the pure SOCKS5 (RFC 1928) framing helpers. Socks5.swift is
+  # Foundation-only (plus libc address parsing), so its source is compiled
+  # directly into this test bundle instead of linking the ProxyExtension
+  # system-extension target — that avoids pulling in NetworkExtension
+  # entitlements or a host app just to exercise pure data-in/data-out code.
+  # Run: xcodegen && xcodebuild test -project SingctlProxy.xcodeproj -scheme SocksTests
+  SocksTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests
+      - ProxyExtension/Socks5.swift
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
   SingctlProxy:
     build:
@@ -52,3 +68,12 @@ schemes:
         SingctlProxy: all
     run:
       config: Debug
+  # Run: xcodegen && xcodebuild test -project SingctlProxy.xcodeproj -scheme SocksTests
+  SocksTests:
+    build:
+      targets:
+        SocksTests: all
+    test:
+      config: Debug
+      targets:
+        - SocksTests

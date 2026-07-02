@@ -23,16 +23,6 @@ func TestConfigMarshal_StableSorted(t *testing.T) {
 	if len(got.Targets) != 2 || got.Targets[0] != "com.a" || got.SocksPort != 1080 || got.SocksHost != "127.0.0.1" {
 		t.Errorf("round-trip mismatch: %+v", got)
 	}
-
-	// The Cisco-yield flag survives the round-trip (extension reads it to yield).
-	withCisco, _ := Config{Targets: []string{"com.a"}, SocksHost: "127.0.0.1", SocksPort: 1080, CiscoActive: true}.Marshal()
-	var gotCisco Config
-	if err := json.Unmarshal(withCisco, &gotCisco); err != nil {
-		t.Fatalf("unmarshal cisco: %v", err)
-	}
-	if !gotCisco.CiscoActive {
-		t.Errorf("CiscoActive lost in round-trip: %+v", gotCisco)
-	}
 }
 
 func TestBundleInfoPlistPath(t *testing.T) {

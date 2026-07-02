@@ -87,7 +87,7 @@ by hand. From this directory on a Mac:
 
 ```sh
 brew install xcodegen
-DEVELOPMENT_TEAM=<YOUR_TEAM_ID> ./build.sh   # xcodegen generate + xcodebuild
+DEVELOPMENT_TEAM=S3UCF4USYC ./build.sh   # xcodegen generate + xcodebuild (team now defaults in build.sh)
 ```
 
 `build.sh` generates `SingctlProxy.xcodeproj` (container app `com.singctl.proxy`

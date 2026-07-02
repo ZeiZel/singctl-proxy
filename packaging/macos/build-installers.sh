@@ -9,8 +9,8 @@
 #
 # Signing / notarization are applied only when the matching env vars are set, so
 # CI can build UNSIGNED artifacts for PRs and fully signed ones on release:
-#   CODESIGN_IDENTITY   "Developer ID Application: … (TEAMID)"   — sign the .app
-#   INSTALLER_IDENTITY  "Developer ID Installer: … (TEAMID)"     — sign the .pkg
+#   CODESIGN_IDENTITY   "Developer ID Application: … (S3UCF4USYC)"   — sign the .app + CLI
+#   INSTALLER_IDENTITY  "Developer ID Installer: … (S3UCF4USYC)"     — sign the .pkg
 #   NOTARY_PROFILE      keychain profile for `notarytool` (or use the AC_* trio)
 #   AC_APPLE_ID / AC_PASSWORD / AC_TEAM_ID                       — notary creds
 set -euo pipefail
@@ -24,6 +24,7 @@ OUT_DIR="${OUT_DIR:-$REPO_ROOT/dist}"
 APP_PATH="${APP_PATH:-$REPO_ROOT/gui/build/bin/singctl-gui.app}"
 CLI_BIN="${CLI_BIN:-$REPO_ROOT/bin/singctl}"
 ENTITLEMENTS="$REPO_ROOT/packaging/macos/singctl.entitlements"
+CLI_ENTITLEMENTS="$REPO_ROOT/packaging/macos/singctl-cli.entitlements"
 PKG_ID="com.singctl.proxy"
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -47,6 +48,20 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/Applications" "$STAGE/usr/local/bin"
 cp -R "$APP_PATH" "$STAGE/Applications/"
 install -m 0755 "$CLI_BIN" "$STAGE/usr/local/bin/singctl"
+# TODO: stage the netextension SingctlProxy.app (planned env var: NETEXT_APP)
+# once it has been validated on-device; deferred for now.
+
+# 2b) Sign the staged CLI with the App Group entitlement so it can read/write
+#     the shared Group Container used by the Network Extension (see
+#     internal/netext/controller_darwin.go and LICENSATION.md §3).
+if [ -n "${CODESIGN_IDENTITY:-}" ]; then
+	echo "==> codesign cli"
+	codesign --force --options runtime --timestamp \
+		--entitlements "$CLI_ENTITLEMENTS" --sign "$CODESIGN_IDENTITY" "$STAGE/usr/local/bin/singctl"
+	codesign --verify --strict --verbose=2 "$STAGE/usr/local/bin/singctl"
+else
+	echo "==> skip cli signing (CODESIGN_IDENTITY unset)"
+fi
 
 # 3) Build the component pkg (postinstall installs the LaunchDaemon).
 RAW_PKG="$OUT_DIR/singctl-raw.pkg"

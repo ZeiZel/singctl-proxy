@@ -9,6 +9,7 @@
 // STATUS: skeleton. Wire this into the singctl macOS helper app; handle the
 // approval-required and replacement states properly before shipping.
 
+import AppKit
 import Foundation
 import NetworkExtension
 import SystemExtensions
@@ -99,10 +100,15 @@ final class SystemExtensionActivator: NSObject, OSSystemExtensionRequestDelegate
     }
 
     func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
-        os_log("system extension needs user approval in System Settings", log: log, type: .info)
+        os_log("system extension needs user approval: open System Settings → General → " +
+            "Login Items & Extensions → Network Extensions and allow \"singctl\"", log: log, type: .info)
         // Not terminal — didFinishWithResult/didFailWithError still arrives after
-        // the user acts. Surface guidance; the caller can show UI on this error.
-        finishActivation(.failure(ActivationError.needsApproval))
+        // the user acts (approve or dismiss). Do NOT finishActivation() here: that
+        // would nil out onActivation, so when the user approves a moment later the
+        // .completed callback below would have nothing to call and the app would
+        // silently never proceed to configure() — forcing a relaunch. Just nudge
+        // the user toward the settings pane and keep the callback alive.
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.ExtensionsPreferences")!)
     }
 
     func request(_ request: OSSystemExtensionRequest,

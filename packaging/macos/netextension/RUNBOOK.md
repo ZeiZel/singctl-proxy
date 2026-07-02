@@ -12,15 +12,22 @@ the design rationale (why a NETransparentProxyProvider, what it captures) is in
 
 ## Prerequisites (Mac)
 - Xcode + command-line tools (`xcode-select --install`), `brew install xcodegen`.
-- An Apple Developer **Team ID**; App IDs `com.singctl.proxy` (app) and
-  `com.singctl.proxy.netext` (extension) with the **Network Extensions**
-  capability, and the App Group `group.com.singctl.proxy` on both.
+- An Apple Developer **Team ID** (defaults to `S3UCF4USYC`, this project's team;
+  override with `DEVELOPMENT_TEAM=` for another account); App IDs
+  `com.singctl.proxy` (app) and `com.singctl.proxy.netext` (extension) with the
+  **Network Extensions** capability, and the App Group `group.com.singctl.proxy`
+  on both.
+- **Developer ID Network Extension entitlement** — distributing this system
+  extension with Developer ID signing requires Apple's approval; request it now
+  at https://developer.apple.com/contact/request/network-extension (choose
+  Developer ID distribution) — turnaround is days to weeks. Development-signed
+  local builds work without it (`systemextensionsctl developer on`).
 - A `notarytool` keychain profile (see LICENSATION.md) for stapling.
 
 ```sh
-make build-netext DEVELOPMENT_TEAM=<TEAMID>            # build the .app + extension
+make build-netext                                       # build the .app + extension (DEVELOPMENT_TEAM=S3UCF4USYC by default)
 CONFIGURATION=Release NOTARY_PROFILE=<profile> \
-  make build-netext DEVELOPMENT_TEAM=<TEAMID>           # build + notarize + staple
+  make build-netext                                     # build + notarize + staple
 ```
 
 ## Remaining work (in order)
@@ -47,12 +54,15 @@ CONFIGURATION=Release NOTARY_PROFILE=<profile> \
    `internal/netext` (the bundle-ID resolver) — this is the whole point of the
    extension over the env/flag path.
 
-4. **Cisco-yield (DONE in scaffold; wire the Go side)** — the provider now yields
-   when `config.json.ciscoActive` is true (`TransparentProxyProvider.swift`), and
-   `netext.Config` carries the field. Wire the Executor/monitor to call a new
-   `Controller.SetCiscoActive(bool)` (flush config) from `internal/policy`
-   transitions, mirroring the runtime suspend/resume. Verify the extension stops
-   capturing while AnyConnect connects.
+4. **Cisco-yield — intentionally omitted (decision 2026-07-01).** The extension's
+   capture-yield (`config.json.ciscoActive` / `TransparentProxyProvider.swift`)
+   is **not** being wired up: yielding would silently disable per-app proxying
+   for the whole capture session while Cisco is active, which is worse than the
+   coexistence behavior already owned by the Go `internal/policy` layer. The
+   `ciscoActive` plumbing (`netext.Config` field, `Controller.SetCiscoActive`)
+   is being removed from the code rather than wired to the Executor/monitor. See
+   [`../../../docs/macos.md`](../../../docs/macos.md) §Сосуществование с Cisco
+   for the actual coexistence contract.
 
 5. **On-device verification** — after install + approval (System Settings → Login
    Items & Extensions), route an app and confirm with `lsof -i -nP` /

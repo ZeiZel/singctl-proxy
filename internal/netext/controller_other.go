@@ -2,6 +2,14 @@
 
 package netext
 
+// Supported is false off darwin: there is no system extension at all, as
+// opposed to darwin where it may simply be unapproved yet (see Supported there).
+const Supported = false
+
+// Available mirrors the darwin free function so status plumbing can probe
+// unconditionally without an OS build tag of its own.
+func Available() bool { return false }
+
 // New returns a no-op controller off macOS: there is no system extension, so
 // per-app capture is unavailable and singctl uses the procproxy env/flag path.
 // Keeps the composition root platform-agnostic (build the controller

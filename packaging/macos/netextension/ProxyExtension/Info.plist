@@ -25,7 +25,7 @@
     <key>NetworkExtension</key>
     <dict>
         <key>NEMachServiceName</key>
-        <string>com.singctl.proxy.netext</string>
+        <string>$(TeamIdentifierPrefix)com.singctl.proxy.netext</string>
         <key>NEProviderClasses</key>
         <dict>
             <key>com.apple.networkextension.transparent-proxy</key>

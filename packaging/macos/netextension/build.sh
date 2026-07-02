@@ -7,7 +7,8 @@
 # capabilities, entitlements, signing the CLI) is in ../../../LICENSATION.md.
 #
 # Env:
-#   DEVELOPMENT_TEAM   (required) Apple Developer Team ID.
+#   DEVELOPMENT_TEAM   Apple Developer Team ID (default: S3UCF4USYC; override for
+#                      forks/other accounts).
 #   CONFIGURATION      build config (default: Release).
 #   NOTARY_PROFILE     (optional) notarytool keychain profile; if set, the built
 #                      .app is zipped, submitted to notarytool, and stapled.
@@ -15,12 +16,13 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 CONFIGURATION="${CONFIGURATION:-Release}"
+DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-S3UCF4USYC}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "build.sh must run on macOS (needs Xcode + the NetworkExtension SDK)." >&2
   exit 1
 fi
-: "${DEVELOPMENT_TEAM:?set DEVELOPMENT_TEAM to your Apple Developer Team ID (see LICENSATION.md)}"
+echo "==> using DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM (override with DEVELOPMENT_TEAM=<id> to use a different Apple Developer Team ID)"
 
 command -v xcodegen >/dev/null 2>&1 || { echo "install xcodegen: brew install xcodegen" >&2; exit 1; }
 command -v xcodebuild >/dev/null 2>&1 || { echo "Xcode command line tools required (xcode-select --install)." >&2; exit 1; }
