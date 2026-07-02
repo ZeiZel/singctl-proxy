@@ -58,4 +58,17 @@ chown root:wheel "$PLIST"
 launchctl bootout system "$PLIST" 2>/dev/null || true
 launchctl bootstrap system "$PLIST" 2>/dev/null || launchctl load -w "$PLIST" 2>/dev/null || true
 
+# If the pkg shipped the netextension container app, launch it once in the
+# console user's GUI session so macOS surfaces the "Allow Network Extension"
+# prompt right away instead of the user having to discover and open it
+# themselves. This is best-effort: OSSystemExtensionManager activation still
+# requires the user to *manually approve* the extension afterwards in
+# System Settings → General → Login Items & Extensions → Network Extensions.
+if [ -d /Applications/SingctlProxy.app ] && [ -n "$REAL_USER" ] && [ "$REAL_USER" != "root" ]; then
+	CONSOLE_UID="$(stat -f "%u" /dev/console 2>/dev/null || echo "")"
+	if [ -n "$CONSOLE_UID" ]; then
+		launchctl asuser "$CONSOLE_UID" sudo -u "$REAL_USER" open -a /Applications/SingctlProxy.app 2>/dev/null || true
+	fi
+fi
+
 exit 0
