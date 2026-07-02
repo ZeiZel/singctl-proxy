@@ -61,8 +61,8 @@ cmd/singctl     CLI/TUI + точка сборки шиппинг-бинарни�
 cmd/server      сервер лицензий
 internal/       ядро (см. «Архитектура»); только core/real.go импортирует sing-box
 gui/            десктоп-GUI (Wails: Go + React) — отдельный модуль singctl/gui
-packaging/      macOS (LaunchDaemon, NetworkExtension) + Linux (systemd unit)
-scripts/        install-macos.sh / install-linux.sh
+packaging/      macOS (LaunchDaemon, NetworkExtension)
+scripts/        install-macos.sh
 deploy/         сервер лицензий: Dockerfile, Helm-чарт, Ansible
 docs/           дополнительная документация
 ```
@@ -83,10 +83,10 @@ go test ./internal/singbox -update  # перегенерировать golden-к
 
 ```sh
 make build              # версионированный бинарник в ./bin/singctl
-make build-all          # кросс-сборка macOS/Linux/Windows
+make build-all          # кросс-сборка macOS/Windows
 make build-server       # сервер лицензий
-make install            # установка CLI + демона (LaunchDaemon на macOS, systemd на Linux)
-make gui                # сборка десктоп-GUI (wails build -tags webkit2_41)
+make install            # установка CLI + демона (LaunchDaemon на macOS)
+make gui                # сборка десктоп-GUI (wails build)
 make gui-dev            # GUI в режиме разработки
 make gui-test           # тесты GUI (Go bridge + frontend vitest)
 ```
@@ -101,8 +101,8 @@ make gui-test           # тесты GUI (Go bridge + frontend vitest)
 ## Десктоп-GUI
 
 Сборка и разработка GUI описаны в [`gui/README.md`](gui/README.md): требования
-(Wails CLI, GTK/WebKit на Linux, тег `webkit2_41`), `make gui`/`gui-dev`/`gui-test`,
-структура (Feature-Sliced Design + Tailwind + Zustand) и соглашения.
+(Wails CLI), `make gui`/`gui-dev`/`gui-test`, структура (Feature-Sliced Design +
+Tailwind + Zustand) и соглашения.
 
 ## Лицензирование и поставка
 

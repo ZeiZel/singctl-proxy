@@ -34,11 +34,11 @@ MANPAGE := cmd/singctl/singctl.1
 # build with sing-tun's pinned gVisor version).
 SINGBOX_TAGS := singbox with_utls with_clash_api
 
-.PHONY: build build-macos build-windows build-linux build-all build-netext \
+.PHONY: build build-macos build-windows build-all build-netext \
 	build-unlicensed build-server docker-server \
 	test test-integration tidy run lint clean install-man uninstall-man \
 	install uninstall gui gui-dev gui-test gui-reset \
-	gui-linux-bin pkg-linux appimage pkg-macos
+	pkg-macos
 
 # Install prefix for the binary (`make install`).
 PREFIX ?= /usr/local
@@ -70,25 +70,21 @@ docker-server:
 # --- cross-platform builds (bin/<binary>-<os>-<arch>) ---
 #
 # macOS needs CGO for the sing-box TUN (both arches build natively on a Mac:
-# clang cross-assembles arm64<->amd64). Linux and Windows builds are pure Go
-# (CGO_ENABLED=0): sing-tun uses netlink on Linux and wintun on Windows, so
-# they cross-compile from any host. Windows 10/11 = windows/amd64 (+arm64);
-# Ubuntu = linux/amd64 (+arm64). Run the Windows binary as Administrator and
-# put wintun.dll (https://www.wintun.net) next to it for VPN mode.
+# clang cross-assembles arm64<->amd64). Windows builds are pure Go
+# (CGO_ENABLED=0): sing-tun uses wintun on Windows, so it cross-compiles from
+# any host. Windows 10/11 = windows/amd64 (+arm64). Run the Windows binary as
+# Administrator and put wintun.dll (https://www.wintun.net) next to it for VPN
+# mode.
 
 build-macos:
 	CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 $(GO) build -tags "$(SINGBOX_TAGS)" -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-darwin-arm64 ./cmd/singctl
 	CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 $(GO) build -tags "$(SINGBOX_TAGS)" -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-darwin-amd64 ./cmd/singctl
 
-build-linux:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -tags "$(SINGBOX_TAGS)" -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-linux-amd64 ./cmd/singctl
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -tags "$(SINGBOX_TAGS)" -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-linux-arm64 ./cmd/singctl
-
 build-windows:
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -tags "$(SINGBOX_TAGS)" -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-windows-amd64.exe ./cmd/singctl
 	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GO) build -tags "$(SINGBOX_TAGS)" -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-windows-arm64.exe ./cmd/singctl
 
-build-all: build-macos build-linux build-windows
+build-all: build-macos build-windows
 
 # Build the macOS transparent-proxy System Extension scaffold (Variant C of the
 # Cursor-leak plan, bead singctl-proxy-4uy). macOS-only: needs Xcode + XcodeGen
@@ -148,46 +144,30 @@ uninstall-man:
 
 # Install singctl as a system tool. Run plain `make install` (NOT under sudo) so
 # the build stays non-root; the install step self-elevates with sudo for the
-# privileged copy. On macOS this installs a LaunchDaemon (scripts/install-macos.sh);
-# on Linux a systemd unit (scripts/install-linux.sh). Both run a boot-start,
-# system-wide VPN daemon (singctl --headless --vpn) that the desktop GUI drives
-# over the control socket. SUDO is empty when already root so `sudo make install`
-# also works.
+# privileged copy. Installs a LaunchDaemon (scripts/install-macos.sh) that runs
+# a boot-start, system-wide VPN daemon (singctl --headless --vpn) that the
+# desktop GUI drives over the control socket. SUDO is empty when already root
+# so `sudo make install` also works. macOS-only.
 SUDO := $(shell [ "$$(id -u)" = "0" ] || echo sudo)
 install: build
-ifeq ($(UNAME_S),Darwin)
 	./scripts/install-macos.sh
-else
-	PREFIX=$(PREFIX) ./scripts/install-linux.sh
-endif
 
 uninstall:
-ifeq ($(UNAME_S),Darwin)
 	./scripts/install-macos.sh uninstall
-else
-	PREFIX=$(PREFIX) ./scripts/install-linux.sh uninstall
-endif
 
 # --- Desktop GUI (Wails: Go + React, drives the daemon over the control socket) ---
 # The GUI lives in its own nested module (gui/) so it never pulls sing-box into
-# the main build. The webkit2_41 build tag is needed only on Linux (Ubuntu ships
-# webkit2gtk-4.1, not 4.0 — `wails doctor` falsely reports it missing); on macOS
-# no tag is passed. WAILS resolves to an installed `wails` (on PATH or in
-# $(go env GOPATH)/bin), else falls back to `go run` so no global install is
-# required. Override with `make gui WAILS=wails` once it is on your PATH.
+# the main build. No platform build tag is needed on macOS. WAILS resolves to
+# an installed `wails` (on PATH or in $(go env GOPATH)/bin), else falls back to
+# `go run` so no global install is required. Override with `make gui WAILS=wails`
+# once it is on your PATH.
 WAILS_VERSION ?= v2.12.0
 WAILS ?= $(shell command -v wails 2>/dev/null || ([ -x "$$(go env GOPATH)/bin/wails" ] && echo "$$(go env GOPATH)/bin/wails") || echo "go run github.com/wailsapp/wails/v2/cmd/wails@$(WAILS_VERSION)")
 # Dev GUI builds compile out the license gate (like build-unlicensed): the GUI's
 # License screen then shows "development build". Production packaging overrides
 # `GUI_TAGS=` and embeds the pubkey (LICENSE_PUBKEY) to enable real validation.
-# webkit2_41 is appended on Linux (Ubuntu ships webkit2gtk-4.1, not 4.0).
 GUI_TAGS ?= unlicensed
-# Platform tags are kept separate: `+=` is ignored on a command-line-set GUI_TAGS,
-# so combine at the use-site to keep webkit2_41 even when CI passes `GUI_TAGS=`.
-ifeq ($(UNAME_S),Linux)
-GUI_PLATFORM_TAGS := webkit2_41
-endif
-GUI_ALL_TAGS := $(strip $(GUI_TAGS) $(GUI_PLATFORM_TAGS))
+GUI_ALL_TAGS := $(strip $(GUI_TAGS))
 GUI_TAGFLAG := $(if $(GUI_ALL_TAGS),-tags "$(GUI_ALL_TAGS)",)
 GUI_LDX := $(if $(strip $(LICENSE_PUBKEY)),-X singctl/internal/license.PublicKeyB64=$(LICENSE_PUBKEY),)
 GUI_LDX += $(if $(strip $(LICENSE_SERVER_URL)),-X singctl/internal/license.LicenseServerDefault=$(LICENSE_SERVER_URL),)
@@ -212,25 +192,6 @@ gui-reset:
 # Version without a leading 'v' (deb/rpm reject it); release tags are clean.
 PKG_VERSION ?= $(patsubst v%,%,$(VERSION))
 PKG_ARCH ?= $(shell $(GO) env GOARCH)
-
-# Copy the host-built GUI binary into the arch-named slot the packagers expect.
-gui-linux-bin: gui
-	mkdir -p bin
-	cp gui/build/bin/singctl-gui bin/$(BINARY)-gui-linux-$(PKG_ARCH)
-
-# .deb + .rpm via nfpm. Needs bin/singctl-linux-<arch> (make build-linux) and
-# bin/singctl-gui-linux-<arch> (make gui-linux-bin) present.
-pkg-linux:
-	@command -v nfpm >/dev/null 2>&1 || { echo "nfpm required: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest"; exit 1; }
-	mkdir -p dist
-	sed -e 's|$${PKG_ARCH}|$(PKG_ARCH)|g' -e 's|$${PKG_VERSION}|$(PKG_VERSION)|g' \
-		packaging/linux/nfpm.yaml > dist/nfpm-$(PKG_ARCH).yaml
-	nfpm package -f dist/nfpm-$(PKG_ARCH).yaml -p deb -t dist/
-	nfpm package -f dist/nfpm-$(PKG_ARCH).yaml -p rpm -t dist/
-
-# Portable AppImage (bundles GTK/WebKit). Needs the GUI built (make gui).
-appimage:
-	PKG_VERSION="$(PKG_VERSION)" GOARCH="$(PKG_ARCH)" packaging/linux/appimage/build-appimage.sh
 
 # macOS notarized .pkg + .dmg. Needs the GUI (make gui) + CLI (make build) built;
 # signing/notarization apply only when the identity/cred env vars are set.

@@ -121,12 +121,12 @@ Settings → CI/CD → Variables. Все — Protected (видны только 
 | Переменная | Формат / пример | Masked | Protected | Использует |
 |---|---|---|---|---|
 | `LICENSE_SITE_ADDRESS` | `license.example.com`, или пусто для HTTP | да, если задан | да | `deploy:compose` → адрес, на котором Caddy раздаёт сервер (домен = авто-HTTPS; пусто = голый HTTP на `:80`). Заменяет старый Helm-only `LICENSE_HOST`/`ingress.host` |
-| `LICENSE_SERVER_URL` | `https://license.example.com` или `http://<ip>` | нет (не секрет) | да | `release:linux`/`release:macos` → зашивается в CLI/GUI как дефолтный сервер лицензий (`SINGCTL_LICENSE_SERVER` переопределяет в рантайме) |
+| `LICENSE_SERVER_URL` | `https://license.example.com` или `http://<ip>` | нет (не секрет) | да | `release:macos` → зашивается в CLI/GUI как дефолтный сервер лицензий (`SINGCTL_LICENSE_SERVER` переопределяет в рантайме) |
 | `LICENSE_PRIVATE_KEY` | base64 Ed25519 (из шага 1) | да | да | `deploy:compose` → `.env` сервера (подпись выданных лицензий) |
 | `LICENSE_ADMIN_TOKEN` | `openssl rand -hex 32` | да | да | `deploy:compose` → `.env` сервера (bearer для `/v1/admin/*`) |
 | `LICENSE_WEBHOOK_SECRET` | HMAC-секрет платёжного вебхука | да | да | `deploy:compose` → `.env` сервера; пусто = вебхук выключен |
 | `LICENSE_DEFAULT_TTL_DAYS` | целое число дней, `0` = бессрочно | нет | да | `deploy:compose` → `.env` сервера, дефолтный срок действия выдаваемых лицензий |
-| `LICENSE_PUBKEY` | base64 Ed25519 (из шага 1) | нет (не секрет) | да | `release:linux`/`release:macos` → встраивается в CLI/GUI |
+| `LICENSE_PUBKEY` | base64 Ed25519 (из шага 1) | нет (не секрет) | да | `release:macos` → встраивается в CLI/GUI |
 | `CODESIGN_IDENTITY` | `Developer ID Application: <Name> (S3UCF4USYC)` | нет* | да | `release:macos` |
 | `INSTALLER_IDENTITY` | `Developer ID Installer: <Name> (S3UCF4USYC)` | нет* | да | `release:macos` |
 | `AC_APPLE_ID` | email аккаунта Apple Developer | нет | да | `release:macos` |
@@ -201,24 +201,22 @@ git tag v1.2.3
 git push --tags
 ```
 
-- `release:linux` — запускается автоматически, собирает CLI/GUI и
-  `.deb`/`.rpm`/`.AppImage` (подробности сборки — [packaging/README.md](../packaging/README.md)),
-  кладёт их в артефакты джобы.
 - `release:macos` — **ручная** джоба (`when: manual`, `allow_failure: true`) на
   раннере с тегом `macos`; нужно нажать ▶ в UI пайплайна, и раннер должен быть
-  онлайн.
-- `release:publish` — ждёт `release:linux` и (опционально) `release:macos`,
-  заливает файлы в Generic Package Registry проекта
+  онлайн. Собирает CLI/GUI и `.pkg`/`.dmg` (подробности сборки —
+  [packaging/README.md](../packaging/README.md)), кладёт их в артефакты джобы.
+- `release:publish` — ждёт (опционально) `release:macos`, заливает файлы в
+  Generic Package Registry проекта
   (`.../packages/generic/singctl/$CI_COMMIT_TAG/…`) и создаёт GitLab Release
   со ссылками на них.
 
-Обе `release:*`-джобы собирают через `make build-linux`/`build-macos` и
-`make gui`/`gui-linux-bin` с `LICENSE_PUBKEY="$LICENSE_PUBKEY"
-LICENSE_SERVER_URL="$LICENSE_SERVER_URL"`. Без CI/CD-переменных
-`LICENSE_SERVER_URL` и `LICENSE_PUBKEY` (шаг 4) релизная сборка выходит с
-пустым дефолтным сервером — активация лицензии сработает только если её потом
-явно указать через `SINGCTL_LICENSE_SERVER` в рантайме; для «из коробки»
-рабочей активации обе переменные должны быть выставлены до тега.
+`release:macos` собирает через `make build-macos` и `make gui` с
+`LICENSE_PUBKEY="$LICENSE_PUBKEY" LICENSE_SERVER_URL="$LICENSE_SERVER_URL"`.
+Без CI/CD-переменных `LICENSE_SERVER_URL` и `LICENSE_PUBKEY` (шаг 4) релизная
+сборка выходит с пустым дефолтным сервером — активация лицензии сработает
+только если её потом явно указать через `SINGCTL_LICENSE_SERVER` в рантайме;
+для «из коробки» рабочей активации обе переменные должны быть выставлены до
+тега.
 
 ### Регистрация Mac-раннера (для `release:macos`)
 

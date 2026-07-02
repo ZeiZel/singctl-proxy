@@ -26,25 +26,23 @@ make install-man        # установка man-страницы (`man singctl`
 
 ```
 make build-macos        # bin/singctl-darwin-{arm64,amd64}   (CGO_ENABLED=1, собирается на Mac)
-make build-linux        # bin/singctl-linux-{amd64,arm64}    (Ubuntu и др.; чистый Go, CGO=0)
 make build-windows      # bin/singctl-windows-{amd64,arm64}.exe (Windows 10/11; чистый Go, CGO=0)
-make build-all          # все шесть бинарников
+make build-all          # все четыре бинарника
 ```
 
-Linux/Windows-сборки кросс-компилируются с любого хоста (CGO не нужен:
-sing-tun использует netlink на Linux и wintun на Windows). macOS-сборка требует
-CGO и потому собирается на Mac (обе архитектуры — clang кросс-ассемблирует).
+Windows-сборка кросс-компилируется с любого хоста (CGO не нужен: sing-tun
+использует wintun на Windows). macOS-сборка требует CGO и потому собирается на
+Mac (обе архитектуры — clang кросс-ассемблирует).
 
 Платформенные оговорки:
 
 - **Windows 10/11:** запускать **от администратора**; для VPN (TUN) рядом с
   бинарником нужна `wintun.dll` (https://www.wintun.net). Проверка euid
   пропускается — права проверит сама ОС при создании TUN.
-- **Linux (Ubuntu):** запуск под `sudo`, TUN/маршруты — через netlink.
 - Пассивная детекция Cisco Secure Client заточена под macOS (парсеры
-  `ifconfig`/`netstat`/`ps`); на Linux/Windows она деградирует мягко
-  (Cisco просто не обнаруживается), kernel-события маршрутов заменяет
-  2-секундный опрос. Очистка orphan-utun — тоже только macOS.
+  `ifconfig`/`netstat`/`ps`); на Windows она деградирует мягко (Cisco просто
+  не обнаруживается), kernel-события маршрутов заменяет 2-секундный опрос.
+  Очистка orphan-utun — тоже только macOS.
 
 ## CLI-флаги
 

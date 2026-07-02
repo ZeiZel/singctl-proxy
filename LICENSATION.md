@@ -47,8 +47,8 @@ bin/singctl-server keygen
 
 - `LICENSE_PUBKEY=…`  — **публичный** ключ. Встраивается в CLI при сборке
   (`make build LICENSE_PUBKEY=…`, см. `Makefile`), безопасен для коммита. В CI
-  это CI/CD-переменная `LICENSE_PUBKEY`, которую джобы `release:linux`/
-  `release:macos` из `.gitlab-ci.yml` подставляют в сборку.
+  это CI/CD-переменная `LICENSE_PUBKEY`, которую джоба `release:macos` из
+  `.gitlab-ci.yml` подставляет в сборку.
 - `LICENSE_PRIVATE_KEY=…` — **приватный** ключ. Только на сервере (CI/CD-
   переменная `LICENSE_PRIVATE_KEY` → Helm-секрет). **Никогда не коммить.**
 
@@ -104,15 +104,15 @@ protected — в [docs/deploy-gitlab.md](docs/deploy-gitlab.md)):
 | `LICENSE_ADMIN_TOKEN` | bearer-токен для `/v1/admin/*` | `deploy:helm` → Helm-секрет |
 | `LICENSE_WEBHOOK_SECRET` | HMAC-секрет платёжного вебхука | `deploy:helm` → Helm-секрет |
 | `LICENSE_HOST` | внешний хост (FQDN для ingress/TLS) | `deploy:helm` → `ingress.host` |
-| `LICENSE_PUBKEY` | публичный ключ из шага 1 | `release:linux`/`release:macos` → встраивание в CLI |
+| `LICENSE_PUBKEY` | публичный ключ из шага 1 | `release:macos` → встраивание в CLI |
 
 Затем `git push` в `main` (или тег `vX.Y.Z`) запускает пайплайн из
 `.gitlab-ci.yml`: `test` → `build:image` (сборка образа, push в GitLab
 Container Registry, `$CI_REGISTRY_IMAGE`) → `deploy:helm` (раннер
 `singctl-deploy`, `helm upgrade --install singctl-license`, namespace
-`singctl`). Тег `vX.Y.Z` дополнительно запускает `release:linux` (авто) и
-`release:macos` (ручная джоба на раннере с тегом `macos`) — сборку CLI/GUI с
-встроенным `LICENSE_PUBKEY`, а `release:publish` публикует GitLab Release.
+`singctl`). Тег `vX.Y.Z` дополнительно запускает `release:macos` (ручная
+джоба на раннере с тегом `macos`) — сборку CLI/GUI с встроенным
+`LICENSE_PUBKEY`, а `release:publish` публикует GitLab Release.
 Подробный пошаговый разбор (включая создание раннеров и protected tags) —
 [docs/deploy-gitlab.md](docs/deploy-gitlab.md).
 

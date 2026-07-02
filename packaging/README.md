@@ -1,35 +1,9 @@
 # Packaging & release
 
 Installers for the CLI + desktop GUI + boot-start daemon. Outputs go to `dist/`.
-Releases are built by the `release:linux`/`release:macos`/`release:publish`
-jobs in `.gitlab-ci.yml` on a `vX.Y.Z` tag (previously
-`.github/workflows/release.yml`); the commands below reproduce it locally.
-
-## Linux (.deb / .rpm / AppImage)
-
-Built with [nfpm](https://nfpm.goreleaser.com) (no `dpkg`/`rpmbuild` needed) and
-linuxdeploy (AppImage). The packages install:
-
-- `singctl` → `/usr/bin/singctl`, `singctl-gui` → `/usr/bin/singctl-gui`
-- `singctld@.service` (systemd **template**) → `/usr/lib/systemd/system/`
-- man page, `.desktop` launcher, icon
-- runtime dep on `libwebkit2gtk-4.1-0` (deb) / `webkit2gtk4.1` (rpm)
-
-```sh
-make build-linux                 # CLI amd64+arm64 (pure Go, cross-compiles)
-make gui-linux-bin GUI_TAGS=     # GUI (host arch), licensed; needs LICENSE_PUBKEY for real validation
-make pkg-linux PKG_ARCH=amd64 PKG_VERSION=1.2.3
-make appimage  PKG_ARCH=amd64 PKG_VERSION=1.2.3
-```
-
-**Boot-start is per-user** (the root daemon must use a specific user's
-`~/.config/singctl`, matching the GUI). The package does not auto-enable it;
-after install:
-
-```sh
-sudo singctl                          # save a key once (Ключи), then quit
-sudo systemctl enable --now singctld@$USER
-```
+Releases are built by the `release:macos`/`release:publish` jobs in
+`.gitlab-ci.yml` on a `vX.Y.Z` tag (previously `.github/workflows/release.yml`);
+the commands below reproduce it locally.
 
 ## macOS (.pkg / .dmg, signed + notarized)
 
@@ -56,17 +30,15 @@ artifacts are produced for dry runs):
 
 ## CI release (tag `vX.Y.Z`)
 
-`.gitlab-ci.yml` builds the release artifacts in three jobs:
+`.gitlab-ci.yml` builds the release artifacts in two jobs:
 
-- `release:linux` — runs automatically on the shared `golang:1.24-bookworm`
-  image, produces the `.deb`/`.rpm`/`.AppImage`.
 - `release:macos` — a **manual** job (`when: manual`, `allow_failure: true`)
   that only runs on a **self-hosted** GitLab Runner tagged `macos` (there is
   no free shared macOS runner on gitlab.com); someone has to trigger it from
   the pipeline UI, and that runner must be online.
-- `release:publish` — waits on both (macOS optional), uploads everything to
-  the project's Generic Package Registry, and creates the GitLab Release with
-  `SHA256SUMS`.
+- `release:publish` — waits on `release:macos` (optional), uploads everything
+  to the project's Generic Package Registry, and creates the GitLab Release
+  with `SHA256SUMS`.
 
 Required CI/CD variables (Settings → CI/CD → Variables) — full list with
 formats/masked/protected settings in
@@ -81,6 +53,5 @@ formats/masked/protected settings in
   in that Mac's login keychain) — see the comment in `.gitlab-ci.yml` above
   `release:macos`.
 
-> Windows installers and Linux **arm64** GUI packages are not built yet (the GUI
-> needs a native runner per arch); the cross-compiled CLI binaries ship for all
-> targets regardless.
+> Windows installers are not built yet; the cross-compiled Windows CLI binary
+> ships regardless (`make build-windows`).
