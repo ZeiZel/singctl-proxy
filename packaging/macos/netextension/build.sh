@@ -42,8 +42,16 @@ xcodebuild \
   -scheme SingctlProxy \
   -configuration "$CONFIGURATION" \
   -derivedDataPath "$DERIVED" \
+  -allowProvisioningUpdates \
   DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
+  OTHER_CODE_SIGN_FLAGS="--timestamp" \
+  CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
   build
+
+# OTHER_CODE_SIGN_FLAGS=--timestamp: notarization requires a secure timestamp;
+# a plain build otherwise signs with --timestamp=none.
+# CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO: stops Xcode injecting the debug
+# get-task-allow entitlement, which notarization rejects for distribution.
 
 APP="$DERIVED/Build/Products/$CONFIGURATION/SingctlProxy.app"
 echo "==> built: $APP"
