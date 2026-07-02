@@ -153,6 +153,11 @@ func (m Model) statusBody(contentW int) string {
 		s.kv("Cisco", s.ciscoBadge(m.cisco), keyW),
 		s.kv("iface", s.colored(s.th.Accent, s.clampLine(phys, valW)), keyW),
 	}
+	// macOS-only: the transparent-proxy system extension's install/approval
+	// state (passive — see internal/netext.Available).
+	if m.isDarwin {
+		rows = append(rows, s.kv("расшир.", s.netextBadge(m.netext), keyW))
+	}
 	// While Cisco is up, show whether the proxy bypasses it (egress pinned to the
 	// physical NIC) or falls back to riding it.
 	if m.cisco && m.mode != RunOff {

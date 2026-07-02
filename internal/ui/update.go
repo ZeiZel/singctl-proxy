@@ -61,6 +61,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cisco = msg.Cisco
 		m.bypass = msg.Bypass
 		m.phys = msg.PhysIface
+		m.netext = msg.NetextAvailable
 		return m, listen(m.notes)
 
 	case StatusMsg:

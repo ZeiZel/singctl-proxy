@@ -25,6 +25,12 @@ type Status struct {
 	CiscoActive bool   `json:"cisco_active,omitempty"`
 	ProxyBypass bool   `json:"proxy_bypass,omitempty"`
 	PhysIface   string `json:"phys_iface,omitempty"`
+	// NetextSupported/NetextAvailable surface the macOS transparent-proxy system
+	// extension: Supported is true only on darwin (there is no such mechanism
+	// elsewhere), Available additionally requires it to be installed+approved
+	// (systemextensionsctl "activated enabled").
+	NetextSupported bool `json:"netext_supported,omitempty"`
+	NetextAvailable bool `json:"netext_available,omitempty"`
 }
 
 // Traffic is the TRAFFIC payload: cumulative byte counters (running totals, not

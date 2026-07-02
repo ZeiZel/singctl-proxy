@@ -26,6 +26,12 @@ type Status struct {
 	CiscoActive bool   `json:"ciscoActive"`
 	ProxyBypass bool   `json:"proxyBypass"`
 	PhysIface   string `json:"physIface"`
+	// NetextSupported/NetextAvailable surface the macOS transparent-proxy system
+	// extension (see control.Status): Supported gates whether the frontend should
+	// show the row at all (false everywhere but darwin); Available additionally
+	// requires it to be installed and approved.
+	NetextSupported bool `json:"netextSupported"`
+	NetextAvailable bool `json:"netextAvailable"`
 }
 
 // Settings mirrors the daemon's ui.Settings JSON wire format (SETTINGS-GET/SET).

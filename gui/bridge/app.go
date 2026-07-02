@@ -62,6 +62,7 @@ func (a *App) GetStatus() Status {
 			st.Mode = s.Mode
 			st.PID = s.PID
 			st.CiscoActive, st.ProxyBypass, st.PhysIface = s.CiscoActive, s.ProxyBypass, s.PhysIface
+			st.NetextSupported, st.NetextAvailable = s.NetextSupported, s.NetextAvailable
 		}
 	}
 	return st

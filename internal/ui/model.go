@@ -33,6 +33,7 @@ type Model struct {
 	cisco        bool
 	bypass       bool // proxy egress pinned to the physical NIC to bypass Cisco
 	phys         string
+	netext       bool // macOS transparent-proxy system extension installed+approved (isDarwin gates display)
 	width        int
 	height       int
 	input        textinput.Model

@@ -22,6 +22,7 @@ import (
 	"singctl/internal/core"
 	"singctl/internal/daemon"
 	"singctl/internal/monitor"
+	"singctl/internal/netext"
 	"singctl/internal/policy"
 	"singctl/internal/proclist"
 	"singctl/internal/procproxy"
@@ -640,7 +641,9 @@ func (e *Executor) PushDisplay(ctx context.Context, ns types.NetState) {
 		}
 		e.diag("netstate: cisco=%v ownsDefault=%v defRoute=%q phys=%q → %s", ns.CiscoActive, ns.CiscoOwnsDefault, ns.DefaultRouteIface, ns.PhysicalIface, tunnel)
 	}
-	e.push(ctx, ui.NetStateMsg{Cisco: ns.CiscoActive, PhysIface: ns.PhysicalIface, Bypass: bypass})
+	// netext.Available is cheap off darwin (no exec) and TTL-cached on darwin, so
+	// calling it on every poll (this is the monitor's per-tick callback) is fine.
+	e.push(ctx, ui.NetStateMsg{Cisco: ns.CiscoActive, PhysIface: ns.PhysicalIface, Bypass: bypass, NetextAvailable: netext.Available()})
 }
 
 // ProxyBoundToPhysical reports whether the proxy is running in proxy-only mode

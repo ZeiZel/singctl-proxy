@@ -35,6 +35,7 @@ import (
 	"singctl/internal/core"
 	"singctl/internal/daemon"
 	"singctl/internal/monitor"
+	"singctl/internal/netext"
 	"singctl/internal/netstate"
 	"singctl/internal/platform"
 	"singctl/internal/proclist"
@@ -436,6 +437,7 @@ func registerControl(srv *control.Server, executor *app.Executor, stop func(), s
 		data, _ := json.Marshal(control.Status{
 			PID: os.Getpid(), Mode: executor.StateLabel(), StartedAt: startedAt,
 			CiscoActive: cisco, ProxyBypass: bypass, PhysIface: phys,
+			NetextSupported: netext.Supported, NetextAvailable: netext.Available(),
 		})
 		return string(data), nil
 	})

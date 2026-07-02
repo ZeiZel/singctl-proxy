@@ -104,6 +104,16 @@ func (s Styles) bypassBadge(active bool) string {
 	return s.colored(s.th.Warn, s.gl.DotOn+" через Cisco (fallback)")
 }
 
+// netextBadge renders the macOS transparent-proxy system-extension indicator: a
+// green dot + "активно" when installed and approved, or a muted hollow dot +
+// "не установлено" otherwise. Only shown on darwin (see Model.isDarwin).
+func (s Styles) netextBadge(available bool) string {
+	if available {
+		return s.colored(s.th.Ok, s.gl.DotOn+" активно")
+	}
+	return s.Muted.Render(s.gl.DotOff + " не установлено")
+}
+
 // kv renders an aligned "key   value" status row. The key is padded to keyW
 // cells (measured, ANSI/cyrillic-aware).
 func (s Styles) kv(key, val string, keyW int) string {

@@ -34,6 +34,10 @@ type NetStateMsg struct {
 	// physical NIC to bypass it (the coexistence mode); false means the proxy is
 	// riding Cisco (no Cisco, or the fallback).
 	Bypass bool
+	// NetextAvailable reports whether the macOS transparent-proxy system
+	// extension is installed and approved. Always false off darwin; the
+	// dashboard only shows the corresponding row when Model.isDarwin.
+	NetextAvailable bool
 }
 
 // StatusMsg reflects a runtime mode change or notification from the executor
