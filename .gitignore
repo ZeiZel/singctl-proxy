@@ -19,3 +19,4 @@ deploy/compose/.env
 /packaging/macos/netextension/build/
 /packaging/macos/netextension/SingctlProxy.xcodeproj/
 /singctl
+/server
