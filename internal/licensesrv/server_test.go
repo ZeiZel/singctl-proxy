@@ -146,6 +146,207 @@ func TestWebhook(t *testing.T) {
 	}
 }
 
+func TestActivateBindsDeviceAndRebindLastWins(t *testing.T) {
+	e := newTestEnv(t)
+	rec := e.do(t, "POST", "/v1/admin/issue", "admintok", issueRequest{Subject: "alice", Days: 10})
+	var resp issueResponse
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+
+	// First activation binds device A.
+	r := e.do(t, "POST", "/v1/activate", "", activateRequest{ID: resp.ID, DeviceID: "deviceA", Email: "a@example.com"})
+	if r.Code != http.StatusOK {
+		t.Fatalf("activate: %d %s", r.Code, r.Body)
+	}
+	var m map[string]string
+	json.Unmarshal(r.Body.Bytes(), &m)
+	if m["status"] != "active" {
+		t.Fatalf("activate status = %q, want active", m["status"])
+	}
+
+	// status?device=deviceA → active.
+	if got := statusOfDevice(t, e, resp.ID, "deviceA"); got != "active" {
+		t.Errorf("status(deviceA) = %q, want active", got)
+	}
+	// status?device=deviceB (a different device than the bound one) → superseded.
+	if got := statusOfDevice(t, e, resp.ID, "deviceB"); got != "superseded" {
+		t.Errorf("status(deviceB before rebind) = %q, want superseded", got)
+	}
+
+	// Rebind to device B: last-wins.
+	r2 := e.do(t, "POST", "/v1/activate", "", activateRequest{ID: resp.ID, DeviceID: "deviceB"})
+	if r2.Code != http.StatusOK {
+		t.Fatalf("re-activate: %d %s", r2.Code, r2.Body)
+	}
+	var m2 map[string]string
+	json.Unmarshal(r2.Body.Bytes(), &m2)
+	if m2["status"] != "active" {
+		t.Fatalf("re-activate status = %q, want active", m2["status"])
+	}
+
+	// Now device A is superseded, device B is active.
+	if got := statusOfDevice(t, e, resp.ID, "deviceA"); got != "superseded" {
+		t.Errorf("status(deviceA after rebind) = %q, want superseded", got)
+	}
+	if got := statusOfDevice(t, e, resp.ID, "deviceB"); got != "active" {
+		t.Errorf("status(deviceB after rebind) = %q, want active", got)
+	}
+	// Without ?device, unchanged diagnostic behavior.
+	if got := statusOf(t, e, resp.ID); got != "active" {
+		t.Errorf("status(no device) = %q, want active", got)
+	}
+}
+
+func TestActivateUnknownRevokedExpired(t *testing.T) {
+	e := newTestEnv(t)
+
+	if got := activateStatus(t, e, "nosuchid", "dev1"); got != "unknown" {
+		t.Errorf("activate unknown id = %q, want unknown", got)
+	}
+
+	rec := e.do(t, "POST", "/v1/admin/issue", "admintok", issueRequest{Subject: "bob"})
+	var resp issueResponse
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	e.do(t, "POST", "/v1/admin/revoke", "admintok", revokeRequest{ID: resp.ID})
+	if got := activateStatus(t, e, resp.ID, "dev1"); got != "revoked" {
+		t.Errorf("activate revoked license = %q, want revoked", got)
+	}
+
+	rec2 := e.do(t, "POST", "/v1/admin/issue", "admintok", issueRequest{Subject: "carl", Days: 1})
+	var resp2 issueResponse
+	json.Unmarshal(rec2.Body.Bytes(), &resp2)
+	*e.now = e.now.Add(2 * 24 * time.Hour)
+	if got := activateStatus(t, e, resp2.ID, "dev1"); got != "expired" {
+		t.Errorf("activate expired license = %q, want expired", got)
+	}
+}
+
+func TestAdminReset(t *testing.T) {
+	e := newTestEnv(t)
+	rec := e.do(t, "POST", "/v1/admin/issue", "admintok", issueRequest{Subject: "dave"})
+	var resp issueResponse
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+
+	e.do(t, "POST", "/v1/activate", "", activateRequest{ID: resp.ID, DeviceID: "devX"})
+	if got := statusOfDevice(t, e, resp.ID, "devY"); got != "superseded" {
+		t.Fatalf("before reset, other device = %q, want superseded", got)
+	}
+
+	r := e.do(t, "POST", "/v1/admin/reset", "admintok", resetRequest{ID: resp.ID})
+	if r.Code != http.StatusOK {
+		t.Fatalf("reset: %d %s", r.Code, r.Body)
+	}
+	var m map[string]string
+	json.Unmarshal(r.Body.Bytes(), &m)
+	if m["status"] != "reset" {
+		t.Errorf("reset status = %q, want reset", m["status"])
+	}
+
+	// After reset, any device is fine (no supersede) — device binding cleared.
+	if got := statusOfDevice(t, e, resp.ID, "devY"); got != "active" {
+		t.Errorf("after reset, status(devY) = %q, want active", got)
+	}
+
+	// Reset of an unknown id → 404.
+	r2 := e.do(t, "POST", "/v1/admin/reset", "admintok", resetRequest{ID: "nosuchid"})
+	if r2.Code != http.StatusNotFound {
+		t.Errorf("reset unknown id: %d, want 404", r2.Code)
+	}
+}
+
+func TestIssueCountBatch(t *testing.T) {
+	e := newTestEnv(t)
+	r := e.do(t, "POST", "/v1/admin/issue", "admintok", issueRequest{Count: 3})
+	if r.Code != http.StatusOK {
+		t.Fatalf("issue batch: %d %s", r.Code, r.Body)
+	}
+	var resp issueBatchResponse
+	if err := json.Unmarshal(r.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Licenses) != 3 {
+		t.Fatalf("licenses len = %d, want 3", len(resp.Licenses))
+	}
+	seen := map[string]bool{}
+	for _, l := range resp.Licenses {
+		if l.ID == "" || l.Token == "" {
+			t.Errorf("empty id/token in batch: %+v", l)
+		}
+		if seen[l.ID] {
+			t.Errorf("duplicate id in batch: %s", l.ID)
+		}
+		seen[l.ID] = true
+		if _, err := license.Verify(l.Token, e.pub, *e.now); err != nil {
+			t.Errorf("batch token must verify: %v", err)
+		}
+	}
+}
+
+func TestIssueSubjectOptional(t *testing.T) {
+	e := newTestEnv(t)
+	r := e.do(t, "POST", "/v1/admin/issue", "admintok", issueRequest{})
+	if r.Code != http.StatusOK {
+		t.Fatalf("issue with no subject: %d %s", r.Code, r.Body)
+	}
+	var resp issueResponse
+	json.Unmarshal(r.Body.Bytes(), &resp)
+	if resp.ID == "" || resp.Token == "" {
+		t.Fatalf("expected valid id/token for subject-less issue, got %+v", resp)
+	}
+}
+
+func TestListStateFilter(t *testing.T) {
+	e := newTestEnv(t)
+	r1 := e.do(t, "POST", "/v1/admin/issue", "admintok", issueRequest{Subject: "x"})
+	var resp1 issueResponse
+	json.Unmarshal(r1.Body.Bytes(), &resp1)
+	r2 := e.do(t, "POST", "/v1/admin/issue", "admintok", issueRequest{Subject: "y"})
+	var resp2 issueResponse
+	json.Unmarshal(r2.Body.Bytes(), &resp2)
+
+	e.do(t, "POST", "/v1/activate", "", activateRequest{ID: resp1.ID, DeviceID: "devZ"})
+
+	activated := listState(t, e, "activated")
+	if len(activated) != 1 || activated[0].Claims.ID != resp1.ID {
+		t.Errorf("activated list = %+v, want just %s", activated, resp1.ID)
+	}
+	unactivated := listState(t, e, "unactivated")
+	if len(unactivated) != 1 || unactivated[0].Claims.ID != resp2.ID {
+		t.Errorf("unactivated list = %+v, want just %s", unactivated, resp2.ID)
+	}
+	all := listState(t, e, "")
+	if len(all) != 2 {
+		t.Errorf("unfiltered list len = %d, want 2", len(all))
+	}
+}
+
+func listState(t *testing.T, e *testEnv, state string) []Record {
+	t.Helper()
+	path := "/v1/admin/licenses"
+	if state != "" {
+		path += "?state=" + state
+	}
+	r := e.do(t, "GET", path, "admintok", nil)
+	var recs []Record
+	json.Unmarshal(r.Body.Bytes(), &recs)
+	return recs
+}
+
+func activateStatus(t *testing.T, e *testEnv, id, device string) string {
+	t.Helper()
+	r := e.do(t, "POST", "/v1/activate", "", activateRequest{ID: id, DeviceID: device})
+	var m map[string]string
+	json.Unmarshal(r.Body.Bytes(), &m)
+	return m["status"]
+}
+
+func statusOfDevice(t *testing.T, e *testEnv, id, device string) string {
+	t.Helper()
+	r := e.do(t, "GET", "/v1/status?id="+id+"&device="+device, "", nil)
+	var m map[string]string
+	json.Unmarshal(r.Body.Bytes(), &m)
+	return m["status"]
+}
+
 func TestHealth(t *testing.T) {
 	e := newTestEnv(t)
 	if r := e.do(t, "GET", "/healthz", "", nil); r.Code != http.StatusOK {

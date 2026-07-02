@@ -4,6 +4,8 @@
 //	server keygen    generate an Ed25519 keypair (private→server, public→CLI)
 //	server issue     issue a license locally (manual, on the host)
 //	server revoke    revoke a license id locally
+//	server list      list licenses in the local store (optionally filtered)
+//	server reset     clear a license's device binding locally
 //
 // It is pure Go (no sing-box, CGO-free) and stores data in a single JSON file.
 package main
@@ -34,6 +36,10 @@ func main() {
 		err = runIssue(os.Args[2:])
 	case "revoke":
 		err = runRevoke(os.Args[2:])
+	case "list":
+		err = runList(os.Args[2:])
+	case "reset":
+		err = runReset(os.Args[2:])
 	case "version", "-v", "--version":
 		fmt.Println("singctl-license", version)
 		return
@@ -57,8 +63,10 @@ func usage() {
 usage:
   server serve     run the HTTP license server (configured via env)
   server keygen    generate an Ed25519 keypair
-  server issue     issue a license locally (--subject, --days, --features)
+  server issue     issue a license locally (--subject, --days, --features, --count)
   server revoke    revoke a license id (--id)
+  server list      list licenses (--activated, --unactivated, --json)
+  server reset     clear a license's device binding (--id)
 
 env (serve):
   LICENSE_ADDR                 listen address (default :8080)

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 )
 
 // FileStore persists records as a single JSON file, written atomically
@@ -73,6 +74,36 @@ func (s *FileStore) SetStatus(id string, st Status) error {
 		return ErrNotFound
 	}
 	r.Status = st
+	s.data[id] = r
+	return s.flushLocked()
+}
+
+// BindDevice binds (last-wins) id to deviceID/email and stamps ActivatedAt=now.
+func (s *FileStore) BindDevice(id, deviceID, email string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.data[id]
+	if !ok {
+		return ErrNotFound
+	}
+	r.DeviceID = deviceID
+	r.Email = email
+	r.ActivatedAt = time.Now().Unix()
+	s.data[id] = r
+	return s.flushLocked()
+}
+
+// ResetDevice clears the device binding so the license can be reactivated.
+func (s *FileStore) ResetDevice(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.data[id]
+	if !ok {
+		return ErrNotFound
+	}
+	r.DeviceID = ""
+	r.ActivatedAt = 0
+	r.Email = ""
 	s.data[id] = r
 	return s.flushLocked()
 }

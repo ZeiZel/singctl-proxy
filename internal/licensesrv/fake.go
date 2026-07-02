@@ -1,6 +1,9 @@
 package licensesrv
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // MemStore is an in-memory Store for tests.
 type MemStore struct {
@@ -46,6 +49,34 @@ func (s *MemStore) SetStatus(id string, st Status) error {
 		return ErrNotFound
 	}
 	r.Status = st
+	s.m[id] = r
+	return nil
+}
+
+func (s *MemStore) BindDevice(id, deviceID, email string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.m[id]
+	if !ok {
+		return ErrNotFound
+	}
+	r.DeviceID = deviceID
+	r.Email = email
+	r.ActivatedAt = time.Now().Unix()
+	s.m[id] = r
+	return nil
+}
+
+func (s *MemStore) ResetDevice(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.m[id]
+	if !ok {
+		return ErrNotFound
+	}
+	r.DeviceID = ""
+	r.ActivatedAt = 0
+	r.Email = ""
 	s.m[id] = r
 	return nil
 }

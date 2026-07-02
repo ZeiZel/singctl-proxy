@@ -24,11 +24,14 @@ var ErrNotFound = errors.New("licensesrv: license not found")
 
 // Record is one issued license as persisted by the server.
 type Record struct {
-	Claims     license.Claims `json:"claims"`
-	Token      string         `json:"token"`
-	Status     Status         `json:"status"`
-	PaymentRef string         `json:"payment_ref,omitempty"`
-	CreatedAt  int64          `json:"created_at"`
+	Claims      license.Claims `json:"claims"`
+	Token       string         `json:"token"`
+	Status      Status         `json:"status"`
+	PaymentRef  string         `json:"payment_ref,omitempty"`
+	CreatedAt   int64          `json:"created_at"`
+	DeviceID    string         `json:"device_id,omitempty"`
+	ActivatedAt int64          `json:"activated_at,omitempty"`
+	Email       string         `json:"email,omitempty"`
 }
 
 // Store persists license records. Implementations: FileStore (default, JSON file)
@@ -38,4 +41,12 @@ type Store interface {
 	Get(id string) (Record, error)
 	List() ([]Record, error)
 	SetStatus(id string, s Status) error
+
+	// BindDevice binds (or rebinds, last-wins) a license id to a device, setting
+	// Email (optional) and ActivatedAt=now. Called by the public /v1/activate
+	// endpoint.
+	BindDevice(id, deviceID, email string) error
+	// ResetDevice clears DeviceID/ActivatedAt/Email so the license can be
+	// activated on a new device. Admin-only.
+	ResetDevice(id string) error
 }
