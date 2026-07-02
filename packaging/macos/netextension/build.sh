@@ -32,11 +32,16 @@ xcodegen generate
 
 echo "==> building ($CONFIGURATION)"
 DERIVED="$(pwd)/build"
+# -allowProvisioningUpdates lets Xcode create/refresh the provisioning profiles
+# for com.singctl.proxy(.netext) on the fly. It requires the signing Apple ID to
+# be added in Xcode → Settings → Accounts; without an account Xcode still can't
+# generate a profile and the build fails with "No profiles ... were found".
 xcodebuild \
   -project SingctlProxy.xcodeproj \
   -scheme SingctlProxy \
   -configuration "$CONFIGURATION" \
   -derivedDataPath "$DERIVED" \
+  -allowProvisioningUpdates \
   DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
   build
 
