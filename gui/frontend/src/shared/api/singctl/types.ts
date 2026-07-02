@@ -37,6 +37,16 @@ export interface TProcInfo {
   Children: number;
 }
 
+// TApplication is one whole application for the Apps tab's whole-app picker,
+// grouped by macOS bundle ID (the netext extension's capture key) — routing it
+// covers every PID/helper of that app, not just one process.
+export interface TApplication {
+  name: string;
+  bundleID: string;
+  running: boolean;
+  pids: number[];
+}
+
 export interface TConnRow {
   process: string;
   source: string;

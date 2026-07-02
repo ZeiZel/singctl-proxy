@@ -22,9 +22,13 @@ export function KillPID(arg1:number):Promise<void>;
 
 export function LaunchApp(arg1:Array<string>):Promise<number>;
 
+export function ListApplications():Promise<Array<bridge.Application>>;
+
 export function ListProcesses():Promise<Array<bridge.ProcInfo>>;
 
 export function ListRouted():Promise<Array<number>>;
+
+export function ListRoutedApps():Promise<Array<string>>;
 
 export function RemoveLicense():Promise<void>;
 
@@ -32,10 +36,14 @@ export function RenameKey(arg1:number,arg2:string):Promise<void>;
 
 export function RestartPID(arg1:number):Promise<number>;
 
+export function RouteApp(arg1:string):Promise<void>;
+
 export function RoutePID(arg1:number):Promise<void>;
 
 export function SetMode(arg1:string):Promise<void>;
 
 export function StopDaemon():Promise<void>;
+
+export function UnrouteApp(arg1:string):Promise<void>;
 
 export function UnroutePID(arg1:number):Promise<void>;

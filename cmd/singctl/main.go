@@ -569,6 +569,30 @@ func registerControl(srv *control.Server, executor *app.Executor, stop func(), s
 		}
 		return strconv.Itoa(pid), nil
 	})
+	// APP-*: whole-application routing by bundle ID (the macOS system
+	// extension's capture key), so the GUI's Apps tab can route/unroute every
+	// process of an app — including Electron helpers — as one unit instead of
+	// one PID at a time. APP-LIST only reports apps whose bundle ID resolves
+	// (macOS); APP-ROUTE/APP-UNROUTE error where the platform router doesn't
+	// support it (see procproxy.BundleRouter).
+	srv.Handle("APP-LIST", func(string) (string, error) {
+		rows, err := executor.ListApplications(context.Background())
+		if err != nil {
+			return "", err
+		}
+		data, _ := json.Marshal(rows)
+		return string(data), nil
+	})
+	srv.Handle("APP-LIST-ROUTED", func(string) (string, error) {
+		data, _ := json.Marshal(executor.ListRoutedApps())
+		return string(data), nil
+	})
+	srv.Handle("APP-ROUTE", func(arg string) (string, error) {
+		return "OK", executor.RouteApp(context.Background(), strings.TrimSpace(arg))
+	})
+	srv.Handle("APP-UNROUTE", func(arg string) (string, error) {
+		return "OK", executor.UnrouteApp(context.Background(), strings.TrimSpace(arg))
+	})
 }
 
 // parsePID parses a decimal PID argument from a control command.

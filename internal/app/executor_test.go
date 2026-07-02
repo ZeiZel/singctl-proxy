@@ -12,6 +12,7 @@ import (
 	"singctl/internal/core"
 	"singctl/internal/monitor"
 	"singctl/internal/policy"
+	"singctl/internal/proclist"
 	"singctl/internal/procproxy"
 	"singctl/internal/runtime"
 	"singctl/internal/types"
@@ -269,6 +270,142 @@ func TestExecutor_ListRouted(t *testing.T) {
 	got := e.ListRouted()
 	if len(got) != 2 || got[0] != 111 || got[1] != 222 {
 		t.Errorf("ListRouted = %v, want [111 222]", got)
+	}
+}
+
+// fakeAppLister is a proclist.Lister stub for the Application tests: it returns
+// a fixed "running process" list without shelling out to lsof/ps.
+type fakeAppLister struct{ apps []proclist.App }
+
+func (f fakeAppLister) List(context.Context) ([]proclist.App, error) { return f.apps, nil }
+
+// setFakeLister injects a fake process lister (white-box). It must also mark
+// listerOnce as done, otherwise listProcRows's lazy sync.Once init would
+// clobber e.lister with the real proclist.NewLister() on first use.
+func setFakeLister(e *Executor, apps []proclist.App) {
+	e.lister = fakeAppLister{apps: apps}
+	e.listerOnce.Do(func() {})
+}
+
+// withFakeBundleResolver overrides bundleIDForPID for the duration of a test
+// (restored via t.Cleanup), so Application grouping/routing can be tested
+// without a real .app process.
+func withFakeBundleResolver(t *testing.T, resolve func(pid int) string) {
+	t.Helper()
+	old := bundleIDForPID
+	bundleIDForPID = resolve
+	t.Cleanup(func() { bundleIDForPID = old })
+}
+
+func TestExecutor_ListApplications_GroupsByBundleID(t *testing.T) {
+	e, _ := newExecutor()
+	setFakeLister(e, []proclist.App{
+		{PID: 100, Name: "Cursor"},
+		{PID: 200, Name: "Cursor Helper (Renderer)"}, // same bundle, separate proclist root
+		{PID: 300, Name: "sshd"},                     // not a .app -> no bundle id
+	})
+	withFakeBundleResolver(t, func(pid int) string {
+		if pid == 100 || pid == 200 {
+			return "com.cursor.app"
+		}
+		return ""
+	})
+
+	apps, err := e.ListApplications(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(apps) != 1 {
+		t.Fatalf("ListApplications = %+v, want 1 app", apps)
+	}
+	got := apps[0]
+	if got.BundleID != "com.cursor.app" || !got.Running || len(got.PIDs) != 2 {
+		t.Errorf("ListApplications[0] = %+v, want bundle com.cursor.app, running, 2 PIDs", got)
+	}
+}
+
+func TestExecutor_RouteApp_NotRunning(t *testing.T) {
+	e, _ := newExecutor()
+	if err := e.RouteApp(context.Background(), "com.cursor.app"); err != errProxyNotRunning {
+		t.Errorf("RouteApp before proxy: got %v, want errProxyNotRunning", err)
+	}
+}
+
+func TestExecutor_RouteApp_RoutesEveryPIDForTheBundle(t *testing.T) {
+	e, _ := newExecutor()
+	ctx := context.Background()
+	_ = e.LoadLink(ctx, validLink)
+	if err := e.EnableProxy(ctx); err != nil {
+		t.Fatal(err)
+	}
+	setFakeLister(e, []proclist.App{
+		{PID: 100, Name: "Cursor"},
+		{PID: 200, Name: "Cursor Helper"},
+	})
+	withFakeBundleResolver(t, func(int) string { return "com.cursor.app" })
+
+	fake := &procproxy.FakeRouter{}
+	e.cfgMu.Lock()
+	e.router, e.routerBuilt = fake, true
+	e.cfgMu.Unlock()
+
+	if err := e.RouteApp(ctx, "com.cursor.app"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.Added) != 2 {
+		t.Errorf("RouteApp Added = %v, want 2 PIDs added (100, 200)", fake.Added)
+	}
+}
+
+func TestExecutor_RouteApp_NotCurrentlyRunning(t *testing.T) {
+	e, _ := newExecutor()
+	ctx := context.Background()
+	_ = e.LoadLink(ctx, validLink)
+	if err := e.EnableProxy(ctx); err != nil {
+		t.Fatal(err)
+	}
+	setFakeLister(e, nil)
+
+	if err := e.RouteApp(ctx, "com.nope"); err == nil {
+		t.Error("RouteApp for a bundle with no running PIDs: expected an error")
+	}
+}
+
+func TestExecutor_UnrouteApp_UsesBundleRouterLookup(t *testing.T) {
+	e, _ := newExecutor()
+	fake := &procproxy.FakeRouter{
+		Routed:       []int{100, 200, 300},
+		BundlesByPID: map[int]string{100: "com.cursor.app", 200: "com.cursor.app", 300: "com.other.app"},
+	}
+	e.cfgMu.Lock()
+	e.router, e.routerBuilt = fake, true
+	e.cfgMu.Unlock()
+
+	if err := e.UnrouteApp(context.Background(), "com.cursor.app"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.Unrouted) != 2 {
+		t.Fatalf("Unrouted = %v, want 2 PIDs unrouted (100, 200)", fake.Unrouted)
+	}
+	for _, pid := range fake.Unrouted {
+		if pid != 100 && pid != 200 {
+			t.Errorf("UnrouteApp unrouted unexpected pid %d", pid)
+		}
+	}
+}
+
+func TestExecutor_ListRoutedApps(t *testing.T) {
+	e, _ := newExecutor()
+	if got := e.ListRoutedApps(); len(got) != 0 {
+		t.Fatalf("ListRoutedApps before routing = %v, want empty", got)
+	}
+	fake := &procproxy.FakeRouter{BundlesByPID: map[int]string{100: "com.cursor.app"}}
+	e.cfgMu.Lock()
+	e.router, e.routerBuilt = fake, true
+	e.cfgMu.Unlock()
+	got := e.ListRoutedApps()
+	if len(got) != 1 || got[0] != "com.cursor.app" {
+		t.Errorf("ListRoutedApps = %v, want [com.cursor.app]", got)
 	}
 }
 

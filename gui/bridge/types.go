@@ -62,6 +62,17 @@ type ProcInfo struct {
 	Children int    `json:"Children"`
 }
 
+// Application mirrors the daemon's app.Application JSON (APP-LIST): a whole
+// application grouped by its macOS bundle ID (the netext extension's capture
+// key), covering every PID/helper of that app rather than a single process.
+// The Apps tab's whole-app picker/router is built on this instead of ProcInfo.
+type Application struct {
+	Name     string `json:"name"`
+	BundleID string `json:"bundleID"`
+	Running  bool   `json:"running"`
+	PIDs     []int  `json:"pids"`
+}
+
 // ConnRow is one live connection for the connections table.
 type ConnRow struct {
 	Process string `json:"process"`

@@ -238,6 +238,49 @@ func (a *App) RestartPID(pid int) (int, error) {
 	return strconv.Atoi(strings.TrimSpace(reply))
 }
 
+// --- whole-application routing (by bundle ID, executed inside the root daemon) ---
+
+// ListApplications enumerates running applications for the Apps tab's
+// whole-app picker, grouped by bundle ID (see app.Application). Empty when
+// bundle IDs can't be resolved (only macOS resolves them today).
+func (a *App) ListApplications() ([]Application, error) {
+	reply, err := a.daemon.request("APP-LIST", "")
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]Application, 0)
+	if err := json.Unmarshal([]byte(reply), &rows); err != nil {
+		return nil, fmt.Errorf("bad app-list reply: %w", err)
+	}
+	return rows, nil
+}
+
+// ListRoutedApps returns the bundle IDs currently routed through the proxy.
+func (a *App) ListRoutedApps() ([]string, error) {
+	reply, err := a.daemon.request("APP-LIST-ROUTED", "")
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0)
+	if err := json.Unmarshal([]byte(reply), &ids); err != nil {
+		return nil, fmt.Errorf("bad app-list-routed reply: %w", err)
+	}
+	return ids, nil
+}
+
+// RouteApp routes a whole application (every current PID sharing bundleID, plus
+// any future one — see router_darwin.go) through the proxy.
+func (a *App) RouteApp(bundleID string) error {
+	_, err := a.daemon.request("APP-ROUTE", strings.TrimSpace(bundleID))
+	return err
+}
+
+// UnrouteApp stops routing a whole application.
+func (a *App) UnrouteApp(bundleID string) error {
+	_, err := a.daemon.request("APP-UNROUTE", strings.TrimSpace(bundleID))
+	return err
+}
+
 // LaunchApp starts a command with its traffic routed through the proxy; returns
 // the child PID. argv[0] is the executable, the rest are arguments.
 func (a *App) LaunchApp(argv []string) (int, error) {

@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -787,6 +788,156 @@ func (e *Executor) ListRouted() []int {
 		return nil
 	}
 	return e.router.ListRouted()
+}
+
+// --- whole-application proxying (GUI Apps tab) ---
+//
+// The macOS system-extension router captures traffic by application bundle ID
+// (sourceAppSigningIdentifier), not by PID: one target covers every process and
+// Electron helper of that app, present and future. The methods below let the
+// GUI route/unroute a whole app instead of hunting down one PID, while reusing
+// the very same per-PID router methods (AddPID/Unroute) that RoutePID/
+// UnroutePID already drive — no routing logic is duplicated, only the app <->
+// PID(s) bookkeeping is added on top.
+
+// bundleIDForPID resolves a PID's application bundle ID (see
+// netext.BundleIDForPID). Indirected through a var so tests can fake bundle
+// resolution without a real running .app process; always "" off macOS.
+var bundleIDForPID = netext.BundleIDForPID
+
+// Application is one whole application for the GUI's Apps tab: the currently
+// running, networked processes grouped by bundle ID (proclist already folds
+// helper/forked processes under one root PID per app; this additionally folds
+// multiple such roots together when they share a bundle ID). Processes outside
+// a .app bundle — or on platforms without the concept — never resolve a bundle
+// ID and are simply omitted; they remain reachable via the per-process
+// ListProcesses/RoutePID picker.
+type Application struct {
+	Name     string `json:"name"`
+	BundleID string `json:"bundleID"`
+	Running  bool   `json:"running"`
+	PIDs     []int  `json:"pids"`
+}
+
+// ListApplications enumerates running applications for the Apps tab's whole-app
+// picker, grouped by bundle ID.
+func (e *Executor) ListApplications(ctx context.Context) ([]Application, error) {
+	rows, err := e.listProcRows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byID := map[string]*Application{}
+	var order []string
+	for _, row := range rows {
+		id := bundleIDForPID(row.PID)
+		if id == "" {
+			continue
+		}
+		a, ok := byID[id]
+		if !ok {
+			a = &Application{BundleID: id, Name: row.Name, Running: true}
+			byID[id] = a
+			order = append(order, id)
+		}
+		a.PIDs = append(a.PIDs, row.PID)
+	}
+	out := make([]Application, 0, len(order))
+	for _, id := range order {
+		out = append(out, *byID[id])
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out, nil
+}
+
+// listProcRows lazily builds the process lister (shared with ListProcesses) and
+// lists the current networked processes.
+func (e *Executor) listProcRows(ctx context.Context) ([]proclist.App, error) {
+	e.listerOnce.Do(func() { e.lister = proclist.NewLister() })
+	return e.lister.List(ctx)
+}
+
+// bundlePIDs resolves the currently running PID(s) whose bundle ID is id
+// (ordinarily just one — see Application's doc comment on grouping).
+func (e *Executor) bundlePIDs(ctx context.Context, id string) ([]int, error) {
+	rows, err := e.listProcRows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var pids []int
+	for _, row := range rows {
+		if bundleIDForPID(row.PID) == id {
+			pids = append(pids, row.PID)
+		}
+	}
+	return pids, nil
+}
+
+// RouteApp routes a whole running application through the proxy by bundle ID:
+// it resolves the app's current PID(s) and adds each through the platform
+// router's AddPID. On macOS, AddPID resolves any of them back to the same
+// bundle ID and captures it once for every current AND future flow of that app
+// (see router_darwin.go's register/refcounting) — the same mechanism RoutePID
+// already uses for a single PID.
+func (e *Executor) RouteApp(ctx context.Context, bundleID string) error {
+	if !e.proxyRunning() {
+		return errProxyNotRunning
+	}
+	bundleID = strings.TrimSpace(bundleID)
+	if bundleID == "" {
+		return fmt.Errorf("empty bundle id")
+	}
+	pids, err := e.bundlePIDs(ctx, bundleID)
+	if err != nil {
+		return err
+	}
+	if len(pids) == 0 {
+		return fmt.Errorf("приложение %s сейчас не запущено", bundleID)
+	}
+	r := e.procRouter()
+	var firstErr error
+	for _, pid := range pids {
+		if err := r.AddPID(ctx, pid); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// UnrouteApp stops routing every PID currently attributed to bundleID. It
+// requires a router that tracks routed PIDs by bundle (procproxy.BundleRouter —
+// only macOS implements it); elsewhere per-app unrouting isn't meaningful since
+// ListApplications never resolves a bundle ID to route in the first place.
+func (e *Executor) UnrouteApp(ctx context.Context, bundleID string) error {
+	br, ok := e.procRouter().(procproxy.BundleRouter)
+	if !ok {
+		return fmt.Errorf("маршрутизация по приложениям не поддерживается на этой платформе")
+	}
+	r := e.procRouter()
+	var firstErr error
+	for _, pid := range br.PIDsForBundle(bundleID) {
+		if err := r.Unroute(ctx, pid); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// ListRoutedApps returns the bundle IDs currently routed through the proxy
+// (macOS only — empty elsewhere), for the Apps tab's "currently proxied" list.
+// Like ListRouted, it does not build the router on demand.
+func (e *Executor) ListRoutedApps() []string {
+	e.cfgMu.Lock()
+	built, r := e.routerBuilt, e.router
+	e.cfgMu.Unlock()
+	if !built || r == nil {
+		return nil
+	}
+	if br, ok := r.(procproxy.BundleRouter); ok {
+		return br.RoutedBundleIDs()
+	}
+	return nil
 }
 
 // TrafficSnapshot returns the cumulative up/down byte counters from the Clash

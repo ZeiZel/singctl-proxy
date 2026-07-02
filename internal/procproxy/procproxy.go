@@ -47,6 +47,19 @@ type Router interface {
 	Cleanup() error
 }
 
+// BundleRouter is an optional capability implemented by routers that track
+// routed PIDs by application bundle ID (currently only darwinRouter — bundle
+// IDs are a macOS/system-extension concept; see router_darwin.go). Callers
+// type-assert a Router to this interface to drive whole-app actions (route/
+// unroute every PID of one app) without duplicating routing logic: they still
+// call the plain AddPID/Unroute for each PID this interface reports.
+type BundleRouter interface {
+	// PIDsForBundle returns the routed PIDs currently attributed to bundleID.
+	PIDsForBundle(bundleID string) []int
+	// RoutedBundleIDs returns the bundle IDs with at least one routed PID, sorted.
+	RoutedBundleIDs() []string
+}
+
 // Config tunes the router. The zero value is filled with defaults by withDefaults.
 type Config struct {
 	SocksAddr  string // local SOCKS proxy "host:port"

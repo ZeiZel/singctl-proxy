@@ -1,6 +1,9 @@
 package procproxy
 
-import "context"
+import (
+	"context"
+	"sort"
+)
 
 // FakeRouter is an in-memory Router for tests (mirrors core.FakeCore). It records
 // calls and never touches the kernel or spawns processes.
@@ -16,6 +19,11 @@ type FakeRouter struct {
 	AddErr    error
 	LaunchErr error
 	Routed    []int
+
+	// BundlesByPID optionally maps a routed PID to a bundle ID, so a test can
+	// make FakeRouter satisfy BundleRouter (for whole-app routing tests) without
+	// a real darwin extension. Populated by the test.
+	BundlesByPID map[int]string
 }
 
 func (f *FakeRouter) AddPID(_ context.Context, pid int) error {
@@ -85,4 +93,31 @@ func (f *FakeRouter) ListRouted() []int { return f.Routed }
 func (f *FakeRouter) Cleanup() error {
 	f.CleanedUp = true
 	return nil
+}
+
+// PIDsForBundle implements BundleRouter, mirroring darwinRouter's byPID lookup
+// over the test-populated BundlesByPID map.
+func (f *FakeRouter) PIDsForBundle(bundleID string) []int {
+	var out []int
+	for pid, id := range f.BundlesByPID {
+		if id == bundleID {
+			out = append(out, pid)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
+// RoutedBundleIDs implements BundleRouter, mirroring darwinRouter's refs keys.
+func (f *FakeRouter) RoutedBundleIDs() []string {
+	seen := map[string]bool{}
+	for _, id := range f.BundlesByPID {
+		seen[id] = true
+	}
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
 }

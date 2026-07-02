@@ -141,6 +141,37 @@ func (r *darwinRouter) ListRouted() []int {
 	return out
 }
 
+// PIDsForBundle implements procproxy.BundleRouter: it answers straight from the
+// existing byPID bookkeeping (populated by register/AddPID), so callers can
+// unroute a whole app by delegating to Unroute for each PID it reports — no
+// extra process probing (which would fail for a PID that already exited).
+func (r *darwinRouter) PIDsForBundle(bundleID string) []int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []int
+	for pid, id := range r.byPID {
+		if id == bundleID {
+			out = append(out, pid)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
+// RoutedBundleIDs implements procproxy.BundleRouter: the bundle IDs with at
+// least one routed PID (i.e. currently captured by the extension), for the
+// GUI's "currently proxied" app list.
+func (r *darwinRouter) RoutedBundleIDs() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, 0, len(r.refs))
+	for id := range r.refs {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Cleanup releases every captured target (so a stale config.json doesn't keep
 // routing after singctl exits).
 func (r *darwinRouter) Cleanup() error {

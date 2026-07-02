@@ -1,20 +1,30 @@
+import { useMemo } from "react";
+
 import { useStatus } from "@/entities/daemon";
 import { LaunchApp } from "@/features/launch-app";
-import { useProxyTargets, useRouteProcess } from "@/features/route-process";
+import { useAppTargets, useRouteApp } from "@/features/route-app";
 import { Badge } from "@/shared/ui/badge";
 import { Box } from "@/shared/ui/box";
 import { Card } from "@/shared/ui/card";
 import { Stack } from "@/shared/ui/stack";
 import { Heading, Text } from "@/shared/ui/text";
-import { ProcessList } from "@/widgets/process-list";
-import { ProxiedList } from "@/widgets/proxied-list";
+import { ApplicationList } from "@/widgets/application-list";
+import { ProxiedAppsList } from "@/widgets/proxied-apps-list";
 
-// AppsPage wires the per-process data (poll) and actions to the picker and the
-// proxied list, plus the launch-through-proxy control.
+// AppsPage wires the whole-application data (poll) and actions to the picker
+// and the proxied list, plus the launch-through-proxy control. Routing is by
+// bundle ID (see internal/procproxy/router_darwin.go): capturing an app covers
+// every PID and Electron helper it has, present and future, not just one PID.
 export function AppsPage() {
   const status = useStatus();
-  const { processes, routed, refresh } = useProxyTargets(status.running);
-  const { busy, error, route, unroute, kill } = useRouteProcess(refresh);
+  const { applications, routed, refresh } = useAppTargets(status.running);
+  const { busy, error, route, unroute } = useRouteApp(refresh);
+
+  const names = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const app of applications) map[app.bundleID] = app.name;
+    return map;
+  }, [applications]);
 
   return (
     <Stack gap="md">
@@ -28,15 +38,15 @@ export function AppsPage() {
 
       <Box className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
-          <Heading level={3} className="mb-3.5">Processes</Heading>
-          <ProcessList processes={processes} busy={busy} onRoute={route} />
+          <Heading level={3} className="mb-3.5">Applications</Heading>
+          <ApplicationList applications={applications} routed={routed} busy={busy} onRoute={route} onUnroute={unroute} />
         </Card>
         <Card>
           <Stack direction="row" justify="between" align="center" className="mb-3.5">
             <Heading level={3}>Currently proxied</Heading>
             <Badge>{routed.length}</Badge>
           </Stack>
-          <ProxiedList routed={routed} busy={busy} onUnroute={unroute} onKill={kill} />
+          <ProxiedAppsList routed={routed} names={names} busy={busy} onUnroute={unroute} />
         </Card>
       </Box>
     </Stack>

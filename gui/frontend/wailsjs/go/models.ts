@@ -1,5 +1,23 @@
 export namespace bridge {
 	
+	export class Application {
+	    name: string;
+	    bundleID: string;
+	    running: boolean;
+	    pids: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Application(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.bundleID = source["bundleID"];
+	        this.running = source["running"];
+	        this.pids = source["pids"];
+	    }
+	}
 	export class Key {
 	    index: number;
 	    name: string;
@@ -91,6 +109,8 @@ export namespace bridge {
 	    ciscoActive: boolean;
 	    proxyBypass: boolean;
 	    physIface: string;
+	    netextSupported: boolean;
+	    netextAvailable: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Status(source);
@@ -106,6 +126,8 @@ export namespace bridge {
 	        this.ciscoActive = source["ciscoActive"];
 	        this.proxyBypass = source["proxyBypass"];
 	        this.physIface = source["physIface"];
+	        this.netextSupported = source["netextSupported"];
+	        this.netextAvailable = source["netextAvailable"];
 	    }
 	}
 

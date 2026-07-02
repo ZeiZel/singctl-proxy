@@ -42,12 +42,20 @@ export function LaunchApp(arg1) {
   return window['go']['bridge']['App']['LaunchApp'](arg1);
 }
 
+export function ListApplications() {
+  return window['go']['bridge']['App']['ListApplications']();
+}
+
 export function ListProcesses() {
   return window['go']['bridge']['App']['ListProcesses']();
 }
 
 export function ListRouted() {
   return window['go']['bridge']['App']['ListRouted']();
+}
+
+export function ListRoutedApps() {
+  return window['go']['bridge']['App']['ListRoutedApps']();
 }
 
 export function RemoveLicense() {
@@ -62,6 +70,10 @@ export function RestartPID(arg1) {
   return window['go']['bridge']['App']['RestartPID'](arg1);
 }
 
+export function RouteApp(arg1) {
+  return window['go']['bridge']['App']['RouteApp'](arg1);
+}
+
 export function RoutePID(arg1) {
   return window['go']['bridge']['App']['RoutePID'](arg1);
 }
@@ -72,6 +84,10 @@ export function SetMode(arg1) {
 
 export function StopDaemon() {
   return window['go']['bridge']['App']['StopDaemon']();
+}
+
+export function UnrouteApp(arg1) {
+  return window['go']['bridge']['App']['UnrouteApp'](arg1);
 }
 
 export function UnroutePID(arg1) {

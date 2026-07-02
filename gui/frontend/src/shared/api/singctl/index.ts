@@ -7,6 +7,7 @@ export type {
   TSettings,
   TKey,
   TProcInfo,
+  TApplication,
   TConnRow,
   TLatency,
   TLatencyRow,
