@@ -47,7 +47,11 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     environment:
-      - LICENSE_SITE_ADDRESS=${LICENSE_SITE_ADDRESS:-}
+      # Default to :80 (plain HTTP) when unset/empty. Passing an empty string
+      # here makes Caddy read the site block as a global-options block and
+      # crash-loop ("unrecognized global option: reverse_proxy"), so never
+      # forward an empty value — set a domain for auto-HTTPS or leave it for :80.
+      - LICENSE_SITE_ADDRESS=${LICENSE_SITE_ADDRESS:-:80}
     depends_on:
       - server
     restart: unless-stopped
