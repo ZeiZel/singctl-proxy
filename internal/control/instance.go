@@ -7,6 +7,7 @@ package control
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -62,5 +63,13 @@ func IsAlive(pid int) bool {
 	if err != nil {
 		return false
 	}
-	return p.Signal(syscall.Signal(0)) == nil
+	// signal 0 probes existence without delivering a signal. nil means the
+	// process is alive and ours; EPERM means it's alive but owned by another
+	// user (the common case here: a root LaunchDaemon probed by the per-user
+	// GUI/CLI) — still alive. Only ESRCH means it's truly gone.
+	err = p.Signal(syscall.Signal(0))
+	if err == nil || errors.Is(err, syscall.EPERM) {
+		return true
+	}
+	return false
 }
