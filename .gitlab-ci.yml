@@ -1,10 +1,15 @@
 # singctl-proxy CI/CD — migrated from GitHub Actions (.github/workflows/{ci,deploy,release}.yml).
 #
 # Operational notes (read before touching runners/variables):
-#  - deploy:helm runs on a shell-executor runner living on the k3s host (Ansible
-#    provisioned). Create it in the GitLab UI as a PROJECT runner tagged
-#    "singctl-deploy", with Protected = on and "Run untagged jobs" = off, so it
-#    never picks up jobs from untrusted branches.
+#  - deploy:compose runs on a shell-executor runner living on the license-server
+#    VPS (Ansible provisioned, deploy_mode: compose — deploy/compose/). Create
+#    it in the GitLab UI as a PROJECT runner tagged "singctl-deploy", with
+#    Protected = on and "Run untagged jobs" = off, so it never picks up jobs
+#    from untrusted branches.
+#  - deploy:compose needs these protected CI/CD variables: LICENSE_PRIVATE_KEY,
+#    LICENSE_ADMIN_TOKEN, LICENSE_WEBHOOK_SECRET, LICENSE_DEFAULT_TTL_DAYS,
+#    LICENSE_SITE_ADDRESS (public domain for Caddy's automatic HTTPS, or empty
+#    for plain HTTP — replaces the old Helm-only LICENSE_HOST/ingress.host).
 #  - Settings > Repository > Protected tags must have a wildcard "v*" rule (with
 #    at least "Maintainers" allowed to create), otherwise tag pipelines won't be
 #    able to see protected CI/CD variables (LICENSE_PUBKEY, LICENSE_PRIVATE_KEY,
@@ -107,7 +112,7 @@ build:image:
 
 # --- deploy stage (mirrors .github/workflows/deploy.yml "deploy" job) --------
 
-deploy:helm:
+deploy:compose:
   stage: deploy
   tags:
     - singctl-deploy
@@ -117,19 +122,23 @@ deploy:helm:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_COMMIT_TAG =~ /^v/'
   script:
-    # Shell executor on the k3s host: helm/kubectl already on PATH and reading
-    # the gitlab-runner user's ~/.kube/config (provisioned by Ansible). No
-    # KUBECONFIG juggling, no image/GIT_STRATEGY tricks needed.
-    - >
-      helm upgrade --install singctl-license deploy/helm/singctl-license
-      --namespace singctl --create-namespace
-      --set image.repository="$CI_REGISTRY_IMAGE"
-      --set image.tag="$CI_COMMIT_SHA"
-      --set ingress.host="$LICENSE_HOST"
-      --set-string secret.privateKey="$LICENSE_PRIVATE_KEY"
-      --set-string secret.adminToken="$LICENSE_ADMIN_TOKEN"
-      --set-string secret.webhookSecret="$LICENSE_WEBHOOK_SECRET"
-      --wait --timeout 3m
+    # Shell executor on the license-server VPS: docker + the compose plugin
+    # are already on PATH and gitlab-runner is in the `docker` group
+    # (provisioned by Ansible, deploy_mode: compose). Write the runtime .env
+    # next to the compose file, then pull + (re)start the stack.
+    - |
+      cat > deploy/compose/.env <<EOF
+      IMAGE=$CI_REGISTRY_IMAGE
+      TAG=$CI_COMMIT_SHA
+      LICENSE_SITE_ADDRESS=$LICENSE_SITE_ADDRESS
+      LICENSE_PRIVATE_KEY=$LICENSE_PRIVATE_KEY
+      LICENSE_ADMIN_TOKEN=$LICENSE_ADMIN_TOKEN
+      LICENSE_WEBHOOK_SECRET=$LICENSE_WEBHOOK_SECRET
+      LICENSE_DEFAULT_TTL_DAYS=$LICENSE_DEFAULT_TTL_DAYS
+      EOF
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker compose -f deploy/compose/docker-compose.yml pull
+    - docker compose -f deploy/compose/docker-compose.yml up -d
 
 # --- release stage (mirrors .github/workflows/release.yml) -------------------
 
@@ -148,8 +157,8 @@ release:linux:
     - go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
     - export PATH="$PATH:$(go env GOPATH)/bin"
   script:
-    - make build-linux LICENSE_PUBKEY="$LICENSE_PUBKEY"
-    - make gui-linux-bin GUI_TAGS= PKG_ARCH=amd64 LICENSE_PUBKEY="$LICENSE_PUBKEY"
+    - make build-linux LICENSE_PUBKEY="$LICENSE_PUBKEY" LICENSE_SERVER_URL="$LICENSE_SERVER_URL"
+    - make gui-linux-bin GUI_TAGS= PKG_ARCH=amd64 LICENSE_PUBKEY="$LICENSE_PUBKEY" LICENSE_SERVER_URL="$LICENSE_SERVER_URL"
     - make pkg-linux PKG_ARCH=amd64 PKG_VERSION="${CI_COMMIT_TAG#v}"
     - APPIMAGE_EXTRACT_AND_RUN=1 make appimage PKG_ARCH=amd64 PKG_VERSION="${CI_COMMIT_TAG#v}"
     - mkdir -p out
@@ -176,8 +185,11 @@ release:macos:
     # dedicated/headless CI Mac, import $APPLE_CERT_P12 into a CI keychain
     # first (the GitHub Actions equivalent was apple-actions/import-codesign-certs) —
     # deliberately NOT scripted here since it isn't needed on this runner.
-    - make build-macos LICENSE_PUBKEY="$LICENSE_PUBKEY"
-    - make gui GUI_TAGS= LICENSE_PUBKEY="$LICENSE_PUBKEY"
+    # LICENSE_SERVER_URL bakes the default activation/revocation server into the
+    # build (SINGCTL_LICENSE_SERVER can still override at runtime). Without it a
+    # released build has no server to activate against and licensing is inert.
+    - make build-macos LICENSE_PUBKEY="$LICENSE_PUBKEY" LICENSE_SERVER_URL="$LICENSE_SERVER_URL"
+    - make gui GUI_TAGS= LICENSE_PUBKEY="$LICENSE_PUBKEY" LICENSE_SERVER_URL="$LICENSE_SERVER_URL"
     - make pkg-macos PKG_VERSION="${CI_COMMIT_TAG#v}" CLI_BIN=bin/singctl-darwin-arm64
     - mkdir -p out
     - cp bin/singctl-darwin-* dist/*.pkg dist/*.dmg out/ 2>/dev/null || true

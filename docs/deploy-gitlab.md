@@ -5,6 +5,15 @@
 провижининг сервера — в `deploy/ansible/`. Общая архитектура лицензирования —
 [LICENSATION.md](../LICENSATION.md) (часть A).
 
+Основной способ деплоя — **Docker Compose** на одной VPS (`deploy/compose/`):
+контейнер `server` (API лицензий) за Caddy с авто-HTTPS. Ansible ставит
+Docker Engine + compose plugin (`deploy_mode: compose`, по умолчанию), а CI
+джоба `deploy:compose` поднимает стек через `docker compose up -d`. k3s/Helm
+(`deploy/helm/`) остаются доступны через `deploy_mode: k3s` для тех, у кого
+уже есть Kubernetes; этот документ описывает основной (compose) путь, детали
+самого compose-деплоя — в [deploy/compose/README.md](../deploy/compose/README.md),
+их здесь не дублируем.
+
 ## Предпосылки
 
 - Проект уже существует на gitlab.com, и `git remote` смотрит на него.
@@ -15,8 +24,8 @@
 > Это самая частая ошибка при переносе: без protected-tag правила пайплайны,
 > запущенные тегом `vX.Y.Z`, **не увидят** protected CI/CD-переменные
 > (`LICENSE_PRIVATE_KEY`, `LICENSE_PUBKEY`, `CODESIGN_IDENTITY`, `AC_*` и т.д.),
-> и джобы `deploy:helm`/`release:*` упадут на пустых значениях без явной ошибки
-> про права — просто получат пустую строку.
+> и джобы `deploy:compose`/`release:*` упадут на пустых значениях без явной
+> ошибки про права — просто получат пустую строку.
 
 ## Шаг 1 — ключи лицензий
 
@@ -28,6 +37,11 @@ bin/singctl-server keygen
 Печатает пару `LICENSE_PUBKEY=…` (публичный, не секрет, коммитить безопасно) и
 `LICENSE_PRIVATE_KEY=…` (приватный — только в CI/CD-переменные и на сервер,
 **никогда не коммитить**). Сохрани обе строки — они понадобятся в шаге 4.
+
+Заодно реши, на каком адресе будет жить сервер лицензий (домен с авто-HTTPS
+или голый IP по HTTP) — этот же адрес пойдёт в две разные CI/CD-переменные на
+шаге 4: `LICENSE_SITE_ADDRESS` (как сервер сам себя раздаёт) и
+`LICENSE_SERVER_URL` (куда стучится собранный клиент).
 
 ## Шаг 2 — GitLab UI: раннеры и deploy token
 
@@ -41,11 +55,15 @@ bin/singctl-server keygen
    для `bootstrap.sh` (это runner authentication token, не Deploy token из
    следующего пункта).
 
-2. **Deploy token** для приватного Container Registry — Settings → Repository →
-   Deploy tokens → New deploy token, scope **`read_registry`**. Логин/пароль
-   этого токена тоже понадобятся `bootstrap.sh` — они уходят в
-   `/etc/rancher/k3s/registries.yaml` на сервере, чтобы k3s мог тянуть
-   приватный образ `$CI_REGISTRY_IMAGE` без `imagePullSecrets`.
+2. **Deploy token** для приватного Container Registry — нужен, только если
+   деплой идёт в режиме `deploy_mode: k3s`. Settings → Repository → Deploy
+   tokens → New deploy token, scope **`read_registry`**. Логин/пароль этого
+   токена уходят в `/etc/rancher/k3s/registries.yaml` на сервере, чтобы k3s
+   мог тянуть приватный образ `$CI_REGISTRY_IMAGE` без `imagePullSecrets`.
+   В режиме по умолчанию (`deploy_mode: compose`) этот шаг **не нужен**:
+   джоба `deploy:compose` сама делает `docker login` встроенными
+   `CI_REGISTRY_USER`/`CI_REGISTRY_PASSWORD` (GitLab предоставляет их
+   автоматически, без настройки).
 
 ## Шаг 3 — сервер (Ansible)
 
@@ -69,23 +87,31 @@ cd deploy/ansible
 ставит ключ на сервер через `ssh-copy-id`, прописывает алиас
 `remote-singctl-server` в `~/.ssh/config` и прогоняет `playbook.yml`.
 
-Плейбук (идемпотентен, безопасно перезапускать):
+Плейбук (идемпотентен, безопасно перезапускать) ветвится по переменной
+`deploy_mode` (`deploy/ansible/group_vars/all.yml`, по умолчанию `compose`;
+переопределить — `./bootstrap.sh -e deploy_mode=k3s ...`):
 
-- **Хардненинг:** UFW (deny incoming, allow только SSH-порты + 80/443),
-  `fail2ban` (jail на sshd, кастомный порт), SSH drop-in
+- **Хардненинг (всегда):** UFW (deny incoming, allow только SSH-порты +
+  80/443), `fail2ban` (jail на sshd, кастомный порт), SSH drop-in
   (`/etc/ssh/sshd_config.d/99-singctl.conf`: кастомный `Port`, без root-логина,
   без пароля), `unattended-upgrades`.
-- **k3s** (single-node, traefik ingress включён) + **helm**.
-- Если заданы deploy-token логин/пароль — пишет
-  `/etc/rancher/k3s/registries.yaml` с кредами для `registry.gitlab.com` и
-  перезапускает k3s.
-- Если задан `gitlab_runner_token` — ставит `gitlab-runner` (shell executor),
-  регистрирует его на `gitlab_url` (по умолчанию `https://gitlab.com`) с этим
+- **`deploy_mode: compose` (по умолчанию):** ставит Docker Engine + compose
+  plugin (официальный apt-репозиторий Docker) и явно открывает 80/443 в UFW
+  под Caddy. Если задан `gitlab_runner_token` — ставит `gitlab-runner` (shell
+  executor) и добавляет его в группу `docker`, чтобы джоба `deploy:compose`
+  могла запускать `docker`/`docker compose` без sudo.
+- **`deploy_mode: k3s`:** ставит **k3s** (single-node, traefik ingress
+  включён) + **helm** вместо Docker. Если заданы deploy-token логин/пароль —
+  пишет `/etc/rancher/k3s/registries.yaml` с кредами для
+  `registry.gitlab.com` и перезапускает k3s. Если задан
+  `gitlab_runner_token` — копирует `/etc/rancher/k3s/k3s.yaml` в
+  `~/.kube/config` пользователя `gitlab-runner`, чтобы helm/kubectl работали
+  в CI-джобах без лишней настройки `KUBECONFIG` (для этого пути см.
+  `deploy/helm/`).
+- В обоих режимах, если задан `gitlab_runner_token` — регистрирует
+  `gitlab-runner` на `gitlab_url` (по умолчанию `https://gitlab.com`) с этим
   токеном (тег/protected/untagged уже зафиксированы в UI при создании раннера
-  в шаге 2.1 — `gitlab-runner register` их не переопределяет) и копирует
-  `/etc/rancher/k3s/k3s.yaml` в `~/.kube/config` пользователя `gitlab-runner`,
-  чтобы джоба `deploy:helm` могла запускать `helm`/`kubectl` без лишней
-  настройки `KUBECONFIG`.
+  в шаге 2.1 — `gitlab-runner register` их не переопределяет).
 
 ## Шаг 4 — CI/CD переменные
 
@@ -94,10 +120,12 @@ Settings → CI/CD → Variables. Все — Protected (видны только 
 
 | Переменная | Формат / пример | Masked | Protected | Использует |
 |---|---|---|---|---|
-| `LICENSE_HOST` | `license.example.com` | да | да | `deploy:helm` → `ingress.host` |
-| `LICENSE_PRIVATE_KEY` | base64 Ed25519 (из шага 1) | да | да | `deploy:helm` → Helm-секрет |
-| `LICENSE_ADMIN_TOKEN` | `openssl rand -hex 32` | да | да | `deploy:helm` → Helm-секрет (bearer для `/v1/admin/*`) |
-| `LICENSE_WEBHOOK_SECRET` | HMAC-секрет платёжного вебхука | да | да | `deploy:helm` → Helm-секрет; пусто = вебхук выключен |
+| `LICENSE_SITE_ADDRESS` | `license.example.com`, или пусто для HTTP | да, если задан | да | `deploy:compose` → адрес, на котором Caddy раздаёт сервер (домен = авто-HTTPS; пусто = голый HTTP на `:80`). Заменяет старый Helm-only `LICENSE_HOST`/`ingress.host` |
+| `LICENSE_SERVER_URL` | `https://license.example.com` или `http://<ip>` | нет (не секрет) | да | `release:linux`/`release:macos` → зашивается в CLI/GUI как дефолтный сервер лицензий (`SINGCTL_LICENSE_SERVER` переопределяет в рантайме) |
+| `LICENSE_PRIVATE_KEY` | base64 Ed25519 (из шага 1) | да | да | `deploy:compose` → `.env` сервера (подпись выданных лицензий) |
+| `LICENSE_ADMIN_TOKEN` | `openssl rand -hex 32` | да | да | `deploy:compose` → `.env` сервера (bearer для `/v1/admin/*`) |
+| `LICENSE_WEBHOOK_SECRET` | HMAC-секрет платёжного вебхука | да | да | `deploy:compose` → `.env` сервера; пусто = вебхук выключен |
+| `LICENSE_DEFAULT_TTL_DAYS` | целое число дней, `0` = бессрочно | нет | да | `deploy:compose` → `.env` сервера, дефолтный срок действия выдаваемых лицензий |
 | `LICENSE_PUBKEY` | base64 Ed25519 (из шага 1) | нет (не секрет) | да | `release:linux`/`release:macos` → встраивается в CLI/GUI |
 | `CODESIGN_IDENTITY` | `Developer ID Application: <Name> (S3UCF4USYC)` | нет* | да | `release:macos` |
 | `INSTALLER_IDENTITY` | `Developer ID Installer: <Name> (S3UCF4USYC)` | нет* | да | `release:macos` |
@@ -111,13 +139,21 @@ Settings → CI/CD → Variables. Все — Protected (видны только 
 `INSTALLER_IDENTITY` содержат пробелы, поэтому маскировка недоступна; их
 секретность обеспечивает только Protected.
 
+`LICENSE_SITE_ADDRESS` и `LICENSE_SERVER_URL` — две стороны одного адреса:
+первая говорит серверу (Caddy), как себя раздавать, вторая — говорит
+собранному клиенту, куда стучаться. Они должны указывать на один и тот же
+эндпоинт (например, `LICENSE_SITE_ADDRESS=license.example.com` +
+`LICENSE_SERVER_URL=https://license.example.com`, либо для голого IP —
+`LICENSE_SITE_ADDRESS=` (пусто) + `LICENSE_SERVER_URL=http://<ip>`).
+
 Отдельно:
 
 - Встроенные `CI_REGISTRY*` / `CI_JOB_TOKEN` — предоставляются GitLab
-  автоматически, никакой настройки не требуют.
+  автоматически, никакой настройки не требуют (в т.ч. `docker login` в
+  `deploy:compose` использует `CI_REGISTRY_USER`/`CI_REGISTRY_PASSWORD`).
 - `gitlab_runner_token` / `gitlab_deploy_token_user` / `gitlab_deploy_token_pass`
-  — это **входные параметры Ansible** (шаг 3), не CI/CD-переменные. Их не нужно
-  заводить в Settings → CI/CD → Variables.
+  / `deploy_mode` — это **входные параметры Ansible** (шаг 3), не CI/CD-
+  переменные. Их не нужно заводить в Settings → CI/CD → Variables.
 
 ## Шаг 5 — деплой
 
@@ -125,28 +161,31 @@ Settings → CI/CD → Variables. Все — Protected (видны только 
 git push origin main
 ```
 
-Запускает пайплайн `test → build:image → deploy:helm`:
+Запускает пайплайн `test:go`/`test:gui` → `build:image` → `deploy:compose`:
 
 - `test:go` / `test:gui` — `go vet`/`go test`/сборка CLI, фронтенд + Go-тесты GUI.
 - `build:image` — собирает `deploy/server.Dockerfile`, пушит
   `$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA` (и `:latest` на `main`) в GitLab
   Container Registry.
-- `deploy:helm` (раннер `singctl-deploy`) — `helm upgrade --install
-  singctl-license deploy/helm/singctl-license --namespace singctl
-  --create-namespace` с `image.repository`/`image.tag` и секретами из шага 4.
+- `deploy:compose` (раннер `singctl-deploy`) — пишет `deploy/compose/.env` из
+  переменных шага 4 (`IMAGE`/`TAG` = `$CI_REGISTRY_IMAGE`/`$CI_COMMIT_SHA`),
+  логинится в registry и гоняет
+  `docker compose -f deploy/compose/docker-compose.yml pull && ... up -d`.
+  Подробности стека (Caddy, том с `licenses.json`, `init-perms`) — в
+  [deploy/compose/README.md](../deploy/compose/README.md).
 
 Проверка на сервере:
 
 ```sh
 ssh remote-singctl-server
-sudo kubectl -n singctl get pods
-curl -fsS https://<LICENSE_HOST>/healthz
+cd deploy/compose && docker compose ps
+curl -fsS https://<LICENSE_SITE_ADDRESS>/healthz   # или http://<ip>/healthz, если LICENSE_SITE_ADDRESS пуст
 ```
 
 Выдача лицензии через админ-API (эндпоинты — `internal/licensesrv/server.go`):
 
 ```sh
-curl -fsS -XPOST https://<LICENSE_HOST>/v1/admin/issue \
+curl -fsS -XPOST https://<LICENSE_SITE_ADDRESS>/v1/admin/issue \
   -H "Authorization: Bearer <LICENSE_ADMIN_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"subject":"user@example.com","days":365}'
@@ -173,6 +212,14 @@ git push --tags
   (`.../packages/generic/singctl/$CI_COMMIT_TAG/…`) и создаёт GitLab Release
   со ссылками на них.
 
+Обе `release:*`-джобы собирают через `make build-linux`/`build-macos` и
+`make gui`/`gui-linux-bin` с `LICENSE_PUBKEY="$LICENSE_PUBKEY"
+LICENSE_SERVER_URL="$LICENSE_SERVER_URL"`. Без CI/CD-переменных
+`LICENSE_SERVER_URL` и `LICENSE_PUBKEY` (шаг 4) релизная сборка выходит с
+пустым дефолтным сервером — активация лицензии сработает только если её потом
+явно указать через `SINGCTL_LICENSE_SERVER` в рантайме; для «из коробки»
+рабочей активации обе переменные должны быть выставлены до тега.
+
 ### Регистрация Mac-раннера (для `release:macos`)
 
 1. Settings → CI/CD → Runners → New project runner: tag `macos`, Protected on.
@@ -192,11 +239,15 @@ git push --tags
 
 ## Обновление сервера
 
-Каждый push в `main` пересобирает образ и переустанавливает Helm-релиз
-(`deploy:helm` использует `--wait`, так что пайплайн падает, если новый под не
-поднялся). Откат:
+Каждый push в `main` пересобирает образ и передеплоивает стек
+(`deploy:compose`: `docker compose pull && docker compose up -d` с новым
+`TAG=$CI_COMMIT_SHA` в `.env`). Откат — задеплоить старый образ вручную на
+сервере (`deploy:compose` перезаписывает `.env` из CI-переменных при каждом
+запуске, поэтому «нативного» `helm rollback` тут нет):
 
 ```sh
 ssh remote-singctl-server
-sudo helm rollback singctl-license
+cd deploy/compose
+sed -i 's/^TAG=.*/TAG=<предыдущий-sha-или-тег>/' .env
+docker compose pull && docker compose up -d
 ```

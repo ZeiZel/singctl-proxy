@@ -1,4 +1,10 @@
 # Default values for singctl-license.
+#
+# NOTE: the primary deployment path is now Docker Compose on a single VPS —
+# see deploy/compose/ (deploy_mode: compose in deploy/ansible/group_vars/all.yml).
+# This Helm chart is retained for anyone already running k3s
+# (deploy_mode: k3s); .gitlab-ci.yml's deploy job now runs `docker compose`,
+# not `helm upgrade` — reinstate a deploy:helm CI job manually if you need it.
 
 image:
   repository: registry.gitlab.com/GROUP/singctl-proxy # set to your GitLab container registry path

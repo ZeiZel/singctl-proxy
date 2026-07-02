@@ -11,3 +11,6 @@
 # macOS Finder metadata
 .DS_Store
 **/.DS_Store
+
+# Compose deployment secrets (private key, admin token, webhook secret)
+deploy/compose/.env

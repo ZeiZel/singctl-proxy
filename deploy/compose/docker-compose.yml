@@ -1,0 +1,58 @@
+# Docker Compose deployment for the singctl license server — single VPS, no
+# Kubernetes. See deploy/compose/README.md for bring-up instructions.
+#
+# The license store is a single atomic JSON file (deploy/server.Dockerfile,
+# internal/licensesrv) — run exactly ONE `server` replica, ever. Do not scale
+# this service.
+services:
+  # One-shot: the server image runs distroless as nonroot (uid/gid 65532)
+  # with no writable rootfs and no shell, so it can't chown its own volume on
+  # first boot. This fixes ownership before `server` starts, then exits.
+  init-perms:
+    image: busybox:1.36
+    user: "0:0"
+    command: ["chown", "-R", "65532:65532", "/data"]
+    volumes:
+      - singctl-data:/data
+
+  server:
+    image: ${IMAGE:-registry.gitlab.com/GROUP/singctl-proxy}:${TAG:-latest}
+    env_file:
+      - .env
+    environment:
+      # Force the store onto the persistent volume regardless of what's set
+      # in .env — the default in cmd/server (./licenses.json) would land on
+      # the (non-persistent, read-only) container rootfs otherwise.
+      - LICENSE_DB=/data/licenses.json
+    volumes:
+      - singctl-data:/data
+    expose:
+      - "8080"
+    depends_on:
+      init-perms:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    # No in-container healthcheck: the distroless base has no shell, curl, or
+    # wget to run a probe command with. Health is observed externally instead
+    # — Caddy's reverse_proxy returns 502s when the backend is down, and
+    # `docker compose ps` / `restart: unless-stopped` handle recovery.
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      - LICENSE_SITE_ADDRESS=${LICENSE_SITE_ADDRESS:-}
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  singctl-data:
+  caddy-data:
+  caddy-config:
