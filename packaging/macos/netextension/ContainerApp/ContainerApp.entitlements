@@ -6,6 +6,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- Required to install/activate the ProxyExtension system extension via
+         OSSystemExtensionManager. Without it activationRequest fails with
+         OSSystemExtensionErrorDomain error 1. -->
+    <key>com.apple.developer.system-extension.install</key>
+    <true/>
     <key>com.apple.developer.networking.networkextension</key>
     <array>
         <string>app-proxy-provider-systemextension</string>
