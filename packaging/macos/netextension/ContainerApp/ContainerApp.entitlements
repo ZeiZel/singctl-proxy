@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Container app entitlements. Needs the same Network Extensions capability to
-     manage NETransparentProxyManager, the App Group for the shared config.json,
-     and the App Sandbox (required for system-extension distribution). SCAFFOLD:
-     replace identifiers with your provisioned ones. -->
+     manage NETransparentProxyManager and the App Group for the shared
+     config.json. App Sandbox is only required for the Mac App Store SKU; for
+     Developer ID (non-App-Store) system-extension distribution it is not
+     required and can interfere with OSSystemExtensionManager activation, so
+     it is intentionally omitted here. SCAFFOLD: replace identifiers with your
+     provisioned ones. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -19,7 +22,5 @@
     <array>
         <string>group.com.singctl.proxy</string>
     </array>
-    <key>com.apple.security.app-sandbox</key>
-    <true/>
 </dict>
 </plist>

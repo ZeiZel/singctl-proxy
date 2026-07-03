@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- ProxyExtension entitlements. Requires the Network Extensions capability on
-     your Apple Developer account; the provider type must include packet-tunnel
-     (NETransparentProxyProvider is delivered through the same entitlement). The
-     App Group is for the shared config.json (live target updates). SCAFFOLD:
-     replace the group id with your provisioned one. -->
+     your Apple Developer account; the entitlement value is
+     app-proxy-provider-systemextension (NETransparentProxyProvider is a
+     subclass of NEAppProxyProvider and is delivered through the app-proxy
+     provider family). The App Group is for the shared config.json (live
+     target updates). SCAFFOLD: replace the group id with your provisioned
+     one. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>

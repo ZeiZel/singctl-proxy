@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- ProxyExtension/Info.plist — NetworkExtension transparent-proxy provider.
+<!-- ProxyExtension/Info.plist — NetworkExtension app-proxy provider.
      SCAFFOLD: set CFBundleIdentifier to nest under the container app and fill in
-     your versions. The NetworkExtension dict registers this bundle as a
-     transparent-proxy provider whose principal class is TransparentProxyProvider. -->
+     your versions. NETransparentProxyProvider is a subclass of NEAppProxyProvider,
+     so it must register under the com.apple.networkextension.app-proxy
+     NEProviderClasses key (there is no separate "transparent-proxy" key); the
+     principal class is TransparentProxyProvider. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -28,7 +30,7 @@
         <string>$(TeamIdentifierPrefix)com.singctl.proxy.netext</string>
         <key>NEProviderClasses</key>
         <dict>
-            <key>com.apple.networkextension.transparent-proxy</key>
+            <key>com.apple.networkextension.app-proxy</key>
             <string>$(PRODUCT_MODULE_NAME).TransparentProxyProvider</string>
         </dict>
     </dict>
