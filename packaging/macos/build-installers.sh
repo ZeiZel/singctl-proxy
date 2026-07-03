@@ -93,7 +93,26 @@ fi
 # 3) Build the component pkg (postinstall installs the LaunchDaemon).
 RAW_PKG="$OUT_DIR/singctl-raw.pkg"
 PKG="$OUT_DIR/singctl-${VERSION}.pkg"
-pkgbuild --root "$STAGE" --identifier "$PKG_ID" --version "$VERSION" \
+# Force the app bundles to install to their staged location (/Applications).
+# pkgbuild defaults BundleIsRelocatable=true, so the Installer relocates (or
+# skips) a bundle to wherever LaunchServices last saw it — which meant
+# SingctlProxy.app (the system-extension container) silently failed to install,
+# and the extension could never be found/activated. A component plist with
+# BundleIsRelocatable=false pins both apps to /Applications.
+COMPONENT="$OUT_DIR/component.plist"
+pkgbuild --analyze --root "$STAGE" "$COMPONENT"
+python3 - "$COMPONENT" <<'PY'
+import sys, plistlib
+path = sys.argv[1]
+with open(path, "rb") as f:
+    comps = plistlib.load(f)
+for c in comps:
+    c["BundleIsRelocatable"] = False
+with open(path, "wb") as f:
+    plistlib.dump(comps, f)
+PY
+pkgbuild --root "$STAGE" --component-plist "$COMPONENT" \
+	--identifier "$PKG_ID" --version "$VERSION" \
 	--scripts "$REPO_ROOT/packaging/macos/scripts" --install-location / "$RAW_PKG"
 if [ -n "${INSTALLER_IDENTITY:-}" ]; then
 	productsign --sign "$INSTALLER_IDENTITY" "$RAW_PKG" "$PKG"
