@@ -18,6 +18,22 @@ export namespace bridge {
 	        this.pids = source["pids"];
 	    }
 	}
+	export class InstalledApp {
+	    name: string;
+	    bundleID: string;
+	    path: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new InstalledApp(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.bundleID = source["bundleID"];
+	        this.path = source["path"];
+	    }
+	}
 	export class Key {
 	    index: number;
 	    name: string;
@@ -74,6 +90,24 @@ export namespace bridge {
 	        this.Name = source["Name"];
 	        this.Ports = source["Ports"];
 	        this.Children = source["Children"];
+	    }
+	}
+	export class ProxiedApp {
+	    bundleID: string;
+	    name: string;
+	    enabled: boolean;
+	    running: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProxiedApp(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.bundleID = source["bundleID"];
+	        this.name = source["name"];
+	        this.enabled = source["enabled"];
+	        this.running = source["running"];
 	    }
 	}
 	export class Settings {

@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -67,6 +68,21 @@ type Executor struct {
 	router      procproxy.Router
 	routerBuilt bool
 	launchUser  *procproxy.LaunchUser // real user to drop launched children to (sudo)
+
+	// ctrl is the Executor's OWN netext.Controller, pinned to the proxy's
+	// configured local SOCKS port exactly like the router's (see controller()).
+	// It is the SOLE writer of the system extension's target set
+	// (RecomputeAppTargets) — router_darwin's register/deregister only do
+	// PID/bundle bookkeeping and never call AddTarget/RemoveTarget, so there is
+	// never more than one writer racing to flush config.json.
+	ctrl      netext.Controller
+	ctrlBuilt bool
+
+	// store is the persistent, PID-independent record of proxied apps (bundle
+	// ID, display name, enabled) backing the GUI's Apps tab. Loaded once at
+	// construction; every mutation is followed by RecomputeAppTargets so the
+	// controller's target set stays in sync with it.
+	store *appStore
 
 	pollMu     sync.Mutex
 	pollCancel context.CancelFunc
@@ -217,7 +233,9 @@ func (e *Executor) SetLaunchUser(u *procproxy.LaunchUser) {
 }
 
 func NewExecutor(f core.Factory, p runtime.InterfaceProber, r runtime.RouteController, notes chan tea.Msg) *Executor {
-	return &Executor{factory: f, prober: p, routes: r, notes: notes}
+	e := &Executor{factory: f, prober: p, routes: r, notes: notes, store: newAppStore(proxiedAppsPath)}
+	_ = e.store.Load() // best-effort: a missing/corrupt store just starts empty
+	return e
 }
 
 // SetSaver registers an optional persistence hook called after a successful
@@ -741,6 +759,25 @@ func (e *Executor) procRouter() procproxy.Router {
 	return e.router
 }
 
+// controller lazily builds the Executor's own netext.Controller, pinned to
+// the same local SOCKS port procRouter uses (built once, so a SetSocksPort
+// call before first use takes effect — same lazy-build pattern as
+// procRouter). It is the sole writer of the extension's target set; see
+// RecomputeAppTargets.
+func (e *Executor) controller() netext.Controller {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	if !e.ctrlBuilt {
+		socks := 1080
+		if e.ports.Socks != 0 {
+			socks = e.ports.Socks
+		}
+		e.ctrl = netext.New("127.0.0.1", socks)
+		e.ctrlBuilt = true
+	}
+	return e.ctrl
+}
+
 // RoutePID routes an already-running process's traffic through the proxy. The
 // platform router decides how (Linux cgroup; macOS system extension by bundle).
 func (e *Executor) RoutePID(ctx context.Context, pid int) error {
@@ -879,7 +916,10 @@ func (e *Executor) bundlePIDs(ctx context.Context, id string) ([]int, error) {
 // router's AddPID. On macOS, AddPID resolves any of them back to the same
 // bundle ID and captures it once for every current AND future flow of that app
 // (see router_darwin.go's register/refcounting) — the same mechanism RoutePID
-// already uses for a single PID.
+// already uses for a single PID. It also persists the app in the proxied-apps
+// store (enabled) and recomputes the controller's target set, so it survives
+// the PIDs it was just routed by disappearing — see appStore/
+// RecomputeAppTargets.
 func (e *Executor) RouteApp(ctx context.Context, bundleID string) error {
 	if !e.proxyRunning() {
 		return errProxyNotRunning
@@ -888,9 +928,17 @@ func (e *Executor) RouteApp(ctx context.Context, bundleID string) error {
 	if bundleID == "" {
 		return fmt.Errorf("empty bundle id")
 	}
-	pids, err := e.bundlePIDs(ctx, bundleID)
+	rows, err := e.listProcRows(ctx)
 	if err != nil {
 		return err
+	}
+	var pids []int
+	name := bundleID
+	for _, row := range rows {
+		if bundleIDForPID(row.PID) == bundleID {
+			pids = append(pids, row.PID)
+			name = row.Name
+		}
 	}
 	if len(pids) == 0 {
 		return fmt.Errorf("приложение %s сейчас не запущено", bundleID)
@@ -902,7 +950,13 @@ func (e *Executor) RouteApp(ctx context.Context, bundleID string) error {
 			firstErr = err
 		}
 	}
-	return firstErr
+	if firstErr != nil {
+		return firstErr
+	}
+	if err := e.store.Upsert(bundleID, name, true); err != nil {
+		return err
+	}
+	return e.RecomputeAppTargets()
 }
 
 // UnrouteApp stops routing every PID currently attributed to bundleID. It
@@ -938,6 +992,144 @@ func (e *Executor) ListRoutedApps() []string {
 		return br.RoutedBundleIDs()
 	}
 	return nil
+}
+
+// --- persistent per-app proxy store (GUI Apps tab: enable/disable/remove) ---
+//
+// Unlike RouteApp/UnrouteApp above (which act on whatever PIDs happen to be
+// running right now), the methods below drive a PID-independent record of
+// "apps the user wants proxied" that survives daemon restarts and app
+// relaunches. RecomputeAppTargets is the single place that turns this store's
+// enabled set — unioned with anything currently PID-routed (ListRoutedApps) —
+// into the controller's target set; every mutation below calls it so the
+// system extension's capture list stays in sync.
+
+// RecomputeAppTargets rewrites the system extension's captured-app set to
+// union(enabled apps in the persistent store, apps currently routed by
+// PID/bundle). It is the ONLY call site that mutates the controller's target
+// set (see darwinRouter's doc comment) — callers that change enablement or
+// routing must call this afterwards for it to take effect.
+func (e *Executor) RecomputeAppTargets() error {
+	seen := map[string]bool{}
+	for _, id := range e.store.EnabledBundleIDs() {
+		seen[id] = true
+	}
+	for _, id := range e.ListRoutedApps() {
+		seen[id] = true
+	}
+	targets := make([]string, 0, len(seen))
+	for id := range seen {
+		targets = append(targets, id)
+	}
+	return e.controller().SetTargets(targets)
+}
+
+// ListProxiedApps returns every app in the persistent store with Running
+// derived from the current process table (a store entry with no matching PID
+// is simply enabled/disabled but not currently open).
+func (e *Executor) ListProxiedApps(ctx context.Context) ([]ProxiedApp, error) {
+	entries := e.store.List()
+	out := make([]ProxiedApp, 0, len(entries))
+	for _, a := range entries {
+		pids, err := e.bundlePIDs(ctx, a.BundleID)
+		if err != nil {
+			return nil, err
+		}
+		a.Running = len(pids) > 0
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// SetProxiedAppEnabled flips an app's enabled flag in the store and
+// recomputes the controller's target set accordingly.
+func (e *Executor) SetProxiedAppEnabled(bundleID string, enabled bool) error {
+	bundleID = strings.TrimSpace(bundleID)
+	if bundleID == "" {
+		return fmt.Errorf("empty bundle id")
+	}
+	if err := e.store.SetEnabled(bundleID, enabled); err != nil {
+		return err
+	}
+	return e.RecomputeAppTargets()
+}
+
+// RemoveProxiedApp drops bundleID from the store entirely: any of its PIDs
+// currently routed are unrouted first (so the router's own bookkeeping
+// doesn't keep reporting it via RoutedBundleIDs), then the store entry is
+// deleted and the target set recomputed.
+func (e *Executor) RemoveProxiedApp(ctx context.Context, bundleID string) error {
+	bundleID = strings.TrimSpace(bundleID)
+	if bundleID == "" {
+		return fmt.Errorf("empty bundle id")
+	}
+	e.unrouteLiveBundle(ctx, bundleID)
+	if err := e.store.Remove(bundleID); err != nil {
+		return err
+	}
+	return e.RecomputeAppTargets()
+}
+
+// unrouteLiveBundle unroutes every PID currently attributed to bundleID,
+// without building the router on demand (mirrors ListRoutedApps — a removal
+// of an app that was never routed shouldn't spin up a router just to find
+// nothing to do).
+func (e *Executor) unrouteLiveBundle(ctx context.Context, bundleID string) {
+	e.cfgMu.Lock()
+	built, r := e.routerBuilt, e.router
+	e.cfgMu.Unlock()
+	if !built || r == nil {
+		return
+	}
+	br, ok := r.(procproxy.BundleRouter)
+	if !ok {
+		return
+	}
+	for _, pid := range br.PIDsForBundle(bundleID) {
+		_ = r.Unroute(ctx, pid)
+	}
+}
+
+// LaunchProxiedApp launches an application chosen by its .app bundle path
+// (e.g. from the GUI's installed-apps picker): the .app directory itself
+// isn't executable, so it first resolves the inner Mach-O
+// (procproxy.MacBundleExe) and launches that through the same platform router
+// path as LaunchProxied. On success it persists the app in the store (enabled)
+// and recomputes the controller's target set, then returns the child PID.
+func (e *Executor) LaunchProxiedApp(ctx context.Context, appPath string) (int, error) {
+	if !e.proxyRunning() {
+		return 0, errProxyNotRunning
+	}
+	appPath = strings.TrimSpace(appPath)
+	if appPath == "" {
+		return 0, fmt.Errorf("empty app path")
+	}
+	exe := procproxy.MacBundleExe(appPath)
+	if exe == "" {
+		exe = appPath // not a .app bundle (already an executable) — try as-is
+	}
+	pid, err := e.procRouter().Launch(ctx, []string{exe})
+	if err != nil {
+		return 0, err
+	}
+	id := netext.BundleID(appPath)
+	if id == "" {
+		id = netext.BundleID(exe)
+	}
+	if id == "" {
+		id = bundleIDForPID(pid)
+	}
+	if id == "" {
+		return pid, fmt.Errorf("приложение запущено (PID %d), но bundle ID не определён — захват расширением не активирован", pid)
+	}
+	name := strings.TrimSuffix(filepath.Base(appPath), ".app")
+	if err := e.store.Upsert(id, name, true); err != nil {
+		return pid, err
+	}
+	if err := e.RecomputeAppTargets(); err != nil {
+		return pid, err
+	}
+	return pid, nil
 }
 
 // TrafficSnapshot returns the cumulative up/down byte counters from the Clash
@@ -1068,7 +1260,11 @@ func randomHex() string {
 	return hex.EncodeToString(b)
 }
 
-// Shutdown tears down both cores and any per-process routing state.
+// Shutdown tears down both cores and any per-process routing state. It also
+// clears the system extension's target set: while the daemon is down nothing
+// should be captured, even though the persistent store still lists apps as
+// enabled — the next startup's RecomputeAppTargets restores them from the
+// store (see NewExecutor/RecomputeAppTargets).
 func (e *Executor) Shutdown(ctx context.Context) error {
 	e.stopPoller()
 	e.cfgMu.Lock()
@@ -1076,11 +1272,15 @@ func (e *Executor) Shutdown(ctx context.Context) error {
 		_ = e.router.Cleanup()
 		e.router, e.routerBuilt = nil, false
 	}
+	ctrlBuilt, ctrl := e.ctrlBuilt, e.ctrl
 	if e.logFile != nil {
 		_ = e.logFile.Close()
 		e.logFile = nil
 	}
 	e.cfgMu.Unlock()
+	if ctrlBuilt && ctrl != nil {
+		_ = ctrl.SetTargets(nil)
+	}
 	if m := e.manager(); m != nil {
 		return m.Shutdown(ctx)
 	}

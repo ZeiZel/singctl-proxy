@@ -2,10 +2,12 @@ import * as App from "@wails/go/bridge/App";
 
 import {
   type TApplication,
+  type TInstalledApp,
   type TKey,
   type TLicenseInfo,
   type TMode,
   type TProcInfo,
+  type TProxiedApp,
   type TSettings,
   type TStatus,
 } from "./types";
@@ -32,6 +34,11 @@ export const api = {
   routeApp: (bundleID: string): Promise<void> => App.RouteApp(bundleID),
   unrouteApp: (bundleID: string): Promise<void> => App.UnrouteApp(bundleID),
   launchApp: (argv: string[]): Promise<number> => App.LaunchApp(argv),
+  listInstalledApps: (): Promise<TInstalledApp[]> => App.ListInstalledApps(),
+  listProxiedApps: (): Promise<TProxiedApp[]> => App.ListProxiedApps(),
+  launchAppBundle: (path: string): Promise<number> => App.LaunchAppBundle(path),
+  setAppEnabled: (bundleID: string, enabled: boolean): Promise<void> => App.SetAppEnabled(bundleID, enabled),
+  removeApp: (bundleID: string): Promise<void> => App.RemoveApp(bundleID),
   stopDaemon: (): Promise<void> => App.StopDaemon(),
   getLicense: (): Promise<TLicenseInfo> => App.GetLicense(),
   activateLicense: (token: string, email: string): Promise<void> => App.ActivateLicense(token, email),

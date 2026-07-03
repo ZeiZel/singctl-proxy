@@ -22,48 +22,50 @@ func TestDarwinRouter_Unavailable(t *testing.T) {
 }
 
 // register/deregister refcount a bundle ID across multiple PIDs (Electron
-// helpers), so the target is added once and removed only when the last PID goes.
+// helpers), so RoutedBundleIDs still reports the app until the last PID goes.
+// The router itself no longer touches the controller (the Executor's
+// RecomputeAppTargets is the sole writer — see router_darwin.go's doc
+// comment), so this only asserts the PID/bundle bookkeeping.
 func TestDarwinRouter_Refcount(t *testing.T) {
 	fake := netext.NewFake(true)
 	r := newDarwinRouter(Config{}.withDefaults(), fake)
 
-	if err := r.register(100, "com.app"); err != nil {
-		t.Fatalf("register 100: %v", err)
-	}
-	if err := r.register(101, "com.app"); err != nil { // second helper, same app
-		t.Fatalf("register 101: %v", err)
-	}
-	if len(fake.Adds) != 1 || fake.Adds[0] != "com.app" {
-		t.Errorf("target should be added once: %v", fake.Adds)
+	r.register(100, "com.app")
+	r.register(101, "com.app") // second helper, same app
+	if got := r.RoutedBundleIDs(); len(got) != 1 || got[0] != "com.app" {
+		t.Errorf("RoutedBundleIDs = %v, want [com.app]", got)
 	}
 	if got := r.ListRouted(); len(got) != 2 || got[0] != 100 || got[1] != 101 {
 		t.Errorf("ListRouted = %v, want [100 101]", got)
 	}
+	if len(fake.Adds) != 0 || len(fake.Removes) != 0 {
+		t.Errorf("router must not call AddTarget/RemoveTarget directly: adds=%v removes=%v", fake.Adds, fake.Removes)
+	}
 
-	if err := r.deregister(100); err != nil {
-		t.Fatalf("deregister 100: %v", err)
+	r.deregister(100)
+	if got := r.RoutedBundleIDs(); len(got) != 1 || got[0] != "com.app" {
+		t.Errorf("must still report the app while a PID remains: %v", got)
 	}
-	if len(fake.Removes) != 0 {
-		t.Errorf("must not remove while a PID remains: %v", fake.Removes)
-	}
-	if err := r.deregister(101); err != nil {
-		t.Fatalf("deregister 101: %v", err)
-	}
-	if len(fake.Removes) != 1 || fake.Removes[0] != "com.app" {
-		t.Errorf("target should be removed on last PID: %v", fake.Removes)
+	r.deregister(101)
+	if got := r.RoutedBundleIDs(); len(got) != 0 {
+		t.Errorf("app should drop off once its last PID is gone: %v", got)
 	}
 }
 
-// Cleanup releases every still-captured target.
+// Cleanup clears all PID/bundle bookkeeping (it does not touch the
+// controller — see router_darwin.go's doc comment).
 func TestDarwinRouter_Cleanup(t *testing.T) {
 	fake := netext.NewFake(true)
 	r := newDarwinRouter(Config{}.withDefaults(), fake)
-	_ = r.register(1, "com.a")
-	_ = r.register(2, "com.b")
+	r.register(1, "com.a")
+	r.register(2, "com.b")
 	if err := r.Cleanup(); err != nil {
 		t.Fatalf("Cleanup: %v", err)
 	}
-	if len(fake.Removes) != 2 || len(r.ListRouted()) != 0 {
-		t.Errorf("Cleanup should release all targets: removes=%v routed=%v", fake.Removes, r.ListRouted())
+	if len(r.ListRouted()) != 0 || len(r.RoutedBundleIDs()) != 0 {
+		t.Errorf("Cleanup should clear all bookkeeping: routed=%v bundles=%v", r.ListRouted(), r.RoutedBundleIDs())
+	}
+	if len(fake.Removes) != 0 {
+		t.Errorf("Cleanup must not call RemoveTarget directly: %v", fake.Removes)
 	}
 }

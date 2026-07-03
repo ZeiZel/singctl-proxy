@@ -61,6 +61,12 @@ type Controller interface {
 	AddTarget(bundleID string) error
 	// RemoveTarget stops capturing a bundle ID (idempotent).
 	RemoveTarget(bundleID string) error
+	// SetTargets replaces the whole captured set wholesale (the persistent
+	// per-app store's enabled apps unioned with anything currently PID-routed —
+	// see internal/app.Executor.RecomputeAppTargets, the single writer of the
+	// target set). Unlike AddTarget/RemoveTarget it always persists, even when
+	// the resulting set is unchanged in size but different in membership.
+	SetTargets(bundleIDs []string) error
 	// Targets returns the current captured set, sorted.
 	Targets() []string
 }
@@ -108,6 +114,16 @@ func (s *targetSet) remove(id string) bool {
 	}
 	delete(s.m, id)
 	return true
+}
+
+// replace wholesale-swaps the set's contents with ids (deduped).
+func (s *targetSet) replace(ids []string) {
+	s.m = make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			s.m[id] = true
+		}
+	}
 }
 
 func (s *targetSet) list() []string {

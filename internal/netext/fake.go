@@ -8,6 +8,9 @@ type FakeController struct {
 	set     *targetSet
 	Adds    []string
 	Removes []string
+	// SetCalls records every SetTargets call (a copy of the sorted set each
+	// time), so tests can assert on the whole-set writes the Executor drives.
+	SetCalls [][]string
 }
 
 // NewFake returns a FakeController; present seeds Available().
@@ -26,6 +29,12 @@ func (f *FakeController) AddTarget(bundleID string) error {
 func (f *FakeController) RemoveTarget(bundleID string) error {
 	f.Removes = append(f.Removes, bundleID)
 	f.set.remove(bundleID)
+	return nil
+}
+
+func (f *FakeController) SetTargets(bundleIDs []string) error {
+	f.set.replace(bundleIDs)
+	f.SetCalls = append(f.SetCalls, f.set.list())
 	return nil
 }
 

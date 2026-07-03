@@ -8,6 +8,8 @@ export type {
   TKey,
   TProcInfo,
   TApplication,
+  TInstalledApp,
+  TProxiedApp,
   TConnRow,
   TLatency,
   TLatencyRow,

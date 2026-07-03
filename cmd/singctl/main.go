@@ -593,6 +593,38 @@ func registerControl(srv *control.Server, executor *app.Executor, stop func(), s
 	srv.Handle("APP-UNROUTE", func(arg string) (string, error) {
 		return "OK", executor.UnrouteApp(context.Background(), strings.TrimSpace(arg))
 	})
+	// APP-LIST-PROXIED/APP-LAUNCH/APP-SET-ENABLED/APP-REMOVE back the GUI's
+	// persistent proxied-apps store (internal/app/appstore.go): unlike APP-LIST
+	// above (a live snapshot of running processes), these survive daemon
+	// restarts and don't depend on any PID being alive.
+	srv.Handle("APP-LIST-PROXIED", func(string) (string, error) {
+		rows, err := executor.ListProxiedApps(context.Background())
+		if err != nil {
+			return "", err
+		}
+		data, _ := json.Marshal(rows)
+		return string(data), nil
+	})
+	srv.Handle("APP-LAUNCH", func(arg string) (string, error) {
+		pid, err := executor.LaunchProxiedApp(context.Background(), arg)
+		if err != nil {
+			return "", err
+		}
+		return strconv.Itoa(pid), nil
+	})
+	srv.Handle("APP-SET-ENABLED", func(arg string) (string, error) {
+		var req struct {
+			BundleID string `json:"bundleID"`
+			Enabled  bool   `json:"enabled"`
+		}
+		if err := json.Unmarshal([]byte(arg), &req); err != nil {
+			return "", fmt.Errorf("bad app-set-enabled json: %w", err)
+		}
+		return "OK", executor.SetProxiedAppEnabled(req.BundleID, req.Enabled)
+	})
+	srv.Handle("APP-REMOVE", func(arg string) (string, error) {
+		return "OK", executor.RemoveProxiedApp(context.Background(), strings.TrimSpace(arg))
+	})
 }
 
 // parsePID parses a decimal PID argument from a control command.
@@ -736,6 +768,14 @@ func main() {
 		Interval:  c.obs.urltestInterval,
 		Tolerance: c.obs.urltestTolerance,
 	})
+
+	// Restore the persistent per-app proxy store's enabled apps into the system
+	// extension's target set now the socks port above is configured (the store
+	// itself was already loaded in NewExecutor). Best-effort: an unapproved or
+	// missing extension just means capture doesn't take yet, not a fatal error.
+	if err := executor.RecomputeAppTargets(); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: не удалось восстановить список проксируемых приложений:", err)
+	}
 
 	// Persist the profile + log file under the real user's home (chowned back),
 	// and remember the last link. In headless --logs mode the log path stays

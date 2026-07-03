@@ -1,0 +1,51 @@
+{
+	"$generated": "DO NOT EDIT — generated from .agents/ by `bun run generate:ai-config`",
+	"mcpServers": {
+		"figma-bridge": {
+			"command": "npx",
+			"args": [
+				"-y",
+				"@gethopp/figma-mcp-bridge"
+			]
+		},
+		"filesystem": {
+			"type": "stdio",
+			"command": "npx",
+			"args": [
+				"-y",
+				"@modelcontextprotocol/server-filesystem",
+				"."
+			]
+		},
+		"chromeDevtools": {
+			"type": "stdio",
+			"command": "npx",
+			"args": [
+				"-y",
+				"chrome-devtools-mcp@latest",
+				"--no-usage-statistics"
+			]
+		},
+		"context7": {
+			"type": "stdio",
+			"command": "npx",
+			"args": [
+				"-y",
+				"@upstash/context7-mcp"
+			]
+		},
+		"qdrant": {
+			"type": "stdio",
+			"command": "sh",
+			"args": [
+				"-c",
+				"export PATH=\"$HOME/.local/bin:$PATH\"; exec uvx --python 3.12 mcp-server-qdrant"
+			],
+			"env": {
+				"QDRANT_URL": "http://localhost:6333",
+				"COLLECTION_NAME": "rentverse-knowledge",
+				"EMBEDDING_MODEL": "sentence-transformers/all-MiniLM-L6-v2"
+			}
+		}
+	}
+}

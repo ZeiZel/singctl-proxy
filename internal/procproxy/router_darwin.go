@@ -28,6 +28,14 @@ var errExtensionUnavailable = errors.New(
 // capturing a target app's WHOLE network stack by bundle ID. Helper/forked
 // processes share the parent's signing identifier, so they are captured too —
 // no fork tracking needed. Requires the extension to be installed and approved.
+//
+// The router itself is pure PID<->bundle-ID bookkeeping: it does NOT call
+// ctrl.AddTarget/RemoveTarget (ctrl is only consulted via Available()). The
+// persistent per-app store's enabled apps can capture a bundle ID the router
+// has never seen a PID for (and vice versa — a routed PID whose app isn't
+// store-enabled), so internal/app.Executor.RecomputeAppTargets is the single
+// place that unions both sources and writes the controller's target set; see
+// RoutedBundleIDs, which the executor reads for that union.
 type darwinRouter struct {
 	cfg  Config
 	ctrl netext.Controller
@@ -79,7 +87,8 @@ func (r *darwinRouter) AddPID(_ context.Context, pid int) error {
 	if id == "" {
 		return fmt.Errorf("не удалось определить bundle ID приложения для PID %d (не .app-бандл?)", pid)
 	}
-	return r.register(pid, id)
+	r.register(pid, id)
+	return nil
 }
 
 // Launch starts the app (no env injection) and captures it by bundle ID.
@@ -103,9 +112,7 @@ func (r *darwinRouter) Launch(ctx context.Context, argv []string) (int, error) {
 	if id == "" {
 		return pid, fmt.Errorf("приложение запущено (PID %d), но bundle ID не определён — захват расширением не активирован", pid)
 	}
-	if err := r.register(pid, id); err != nil {
-		return pid, err
-	}
+	r.register(pid, id)
 	return pid, nil
 }
 
@@ -118,15 +125,23 @@ func (r *darwinRouter) RestartPID(ctx context.Context, pid int) (int, error) {
 	return pid, nil
 }
 
-// Unroute stops capturing the app once its last routed PID is gone.
-func (r *darwinRouter) Unroute(_ context.Context, pid int) error { return r.deregister(pid) }
+// Unroute drops the PID from the router's bookkeeping (see darwinRouter's doc
+// comment — the caller must recompute the controller's target set afterwards
+// for this to stop capture, e.g. via Executor.RecomputeAppTargets).
+func (r *darwinRouter) Unroute(_ context.Context, pid int) error {
+	r.deregister(pid)
+	return nil
+}
 
 // RemovePID is the same as Unroute on macOS (no cgroup to detach).
-func (r *darwinRouter) RemovePID(_ context.Context, pid int) error { return r.deregister(pid) }
+func (r *darwinRouter) RemovePID(_ context.Context, pid int) error {
+	r.deregister(pid)
+	return nil
+}
 
-// Kill terminates the process and stops capturing its app.
+// Kill terminates the process and drops it from the bookkeeping.
 func (r *darwinRouter) Kill(_ context.Context, pid int) error {
-	_ = r.deregister(pid)
+	r.deregister(pid)
 	return terminate(pid)
 }
 
@@ -172,73 +187,44 @@ func (r *darwinRouter) RoutedBundleIDs() []string {
 	return out
 }
 
-// Cleanup releases every captured target (so a stale config.json doesn't keep
-// routing after singctl exits).
+// Cleanup clears the router's PID/bundle bookkeeping (it does NOT touch the
+// controller's target set — see darwinRouter's doc comment; the caller, e.g.
+// Executor.Shutdown, is responsible for pushing the post-cleanup target set,
+// typically empty since the daemon is going down).
 func (r *darwinRouter) Cleanup() error {
 	r.mu.Lock()
-	ids := make([]string, 0, len(r.refs))
-	for id := range r.refs {
-		ids = append(ids, id)
-	}
 	r.byPID = map[int]string{}
 	r.refs = map[string]int{}
 	r.mu.Unlock()
-
-	var firstErr error
-	for _, id := range ids {
-		if err := r.ctrl.RemoveTarget(id); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
+	return nil
 }
 
-// register records pid->id and adds the target on the first PID of that app.
-func (r *darwinRouter) register(pid int, id string) error {
+// register records pid->id, refcounting the bundle ID so Electron helpers
+// sharing an app aren't dropped until the last of them exits. Idempotent.
+// Does not touch the controller (see darwinRouter's doc comment).
+func (r *darwinRouter) register(pid int, id string) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, ok := r.byPID[pid]; ok {
-		r.mu.Unlock()
-		return nil // idempotent
+		return // idempotent
 	}
 	r.byPID[pid] = id
 	r.refs[id]++
-	first := r.refs[id] == 1
-	r.mu.Unlock()
-
-	if first {
-		if err := r.ctrl.AddTarget(id); err != nil {
-			// Roll back the bookkeeping so a retry can re-add cleanly.
-			r.mu.Lock()
-			delete(r.byPID, pid)
-			r.refs[id]--
-			if r.refs[id] <= 0 {
-				delete(r.refs, id)
-			}
-			r.mu.Unlock()
-			return fmt.Errorf("не удалось включить захват приложения %s: %w", id, err)
-		}
-	}
-	return nil
 }
 
-// deregister drops pid and removes the target once the app has no routed PIDs.
-func (r *darwinRouter) deregister(pid int) error {
+// deregister drops pid from the bookkeeping, decrementing the bundle's
+// refcount (and dropping it once it reaches zero). Does not touch the
+// controller (see darwinRouter's doc comment).
+func (r *darwinRouter) deregister(pid int) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	id, ok := r.byPID[pid]
 	if !ok {
-		r.mu.Unlock()
-		return nil
+		return
 	}
 	delete(r.byPID, pid)
 	r.refs[id]--
-	last := r.refs[id] <= 0
-	if last {
+	if r.refs[id] <= 0 {
 		delete(r.refs, id)
 	}
-	r.mu.Unlock()
-
-	if last {
-		return r.ctrl.RemoveTarget(id)
-	}
-	return nil
 }

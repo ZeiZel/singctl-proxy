@@ -142,16 +142,19 @@ func findMacAppExe(name string) string {
 		}
 		for _, e := range entries {
 			if strings.ToLower(e.Name()) == want {
-				return macBundleExe(filepath.Join(d, e.Name()))
+				return MacBundleExe(filepath.Join(d, e.Name()))
 			}
 		}
 	}
 	return ""
 }
 
-// macBundleExe returns the executable inside <app>/Contents/MacOS — preferring
-// the entry matching the bundle name, else the first regular file.
-func macBundleExe(appPath string) string {
+// MacBundleExe returns the executable inside <app>/Contents/MacOS — preferring
+// the entry matching the bundle name, else the first regular file. Exported so
+// callers that already have a chosen .app path (the whole-app launch flow —
+// internal/app.Executor.LaunchProxiedApp, gui/bridge's app picker) can resolve
+// the inner Mach-O to exec, since the .app directory itself is not executable.
+func MacBundleExe(appPath string) string {
 	macos := filepath.Join(appPath, "Contents", "MacOS")
 	entries, err := os.ReadDir(macos)
 	if err != nil {

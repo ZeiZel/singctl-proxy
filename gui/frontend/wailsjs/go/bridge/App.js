@@ -42,12 +42,24 @@ export function LaunchApp(arg1) {
   return window['go']['bridge']['App']['LaunchApp'](arg1);
 }
 
+export function LaunchAppBundle(arg1) {
+  return window['go']['bridge']['App']['LaunchAppBundle'](arg1);
+}
+
 export function ListApplications() {
   return window['go']['bridge']['App']['ListApplications']();
 }
 
+export function ListInstalledApps() {
+  return window['go']['bridge']['App']['ListInstalledApps']();
+}
+
 export function ListProcesses() {
   return window['go']['bridge']['App']['ListProcesses']();
+}
+
+export function ListProxiedApps() {
+  return window['go']['bridge']['App']['ListProxiedApps']();
 }
 
 export function ListRouted() {
@@ -56,6 +68,10 @@ export function ListRouted() {
 
 export function ListRoutedApps() {
   return window['go']['bridge']['App']['ListRoutedApps']();
+}
+
+export function RemoveApp(arg1) {
+  return window['go']['bridge']['App']['RemoveApp'](arg1);
 }
 
 export function RemoveLicense() {
@@ -76,6 +92,10 @@ export function RouteApp(arg1) {
 
 export function RoutePID(arg1) {
   return window['go']['bridge']['App']['RoutePID'](arg1);
+}
+
+export function SetAppEnabled(arg1, arg2) {
+  return window['go']['bridge']['App']['SetAppEnabled'](arg1, arg2);
 }
 
 export function SetMode(arg1) {

@@ -105,6 +105,15 @@ func (c *darwinController) RemoveTarget(bundleID string) error {
 	return nil
 }
 
+// SetTargets replaces the whole captured set wholesale and always flushes, so
+// it also persists a shrink to empty (see Controller.SetTargets).
+func (c *darwinController) SetTargets(bundleIDs []string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.set.replace(bundleIDs)
+	return c.flushLocked()
+}
+
 func (c *darwinController) Targets() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()

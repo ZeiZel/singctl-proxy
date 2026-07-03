@@ -73,6 +73,26 @@ type Application struct {
 	PIDs     []int  `json:"pids"`
 }
 
+// InstalledApp is one macOS application found by ListInstalledApps' local
+// /Applications enumeration (gui/bridge/installedapps.go) — no control socket
+// round-trip, since finding installed apps needs no daemon privilege.
+type InstalledApp struct {
+	Name     string `json:"name"`
+	BundleID string `json:"bundleID"`
+	Path     string `json:"path"` // .app bundle path, passed to LaunchAppBundle
+}
+
+// ProxiedApp mirrors the daemon's app.ProxiedApp JSON (APP-LIST-PROXIED): one
+// entry in the persistent per-app proxy store, unlike Application above (a
+// live snapshot of running processes) this survives daemon restarts and
+// app relaunches — it's what drives the Apps tab's enable/disable/remove.
+type ProxiedApp struct {
+	BundleID string `json:"bundleID"`
+	Name     string `json:"name"`
+	Enabled  bool   `json:"enabled"`
+	Running  bool   `json:"running"`
+}
+
 // ConnRow is one live connection for the connections table.
 type ConnRow struct {
 	Process string `json:"process"`

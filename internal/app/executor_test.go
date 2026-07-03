@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,6 +13,7 @@ import (
 
 	"singctl/internal/core"
 	"singctl/internal/monitor"
+	"singctl/internal/netext"
 	"singctl/internal/policy"
 	"singctl/internal/proclist"
 	"singctl/internal/procproxy"
@@ -32,7 +35,16 @@ const validLink = "vless://4ce58870-27d3-489b-87a0-3109db4fb919@193.188.22.147:4
 func newExecutor() (*Executor, chan tea.Msg) {
 	notes := make(chan tea.Msg, 32)
 	ff := core.NewFakeFactory()
-	return NewExecutor(ff.Factory(), fakeProber{}, fakeRoutes{}, notes), notes
+	e := NewExecutor(ff.Factory(), fakeProber{}, fakeRoutes{}, notes)
+	// The production proxiedAppsPath lives under root-owned /Library — swap in
+	// a temp-dir-backed store so the persistent per-app store's tests don't
+	// need root (white-box: appStore is unexported, only reachable from tests
+	// in this package).
+	dir, err := os.MkdirTemp("", "singctl-appstore-test")
+	if err == nil {
+		e.store = newAppStore(filepath.Join(dir, "proxied-apps.json"))
+	}
+	return e, notes
 }
 
 func TestExecutor_LoadLink_Invalid(t *testing.T) {
@@ -406,6 +418,199 @@ func TestExecutor_ListRoutedApps(t *testing.T) {
 	got := e.ListRoutedApps()
 	if len(got) != 1 || got[0] != "com.cursor.app" {
 		t.Errorf("ListRoutedApps = %v, want [com.cursor.app]", got)
+	}
+}
+
+// injectFakeController swaps the Executor's controller for an in-memory fake
+// (white-box), so RecomputeAppTargets can be asserted on without touching the
+// real system extension / App Group container.
+func injectFakeController(e *Executor, present bool) *netext.FakeController {
+	fake := netext.NewFake(present)
+	e.cfgMu.Lock()
+	e.ctrl, e.ctrlBuilt = fake, true
+	e.cfgMu.Unlock()
+	return fake
+}
+
+func TestExecutor_ListProxiedApps_DerivesRunning(t *testing.T) {
+	e, _ := newExecutor()
+	_ = e.store.Upsert("com.cursor.app", "Cursor", true)
+	_ = e.store.Upsert("com.zen.app", "Zen", false)
+	setFakeLister(e, []proclist.App{{PID: 100, Name: "Cursor"}})
+	withFakeBundleResolver(t, func(pid int) string {
+		if pid == 100 {
+			return "com.cursor.app"
+		}
+		return ""
+	})
+
+	apps, err := e.ListProxiedApps(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(apps) != 2 {
+		t.Fatalf("ListProxiedApps = %+v, want 2 entries", apps)
+	}
+	byID := map[string]ProxiedApp{}
+	for _, a := range apps {
+		byID[a.BundleID] = a
+	}
+	if !byID["com.cursor.app"].Running {
+		t.Error("com.cursor.app has a live PID, want Running=true")
+	}
+	if byID["com.zen.app"].Running {
+		t.Error("com.zen.app has no live PID, want Running=false")
+	}
+	if !byID["com.cursor.app"].Enabled || byID["com.zen.app"].Enabled {
+		t.Errorf("Enabled flags not preserved from the store: %+v", byID)
+	}
+}
+
+func TestExecutor_SetProxiedAppEnabled_RecomputesTargets(t *testing.T) {
+	e, _ := newExecutor()
+	fake := injectFakeController(e, true)
+	_ = e.store.Upsert("com.cursor.app", "Cursor", true)
+
+	if err := e.SetProxiedAppEnabled("com.cursor.app", false); err != nil {
+		t.Fatalf("SetProxiedAppEnabled: %v", err)
+	}
+	if got := fake.Targets(); len(got) != 0 {
+		t.Errorf("Targets after disabling the only app = %v, want empty", got)
+	}
+	if err := e.SetProxiedAppEnabled("com.cursor.app", true); err != nil {
+		t.Fatalf("SetProxiedAppEnabled: %v", err)
+	}
+	if got := fake.Targets(); len(got) != 1 || got[0] != "com.cursor.app" {
+		t.Errorf("Targets after re-enabling = %v, want [com.cursor.app]", got)
+	}
+}
+
+func TestExecutor_RemoveProxiedApp_UnroutesAndRecomputes(t *testing.T) {
+	e, _ := newExecutor()
+	injectFakeController(e, true)
+	_ = e.store.Upsert("com.cursor.app", "Cursor", true)
+
+	// FakeRouter.RoutedBundleIDs is a static snapshot of BundlesByPID (it
+	// doesn't drop entries when Unroute is called, unlike the real
+	// darwinRouter's refcounted bookkeeping) — leave it empty here so the
+	// post-Remove recompute reflects only the store, and assert the live-PID
+	// unroute call separately via Unrouted.
+	router := &procproxy.FakeRouter{
+		Routed:       []int{100},
+		BundlesByPID: map[int]string{100: "com.cursor.app"},
+	}
+	e.cfgMu.Lock()
+	e.router, e.routerBuilt = router, true
+	e.cfgMu.Unlock()
+
+	if err := e.RemoveProxiedApp(context.Background(), "com.cursor.app"); err != nil {
+		t.Fatalf("RemoveProxiedApp: %v", err)
+	}
+	if len(router.Unrouted) != 1 || router.Unrouted[0] != 100 {
+		t.Errorf("Unrouted = %v, want [100]", router.Unrouted)
+	}
+	if got := e.store.List(); len(got) != 0 {
+		t.Errorf("store after Remove = %v, want empty", got)
+	}
+}
+
+func TestExecutor_RouteApp_PersistsToStoreAndRecomputes(t *testing.T) {
+	e, _ := newExecutor()
+	fake := injectFakeController(e, true)
+	ctx := context.Background()
+	_ = e.LoadLink(ctx, validLink)
+	if err := e.EnableProxy(ctx); err != nil {
+		t.Fatal(err)
+	}
+	setFakeLister(e, []proclist.App{{PID: 100, Name: "Cursor"}})
+	withFakeBundleResolver(t, func(int) string { return "com.cursor.app" })
+	e.cfgMu.Lock()
+	e.router, e.routerBuilt = &procproxy.FakeRouter{}, true
+	e.cfgMu.Unlock()
+
+	if err := e.RouteApp(ctx, "com.cursor.app"); err != nil {
+		t.Fatal(err)
+	}
+	got := e.store.List()
+	if len(got) != 1 || got[0].BundleID != "com.cursor.app" || got[0].Name != "Cursor" || !got[0].Enabled {
+		t.Errorf("store.List() = %+v, want one enabled com.cursor.app named Cursor", got)
+	}
+	if targets := fake.Targets(); len(targets) != 1 || targets[0] != "com.cursor.app" {
+		t.Errorf("controller Targets = %v, want [com.cursor.app]", targets)
+	}
+}
+
+func TestExecutor_LaunchProxiedApp_PersistsToStore(t *testing.T) {
+	e, _ := newExecutor()
+	fake := injectFakeController(e, true)
+	ctx := context.Background()
+	_ = e.LoadLink(ctx, validLink)
+	if err := e.EnableProxy(ctx); err != nil {
+		t.Fatal(err)
+	}
+	router := &procproxy.FakeRouter{NextPID: 555}
+	e.cfgMu.Lock()
+	e.router, e.routerBuilt = router, true
+	e.cfgMu.Unlock()
+	withFakeBundleResolver(t, func(pid int) string {
+		if pid == 555 {
+			return "com.cursor.app"
+		}
+		return ""
+	})
+
+	pid, err := e.LaunchProxiedApp(ctx, "/Applications/Cursor.app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pid != 555 {
+		t.Errorf("LaunchProxiedApp pid = %d, want 555", pid)
+	}
+	got := e.store.List()
+	if len(got) != 1 || got[0].BundleID != "com.cursor.app" || !got[0].Enabled {
+		t.Errorf("store.List() = %+v, want one enabled com.cursor.app", got)
+	}
+	if targets := fake.Targets(); len(targets) != 1 || targets[0] != "com.cursor.app" {
+		t.Errorf("controller Targets = %v, want [com.cursor.app]", targets)
+	}
+}
+
+func TestExecutor_RecomputeAppTargets_UnionsStoreAndRouted(t *testing.T) {
+	e, _ := newExecutor()
+	fake := injectFakeController(e, true)
+	_ = e.store.Upsert("com.a", "A", true)                                      // enabled in the store, no live PID
+	router := &procproxy.FakeRouter{BundlesByPID: map[int]string{100: "com.b"}} // routed, not store-enabled
+	e.cfgMu.Lock()
+	e.router, e.routerBuilt = router, true
+	e.cfgMu.Unlock()
+
+	if err := e.RecomputeAppTargets(); err != nil {
+		t.Fatalf("RecomputeAppTargets: %v", err)
+	}
+	got := fake.Targets()
+	if len(got) != 2 || got[0] != "com.a" || got[1] != "com.b" {
+		t.Errorf("Targets = %v, want [com.a com.b] (union of store-enabled and routed)", got)
+	}
+}
+
+func TestExecutor_Shutdown_ClearsTargetsButKeepsStore(t *testing.T) {
+	e, _ := newExecutor()
+	fake := injectFakeController(e, true)
+	_ = e.store.Upsert("com.a", "A", true)
+	if err := e.RecomputeAppTargets(); err != nil {
+		t.Fatal(err)
+	}
+	if got := fake.Targets(); len(got) != 1 {
+		t.Fatalf("precondition: Targets = %v, want 1 entry", got)
+	}
+	if err := e.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if got := fake.Targets(); len(got) != 0 {
+		t.Errorf("Targets after Shutdown = %v, want empty", got)
+	}
+	if got := e.store.EnabledBundleIDs(); len(got) != 1 || got[0] != "com.a" {
+		t.Errorf("store should still list com.a enabled after Shutdown: %v", got)
 	}
 }
 

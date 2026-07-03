@@ -47,6 +47,24 @@ export interface TApplication {
   pids: number[];
 }
 
+// TInstalledApp is one app bundle discovered on disk for the "launch through
+// proxy" picker — distinct from TApplication, which lists already-running apps.
+export interface TInstalledApp {
+  name: string;
+  bundleID: string;
+  path: string;
+}
+
+// TProxiedApp is one application currently in the proxy's app list (launched
+// or otherwise captured by bundle ID), with its enable state and whether it is
+// currently running.
+export interface TProxiedApp {
+  bundleID: string;
+  name: string;
+  enabled: boolean;
+  running: boolean;
+}
+
 export interface TConnRow {
   process: string;
   source: string;

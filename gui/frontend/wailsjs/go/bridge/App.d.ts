@@ -22,13 +22,21 @@ export function KillPID(arg1:number):Promise<void>;
 
 export function LaunchApp(arg1:Array<string>):Promise<number>;
 
+export function LaunchAppBundle(arg1:string):Promise<number>;
+
 export function ListApplications():Promise<Array<bridge.Application>>;
 
+export function ListInstalledApps():Promise<Array<bridge.InstalledApp>>;
+
 export function ListProcesses():Promise<Array<bridge.ProcInfo>>;
+
+export function ListProxiedApps():Promise<Array<bridge.ProxiedApp>>;
 
 export function ListRouted():Promise<Array<number>>;
 
 export function ListRoutedApps():Promise<Array<string>>;
+
+export function RemoveApp(arg1:string):Promise<void>;
 
 export function RemoveLicense():Promise<void>;
 
@@ -39,6 +47,8 @@ export function RestartPID(arg1:number):Promise<number>;
 export function RouteApp(arg1:string):Promise<void>;
 
 export function RoutePID(arg1:number):Promise<void>;
+
+export function SetAppEnabled(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetMode(arg1:string):Promise<void>;
 

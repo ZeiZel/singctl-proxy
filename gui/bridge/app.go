@@ -281,6 +281,67 @@ func (a *App) UnrouteApp(bundleID string) error {
 	return err
 }
 
+// --- persistent per-app proxy store (Apps tab: enable/disable/remove) ---
+//
+// Unlike ListApplications/RouteApp/UnrouteApp above (a live snapshot of
+// running processes), the methods below drive the daemon's persistent
+// proxied-apps store (internal/app/appstore.go), which survives daemon
+// restarts and app relaunches. ListInstalledApps is the odd one out: it never
+// touches the daemon at all (a local /Applications scan needs no privilege).
+
+// ListInstalledApps enumerates installed macOS applications (from
+// /Applications, /System/Applications and ~/Applications) for the "add an
+// app" picker, entirely locally — no control socket round-trip.
+func (a *App) ListInstalledApps() ([]InstalledApp, error) {
+	return listInstalledApps()
+}
+
+// ListProxiedApps returns every app in the persistent proxied-apps store
+// (enabled/disabled, with Running reflecting whether it's currently open).
+func (a *App) ListProxiedApps() ([]ProxiedApp, error) {
+	reply, err := a.daemon.request("APP-LIST-PROXIED", "")
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]ProxiedApp, 0)
+	if err := json.Unmarshal([]byte(reply), &rows); err != nil {
+		return nil, fmt.Errorf("bad app-list-proxied reply: %w", err)
+	}
+	return rows, nil
+}
+
+// LaunchAppBundle launches an application chosen by its .app bundle path
+// (e.g. from ListInstalledApps), adding it to the proxied-apps store
+// (enabled); returns the child PID.
+func (a *App) LaunchAppBundle(appPath string) (int, error) {
+	reply, err := a.daemon.request("APP-LAUNCH", strings.TrimSpace(appPath))
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(strings.TrimSpace(reply))
+}
+
+// SetAppEnabled enables or disables capture of a stored app without removing
+// it from the list.
+func (a *App) SetAppEnabled(bundleID string, enabled bool) error {
+	data, err := json.Marshal(struct {
+		BundleID string `json:"bundleID"`
+		Enabled  bool   `json:"enabled"`
+	}{BundleID: strings.TrimSpace(bundleID), Enabled: enabled})
+	if err != nil {
+		return err
+	}
+	_, err = a.daemon.request("APP-SET-ENABLED", string(data))
+	return err
+}
+
+// RemoveApp deletes an app from the proxied-apps store entirely (unrouting
+// any of its PIDs currently proxied).
+func (a *App) RemoveApp(bundleID string) error {
+	_, err := a.daemon.request("APP-REMOVE", strings.TrimSpace(bundleID))
+	return err
+}
+
 // LaunchApp starts a command with its traffic routed through the proxy; returns
 // the child PID. argv[0] is the executable, the rest are arguments.
 func (a *App) LaunchApp(argv []string) (int, error) {
