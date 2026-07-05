@@ -32,9 +32,8 @@ struct StatTile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
-            Text(label.uppercased())
+            Text(label)
                 .font(.appSecondary)
-                .tracking(0.6)
                 .foregroundStyle(.secondary)
             Text(value)
                 .font(.appValue)

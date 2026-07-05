@@ -1,10 +1,10 @@
 // Card.swift
 //
-// The frosted panel every screen builds on. Background is `.regularMaterial`
-// (frosted/translucent, adapts to Light/Dark) with a subtle `Color.sPanel`
-// tint layered on top so cards stay readable over the blurred window
-// background without becoming an opaque slab, plus a hairline `Color.sBorder`
-// border and `Radius.card` corners.
+// The panel every screen builds on. Background is `.regularMaterial` (frosted
+// blur) tinted with `Color.sPanel` at 0.65 — dark enough to read as a surface
+// darker than the window background, translucent enough that the blurred
+// wallpaper still shows through. Plus a hairline `Color.sBorder` border and
+// `Radius.card` corners.
 
 import SwiftUI
 
@@ -56,8 +56,8 @@ struct Card<Content: View, Accessory: View>: View {
             }
             content
         }
-        .padding(Spacing.lg)
-        .background(Color.sPanel.opacity(0.92))
+        .padding(Spacing.cardPad)
+        .background(Color.sPanel.opacity(0.65))
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay(

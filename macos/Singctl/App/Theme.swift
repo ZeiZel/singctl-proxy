@@ -66,7 +66,7 @@ extension Color {
     // ever bottoms out at pure black/white.
     static let sBg = Color.dyn(light: 0xECEDF1, dark: 0x1E2027)
     static let sBgSoft = Color.dyn(light: 0xF3F4F7, dark: 0x24262E)
-    static let sPanel = Color.dyn(light: 0xF7F8FA, dark: 0x23262E)
+    static let sPanel = Color.dyn(light: 0xE3E5EB, dark: 0x171921)
     static let sPanelRaised = Color.dyn(light: 0xF3F4F7, dark: 0x2E323D)
     static let sBorder = Color.dyn(light: 0xDDDFE6, dark: 0x383C48)
 
@@ -114,6 +114,8 @@ enum Spacing {
     static let lg: CGFloat = 24
     static let xl: CGFloat = 32
     static let xxl: CGFloat = 48
+    /// Inner padding of `Card` (between the card edge and its content).
+    static let cardPad: CGFloat = 20
 }
 
 /// Corner-radius scale. `.card` mirrors Tailwind's `rounded-card` (12px).
@@ -130,12 +132,13 @@ enum Radius {
 /// legible scale than the system defaults. Screens/tables (later wave)
 /// reuse these same tokens.
 extension Font {
-    // Type scale — the single source of truth. Only THREE sizes (22 / 18 / 16;
-    // minimum 16). Reuse these tokens across every component/screen; never use
+    // Type scale — the single source of truth. TWO sizes only: 20 for
+    // headers/titles, 16 for everything else; extra hierarchy comes from
+    // WEIGHT. Reuse these tokens across every component/screen; never use
     // raw SwiftUI semantic fonts (they're <16 on macOS) or ad-hoc sizes.
-    static let appTitle = Font.system(size: 22, weight: .semibold)     // page / section titles
-    static let appHeadline = Font.system(size: 18, weight: .semibold)  // card / block headers
-    static let appValue = Font.system(size: 18, weight: .medium)       // numeric / stat values
+    static let appTitle = Font.system(size: 20, weight: .semibold)     // page / section titles
+    static let appHeadline = Font.system(size: 20, weight: .semibold)  // card / block headers
+    static let appValue = Font.system(size: 16, weight: .medium)       // numeric / stat values
     static let appBody = Font.system(size: 16)                         // primary text, nav items
     static let appSecondary = Font.system(size: 16)                    // secondary / dim labels (pair with .secondary color)
     static let appCaption = Font.system(size: 16)                      // hints / axis (smallest allowed)

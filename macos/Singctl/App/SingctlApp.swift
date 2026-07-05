@@ -198,9 +198,18 @@ private struct SidebarView: View {
         List(selection: $selection) {
             SwiftUI.Section {
                 ForEach(Section.allCases) { section in
-                    Label(section.title, systemImage: section.symbol)
-                        .font(.appBody)
-                        .tag(section)
+                    // Explicit HStack instead of `Label` so the sidebar list
+                    // style can't substitute its own (larger) row typography;
+                    // text is pinned to the 16px `appBody` token.
+                    HStack(spacing: Spacing.sm) {
+                        Image(systemName: section.symbol)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(Color.sTextDim)
+                            .frame(width: 20)
+                        Text(section.title)
+                            .font(.appBody)
+                    }
+                    .tag(section)
                 }
             } header: {
                 HStack(spacing: Spacing.sm) {
@@ -214,6 +223,9 @@ private struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // Ignore the system "Sidebar icon size" setting (Large would blow the
+        // rows up past the 16px type scale).
+        .environment(\.sidebarRowSize, .medium)
         .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
         .safeAreaInset(edge: .bottom) {
             Text(store.daemonRunning ? "daemon connected" : "daemon offline")

@@ -10,27 +10,38 @@ import SwiftUI
 /// ```swift
 /// Badge(text: "12 active connections")
 /// Badge(text: "Cisco active", tone: .warn)
-/// Badge(text: "Invalid license", tone: .danger)
+/// Badge(text: "Running", tone: .ok, dot: true)
 /// ```
 struct Badge: View {
     let text: String
     var tone: Tone = .dim
+    var dot: Bool = false
 
     /// - Parameters:
     ///   - text: Label text.
     ///   - tone: Fill/foreground tone; background is the tone color at low opacity.
-    init(text: String, tone: Tone = .dim) {
+    ///   - dot: Prepends a small glowing status dot in the tone color.
+    init(text: String, tone: Tone = .dim, dot: Bool = false) {
         self.text = text
         self.tone = tone
+        self.dot = dot
     }
 
     var body: some View {
-        Text(text)
-            .font(.appCaption.weight(.medium))
-            .foregroundStyle(tone.color)
-            .padding(.horizontal, Spacing.sm)
-            .padding(.vertical, 4)
-            .background(tone.color.opacity(0.15), in: Capsule())
-            .overlay(Capsule().strokeBorder(tone.color.opacity(0.3), lineWidth: 1))
+        HStack(spacing: 6) {
+            if dot {
+                Circle()
+                    .fill(tone.color)
+                    .frame(width: 7, height: 7)
+                    .shadow(color: tone.color.opacity(0.6), radius: 3)
+            }
+            Text(text)
+                .font(.appCaption.weight(.medium))
+        }
+        .foregroundStyle(tone.color)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .background(tone.color.opacity(0.14), in: Capsule())
+        .overlay(Capsule().strokeBorder(tone.color.opacity(0.35), lineWidth: 1))
     }
 }

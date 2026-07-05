@@ -48,6 +48,7 @@ struct SegmentedControl<T: Hashable>: View {
             }
         }
         .pickerStyle(.segmented)
+        .controlSize(.large)
         .labelsHidden()
         .disabled(disabled)
     }
