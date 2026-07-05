@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
 #
-# build-installers.sh — macOS-only. Signs the Wails .app and produces a notarized
-# .pkg (installs GUI + CLI + boot-start LaunchDaemon) and a drag-install .dmg.
+# build-installers.sh — macOS-only. Verifies the native Singctl.app and CLI
+# signatures and produces a notarized .pkg (installs GUI + CLI + boot-start
+# LaunchDaemon) and a drag-install .dmg.
 #
 # Inputs (built beforehand):
-#   gui/build/bin/singctl.app       (make gui)         — override with APP_PATH
-#                                    (falls back from the legacy singctl-gui.app
-#                                    name if APP_PATH is left at its default)
+#   macos/Singctl/build/Build/Products/Release/Singctl.app
+#                                    (make app-macos)   — override with APP_PATH
+#                                    The SwiftUI app that HOSTS the embedded
+#                                    ProxyExtension.systemextension (transparent
+#                                    proxy). It is signed Developer ID by
+#                                    xcodebuild at build time (see project.yml:
+#                                    manual signing, "singctl proxy DevID" /
+#                                    "singctl netext DevID" provisioning
+#                                    profiles) — this script only VERIFIES it,
+#                                    it never re-signs it (re-signing with
+#                                    --deep would blow away the nested
+#                                    extension's signature and its NE /
+#                                    system-extension entitlements).
 #   bin/singctl                     (make build)       — override with CLI_BIN
-#   packaging/macos/netextension/build/Build/Products/Release/SingctlProxy.app
-#                                    (make build-netext) — override with NETEXT_APP
-#                                    optional: when present it is staged into the
-#                                    pkg at /Applications/SingctlProxy.app so the
-#                                    installer also delivers the signed per-app
-#                                    system extension container.
 #
 # Signing / notarization are applied only when the matching env vars are set, so
 # CI can build UNSIGNED artifacts for PRs and fully signed ones on release:
-#   CODESIGN_IDENTITY   "Developer ID Application: … (S3UCF4USYC)"   — sign the .app + CLI
+#   CODESIGN_IDENTITY   "Developer ID Application: … (S3UCF4USYC)"   — sign the CLI
 #   INSTALLER_IDENTITY  "Developer ID Installer: … (S3UCF4USYC)"     — sign the .pkg
 #   NOTARY_PROFILE      keychain profile for `notarytool` (or use the AC_* trio)
 #   AC_APPLE_ID / AC_PASSWORD / AC_TEAM_ID                       — notary creds
@@ -29,32 +34,26 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VERSION="${PKG_VERSION:-$(git -C "$REPO_ROOT" describe --tags --always 2>/dev/null || echo dev)}"
 VERSION="${VERSION#v}"
 OUT_DIR="${OUT_DIR:-$REPO_ROOT/dist}"
-APP_PATH="${APP_PATH:-$REPO_ROOT/gui/build/bin/singctl-gui.app}"
-if [ ! -d "$APP_PATH" ] && [ -d "$REPO_ROOT/gui/build/bin/singctl.app" ]; then
-	# The real Wails output is singctl.app; singctl-gui.app is a legacy/expected
-	# name that doesn't actually get produced. Fall back transparently.
-	APP_PATH="$REPO_ROOT/gui/build/bin/singctl.app"
-fi
+APP_PATH="${APP_PATH:-$REPO_ROOT/macos/Singctl/build/Build/Products/Release/Singctl.app}"
 CLI_BIN="${CLI_BIN:-$REPO_ROOT/bin/singctl}"
-NETEXT_APP="${NETEXT_APP:-$REPO_ROOT/packaging/macos/netextension/build/Build/Products/Release/SingctlProxy.app}"
-ENTITLEMENTS="$REPO_ROOT/packaging/macos/singctl.entitlements"
+# packaging/macos/singctl.entitlements (old Wails GUI entitlements, incl. JIT)
+# is no longer used here — the new app is signed at build time with
+# macos/Singctl/Singctl.entitlements instead. Left in place, unused, until a
+# later phase removes gui/.
 CLI_ENTITLEMENTS="$REPO_ROOT/packaging/macos/singctl-cli.entitlements"
 PKG_ID="com.singctl.proxy"
 
 die() { echo "error: $*" >&2; exit 1; }
-[ -d "$APP_PATH" ] || die "app bundle not found: $APP_PATH (run 'make gui')"
+[ -d "$APP_PATH" ] || die "app bundle not found: $APP_PATH (run 'make app-macos')"
 [ -x "$CLI_BIN" ] || die "CLI binary not found: $CLI_BIN (run 'make build')"
 mkdir -p "$OUT_DIR"
 
-# 1) Sign the .app (hardened runtime) when an identity is provided.
-if [ -n "${CODESIGN_IDENTITY:-}" ]; then
-	echo "==> codesign app"
-	codesign --force --deep --options runtime --timestamp \
-		--entitlements "$ENTITLEMENTS" --sign "$CODESIGN_IDENTITY" "$APP_PATH"
-	codesign --verify --strict --verbose=2 "$APP_PATH"
-else
-	echo "==> skip app signing (CODESIGN_IDENTITY unset)"
-fi
+# 1) Verify the .app signature. It ships Developer ID signed already (built by
+#    xcodebuild via `make app-macos`, embedding the signed
+#    ProxyExtension.systemextension) — never re-sign it here.
+echo "==> verify app signature: $APP_PATH"
+codesign --verify --deep --strict --verbose=2 "$APP_PATH" \
+	|| die "app failed codesign verification: $APP_PATH (run 'make app-macos')"
 
 # 2) Stage the payload tree (mirrors final install locations).
 STAGE="$OUT_DIR/pkgroot"
@@ -62,21 +61,6 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/Applications" "$STAGE/usr/local/bin"
 cp -R "$APP_PATH" "$STAGE/Applications/"
 install -m 0755 "$CLI_BIN" "$STAGE/usr/local/bin/singctl"
-
-# Stage the netextension container app (SingctlProxy.app, built by
-# `make build-netext`). It ships Developer ID signed already (it embeds the
-# ProxyExtension.systemextension, which must be signed at build time to
-# activate), so we never re-sign it here — just verify the signature is
-# intact and copy it in as-is. It rides along in the same pkg and gets
-# notarized as part of the pkg submission below.
-if [ -n "${NETEXT_APP:-}" ] && [ -d "$NETEXT_APP" ]; then
-	echo "==> stage netextension app: $NETEXT_APP"
-	codesign --verify --strict --verbose=2 "$NETEXT_APP" \
-		|| die "netextension app failed codesign verification: $NETEXT_APP"
-	cp -R "$NETEXT_APP" "$STAGE/Applications/"
-else
-	echo "==> skip netextension app (NETEXT_APP not found: ${NETEXT_APP:-unset}); building GUI+CLI-only pkg"
-fi
 
 # 2b) Sign the staged CLI with the App Group entitlement so it can read/write
 #     the shared Group Container used by the Network Extension (see
@@ -93,12 +77,12 @@ fi
 # 3) Build the component pkg (postinstall installs the LaunchDaemon).
 RAW_PKG="$OUT_DIR/singctl-raw.pkg"
 PKG="$OUT_DIR/singctl-${VERSION}.pkg"
-# Force the app bundles to install to their staged location (/Applications).
+# Force the app bundle to install to its staged location (/Applications).
 # pkgbuild defaults BundleIsRelocatable=true, so the Installer relocates (or
-# skips) a bundle to wherever LaunchServices last saw it — which meant
-# SingctlProxy.app (the system-extension container) silently failed to install,
+# skips) a bundle to wherever LaunchServices last saw it — which previously
+# meant the system-extension container app could silently fail to install,
 # and the extension could never be found/activated. A component plist with
-# BundleIsRelocatable=false pins both apps to /Applications.
+# BundleIsRelocatable=false pins Singctl.app to /Applications.
 COMPONENT="$OUT_DIR/component.plist"
 pkgbuild --analyze --root "$STAGE" "$COMPONENT"
 python3 - "$COMPONENT" <<'PY'

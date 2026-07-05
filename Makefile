@@ -34,7 +34,7 @@ MANPAGE := cmd/singctl/singctl.1
 # build with sing-tun's pinned gVisor version).
 SINGBOX_TAGS := singbox with_utls with_clash_api
 
-.PHONY: build build-macos build-windows build-all build-netext \
+.PHONY: build build-macos build-windows build-all build-netext app-macos \
 	build-unlicensed build-server docker-server \
 	test test-integration tidy run lint clean install-man uninstall-man \
 	install uninstall gui gui-dev gui-test gui-reset \
@@ -107,6 +107,29 @@ else
 	@echo "build-netext is macOS-only (needs Xcode + the NetworkExtension SDK)." >&2; exit 1
 endif
 
+# Native SwiftUI macOS app (macos/Singctl/) that HOSTS the embedded
+# ProxyExtension transparent-proxy system extension — replaces the Wails
+# `gui` target in the packaging pipeline (build-netext/netextension's
+# separate SingctlProxy.app container is now folded into this app). Needs
+# Xcode + XcodeGen (`brew install xcodegen`) and an Apple Developer Team ID;
+# see macos/Singctl/build.sh for the full env knobs. Signing identity +
+# provisioning profiles are pinned in macos/Singctl/project.yml (Developer
+# ID, manual signing) so the output is already signed — no separate
+# codesign step needed afterward.
+#
+#   make app-macos                                 # uses the default team below
+#   make app-macos DEVELOPMENT_TEAM=<your-team-id>  # override for another account
+#   make app-macos NOTARY_PROFILE=<profile>         # also notarize+staple the .app
+#
+# Output: macos/Singctl/build/Build/Products/Release/Singctl.app
+NOTARY_PROFILE ?=
+app-macos:
+ifeq ($(UNAME_S),Darwin)
+	DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" NOTARY_PROFILE="$(NOTARY_PROFILE)" macos/Singctl/build.sh
+else
+	@echo "app-macos is macOS-only (needs Xcode + XcodeGen)." >&2; exit 1
+endif
+
 # Hermetic dev build: stub core, no sing-box dependency. Used by the unit suite.
 build-stub:
 	$(GO) build ./...
@@ -156,6 +179,9 @@ uninstall:
 	./scripts/install-macos.sh uninstall
 
 # --- Desktop GUI (Wails: Go + React, drives the daemon over the control socket) ---
+# SUPERSEDED for packaging by `app-macos` (macos/Singctl/, native SwiftUI) — kept
+# only until a later phase removes gui/ entirely. `make pkg-macos` no longer
+# builds or stages this target.
 # The GUI lives in its own nested module (gui/) so it never pulls sing-box into
 # the main build. No platform build tag is needed on macOS. WAILS resolves to
 # an installed `wails` (on PATH or in $(go env GOPATH)/bin), else falls back to

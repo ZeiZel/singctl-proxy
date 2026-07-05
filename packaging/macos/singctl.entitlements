@@ -5,6 +5,11 @@
   The app sandbox is intentionally OFF (like clash-verge-rev): the GUI talks to a
   privileged daemon over a Unix socket. JIT/unsigned-memory are needed by the
   WKWebView/JS engine.
+
+  UNUSED as of the native-app migration: packaging/macos/build-installers.sh now
+  packages macos/Singctl/build/.../Singctl.app, which is signed at build time
+  with macos/Singctl/Singctl.entitlements instead. This file is kept only
+  because gui/ (the old Wails GUI it belongs to) hasn't been removed yet.
 -->
 <plist version="1.0">
 <dict>
