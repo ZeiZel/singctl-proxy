@@ -1,28 +1,46 @@
 // SingctlApp.swift — @main entry point.
 //
-// One regular windowed app (NavigationSplitView: 8-section sidebar + detail)
-// that ALSO exposes a MenuBarExtra for quick glance/mode-toggle access. Shared
-// state:
+// One regular windowed app (NavigationSplitView: sidebar + detail) that ALSO
+// exposes a MenuBarExtra for quick glance/mode-toggle access. Shared state:
 //   - `LiveStore` — the 2s poll loop, injected as `.environmentObject` so any
 //     screen can `@EnvironmentObject var store: LiveStore`.
-//   - `ControlClient` — the verb-issuing actor, injected via the custom
-//     `\.controlClient` environment key (see AppModel.swift) so any screen can
-//     `@Environment(\.controlClient) var control`.
+//   - `Backend` — status/mode/keys/settings/traffic/latency/connections,
+//     injected via the custom `\.backend` environment key (see
+//     AppModel.swift) so any kept screen can `@Environment(\.backend) var
+//     backend`. One instance is constructed here and shared with `LiveStore`
+//     so both see the same underlying `DaemonBackend`/`TunnelBackend`.
 //
-// Wave-2 screens are stubbed as a generic placeholder; only Dashboard
-// (App/Screens/DashboardScreen.swift) is fully built here.
+// The sidebar's `Section` cases (Navigation.swift) already differ per build
+// flag; `DetailView` below mirrors that with matching `#if APPSTORE` guards
+// so the switch stays exhaustive in both builds.
 
 import SwiftUI
 import AppKit
 
 @main
 struct SingctlApp: App {
-    @StateObject private var store = LiveStore()
+    @StateObject private var store: LiveStore
+    private let backend: Backend
+
+    init() {
+        let backend = SingctlApp.makeBackend()
+        self.backend = backend
+        _store = StateObject(wrappedValue: LiveStore(backend: backend))
+    }
+
+    private static func makeBackend() -> Backend {
+        #if APPSTORE
+        TunnelBackend()
+        #else
+        DaemonBackend()
+        #endif
+    }
 
     var body: some Scene {
         WindowGroup("Singctl", id: "main") {
             RootView()
                 .environmentObject(store)
+                .environment(\.backend, backend)
                 .appTheme()
                 .onAppear { store.start() }
                 .onDisappear { store.stop() }
@@ -32,6 +50,7 @@ struct SingctlApp: App {
         MenuBarExtra("singctl", systemImage: "shield") {
             MenuBarContentView()
                 .environmentObject(store)
+                .environment(\.backend, backend)
                 .appTheme()
         }
         .menuBarExtraStyle(.window)
@@ -40,8 +59,8 @@ struct SingctlApp: App {
 
 // MARK: - Root window content
 
-/// The window's root: sidebar (all 8 `Section`s) + detail pane for the
-/// selected one.
+/// The window's root: sidebar (all `Section`s for this build) + detail pane
+/// for the selected one.
 private struct RootView: View {
     @EnvironmentObject private var store: LiveStore
     @State private var selection: Section? = .dashboard
@@ -55,7 +74,7 @@ private struct RootView: View {
     }
 }
 
-/// The navigation rail: "singctl" wordmark + live `StatusDot` up top, the 8
+/// The navigation rail: "singctl" wordmark + live `StatusDot` up top, the
 /// sections in the middle, and a "daemon connected/offline" footer bound to
 /// `LiveStore.daemonRunning`.
 private struct SidebarView: View {
@@ -91,8 +110,9 @@ private struct SidebarView: View {
     }
 }
 
-/// Routes to the fully-built Dashboard, or a placeholder for the 7 screens a
-/// later wave implements.
+/// Routes to the screen for the selected `Section`. The `#if APPSTORE`
+/// guards here mirror `Section`'s own conditional cases exactly (see
+/// Navigation.swift) so this switch stays exhaustive in both builds.
 private struct DetailView: View {
     let section: Section
 
@@ -101,11 +121,15 @@ private struct DetailView: View {
             switch section {
             case .dashboard:   DashboardScreen()
             case .proxies:     ProxiesScreen()
+            #if !APPSTORE
             case .connections: ConnectionsScreen()
             case .apps:        AppsScreen()
+            #endif
             case .keys:        KeysScreen()
+            #if !APPSTORE
             case .console:     ConsoleScreen()
             case .license:     LicenseScreen()
+            #endif
             case .settings:    SettingsScreen()
             }
         }
@@ -120,7 +144,7 @@ private struct DetailView: View {
 /// actions ("Open window" / "Stop daemon").
 private struct MenuBarContentView: View {
     @EnvironmentObject private var store: LiveStore
-    @Environment(\.controlClient) private var control
+    @Environment(\.backend) private var backend
     @Environment(\.openWindow) private var openWindow
 
     @State private var isApplyingMode = false
@@ -163,7 +187,7 @@ private struct MenuBarContentView: View {
                 openWindow(id: "main")
             }
             AppButton("Stop daemon", kind: .danger, icon: "power") {
-                Task { try? await control.stop() }
+                Task { try? await backend.stop() }
             }
         }
         .padding(Spacing.md)
@@ -177,7 +201,7 @@ private struct MenuBarContentView: View {
         Task {
             defer { isApplyingMode = false }
             do {
-                try await control.setMode(mode)
+                try await backend.setMode(mode)
             } catch {
                 modeError = error.localizedDescription
             }

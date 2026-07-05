@@ -1,7 +1,9 @@
 // KeysScreen.swift
 //
-// Mirrors gui/frontend's Keys page (KeysManager): CRUD over the daemon's
-// loaded VLESS keys. KEYS-GET returns raw `vless://` links (masking is a UI
+// Mirrors gui/frontend's Keys page (KeysManager): CRUD over the loaded VLESS
+// keys, via `Backend` (`DaemonBackend`'s KEYS-GET/-ADD/-REMOVE/-RENAME verbs
+// in the Developer-ID build, `TunnelBackend`'s App-Group `config.json` in the
+// App Store build). `keysGet()` returns raw `vless://` links (masking is a UI
 // concern, not a wire concept — see ControlClient.keysGet's doc comment), so
 // this screen derives display name + masked form locally, mirroring
 // gui/bridge/types.go's maskKey exactly.
@@ -9,7 +11,7 @@
 import SwiftUI
 
 struct KeysScreen: View {
-    @Environment(\.controlClient) private var control
+    @Environment(\.backend) private var backend
 
     /// One row derived from a raw `vless://` link returned by KEYS-GET.
     private struct KeyRow: Identifiable {
@@ -154,7 +156,7 @@ struct KeysScreen: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            let links = try await control.keysGet()
+            let links = try await backend.keysGet()
             keys = links.enumerated().map { index, link in
                 KeyRow(index: index, name: Self.deriveName(link, index: index), masked: Self.maskKey(link))
             }
@@ -172,7 +174,7 @@ struct KeysScreen: View {
         Task {
             defer { isMutating = false }
             do {
-                try await control.keysAdd(link)
+                try await backend.keysAdd(link)
                 newLink = ""
                 await load()
             } catch {
@@ -191,7 +193,7 @@ struct KeysScreen: View {
         Task {
             defer { isMutating = false }
             do {
-                try await control.keysRename(target.index, name)
+                try await backend.keysRename(target.index, name)
                 await load()
             } catch {
                 errorMessage = error.localizedDescription
@@ -207,7 +209,7 @@ struct KeysScreen: View {
         Task {
             defer { isMutating = false }
             do {
-                try await control.keysRemove(target.index)
+                try await backend.keysRemove(target.index)
                 await load()
             } catch {
                 errorMessage = error.localizedDescription

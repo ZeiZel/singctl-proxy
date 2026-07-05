@@ -1,11 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- PacketTunnel.appex entitlements — the App Store SKU's NEPacketTunnelProvider,
+     embedded in SingctlAppStore.app. Sandboxed like the container app; needs
+     network.server (in addition to network.client) because it runs the
+     sing-box core over the tunnel fd. Shares the same App Group as
+     SingctlAppStore.entitlements so it can read the config.json the container
+     app writes. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- App Store container app: sandboxed, may create a packet-tunnel VPN. -->
 <plist version="1.0">
 <dict>
     <key>com.apple.security.app-sandbox</key>
     <true/>
     <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
     <true/>
     <key>com.apple.developer.networking.networkextension</key>
     <array>

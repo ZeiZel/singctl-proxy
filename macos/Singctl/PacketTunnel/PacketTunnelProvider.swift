@@ -1,13 +1,16 @@
-// PacketTunnelProvider.swift — App Store SKU VPN datapath (SCAFFOLD, untested).
+// PacketTunnelProvider.swift — App Store SKU VPN datapath (STUB, still to be
+// wired to a real datapath).
 //
-// An NEPacketTunnelProvider that runs the sing-box core (via the gomobile-built
-// Libbox) over the tunnel. Mirrors sing-box's official Apple app. The sing-box
-// config JSON is built by the Go `mobile/` shim from the user's VLESS key(s) +
-// settings (reusing internal/vless + internal/singbox) and stored in the App
-// Group container by the SwiftUI app. See ../../../../docs/appstore-sku.md.
+// An NEPacketTunnelProvider that will run the sing-box core (via the
+// gomobile-built Libbox) over the tunnel. Mirrors sing-box's official Apple
+// app. The sing-box config JSON is built by the Go `mobile/` shim from the
+// user's VLESS key(s) + settings (reusing internal/vless + internal/singbox)
+// and stored in the App Group container by the SwiftUI app (App/). See
+// ../../../docs/appstore-sku.md.
 //
-// This file does not compile here (no NetworkExtension/Libbox SDK in the Go/Linux
-// container). Complete + build + sign on a Mac with Libbox.xcframework present.
+// Part of the unified Singctl.xcodeproj (macos/Singctl/project.yml), built by
+// the PacketTunnel app-extension target embedded in SingctlAppStore.app. This
+// compiles today; the real Libbox datapath is a later step (see TODOs below).
 
 import Foundation
 import NetworkExtension

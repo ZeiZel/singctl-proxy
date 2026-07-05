@@ -226,6 +226,24 @@ struct ClashConnections: Codable, Equatable {
     var downloadTotal: Int64
     var uploadTotal: Int64
     var connections: [ClashConn]
+
+    /// Converts connections into table rows. Mirrors bridge.connRows (also
+    /// duplicated by ClashClient.connRows, kept for source compatibility) —
+    /// defined here rather than solely on `ClashClient` so `LiveStore` (kept
+    /// in both the Dev-ID and App Store builds) can derive `[ConnRow]` from
+    /// whatever `Backend.connections()` returns without depending on
+    /// `ClashClient`, which is excluded from the App Store target.
+    var connRows: [ConnRow] {
+        connections.map { c in
+            ConnRow(
+                process: c.metadata.process,
+                source: c.metadata.source,
+                dest: c.metadata.dest,
+                network: c.metadata.network,
+                chain: c.chains.joined(separator: "→")
+            )
+        }
+    }
 }
 
 /// One latency probe result, from ProxyState.History.

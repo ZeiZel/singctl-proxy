@@ -1,25 +1,28 @@
 // DashboardScreen.swift
 //
 // The flagship screen — reference implementation for how a screen wires up
-// to `LiveStore` (read-only live state) and `ControlClient` (verb calls) via
-// the environment. Wave-2 screens should follow this same shape:
+// to `LiveStore` (read-only live state) and `Backend` (verb calls) via the
+// environment:
 //   @EnvironmentObject private var store: LiveStore
-//   @Environment(\.controlClient) private var control
+//   @Environment(\.backend) private var backend
 //
 // Layout: warning banners (daemon offline / invalid license) -> mode switch
 // -> stat grid -> traffic chart. Status badges live in the toolbar next to
-// the native navigation title.
+// the native navigation title. The license banner is Developer-ID only (App
+// Store apps don't self-license — see LICENSATION.md) — guarded `#if !APPSTORE`.
 
 import SwiftUI
 import Charts
 
 struct DashboardScreen: View {
     @EnvironmentObject private var store: LiveStore
-    @Environment(\.controlClient) private var control
+    @Environment(\.backend) private var backend
 
     @State private var isApplyingMode = false
     @State private var modeError: String?
+    #if !APPSTORE
     @State private var license: LicenseStatus?
+    #endif
 
     private let modeOptions: [SegmentedOption<String>] = [
         SegmentedOption("off", "Off"),
@@ -41,6 +44,7 @@ struct DashboardScreen: View {
                     }
                 }
 
+                #if !APPSTORE
                 if let license, !license.valid {
                     GroupBox {
                         Label(licenseMessage(license), systemImage: "exclamationmark.octagon.fill")
@@ -48,6 +52,7 @@ struct DashboardScreen: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
+                #endif
 
                 modeSection
                 statGrid
@@ -67,7 +72,9 @@ struct DashboardScreen: View {
                 )
             }
         }
+        #if !APPSTORE
         .task { license = try? await LicenseService.status() }
+        #endif
     }
 
     // MARK: - Mode switch
@@ -101,7 +108,7 @@ struct DashboardScreen: View {
         Task {
             defer { isApplyingMode = false }
             do {
-                try await control.setMode(mode)
+                try await backend.setMode(mode)
             } catch {
                 modeError = error.localizedDescription
             }
@@ -154,11 +161,13 @@ struct DashboardScreen: View {
         }
     }
 
+    #if !APPSTORE
     private func licenseMessage(_ status: LicenseStatus) -> String {
         status.reason.isEmpty
             ? "No valid license — open the License section to activate."
             : "No valid license — \(status.reason)"
     }
+    #endif
 }
 
 /// Dual-area chart (upload = accent, download = ok) over `LiveStore`'s

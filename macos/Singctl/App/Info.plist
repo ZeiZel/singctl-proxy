@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- App/Info.plist — the Singctl.app that hosts and activates the
-     ProxyExtension system extension. Unlike the old ContainerApp scaffold,
-     this is a regular windowed app (NOT LSUIElement): it has a normal
-     window AND a MenuBarExtra menu-bar item. -->
+<!-- App/Info.plist — shared by both the Singctl (Developer ID) and
+     SingctlAppStore (App Store SKU) application targets, which both build
+     from the same App/ source tree (see ../project.yml). This is a regular
+     windowed app (NOT LSUIElement): it has a normal window AND a
+     MenuBarExtra menu-bar item. CFBundleIdentifier uses the
+     PRODUCT_BUNDLE_IDENTIFIER build setting (com.singctl.proxy for Singctl,
+     com.singctl.appstore for SingctlAppStore) rather than a literal value, so
+     one Info.plist serves both targets. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -11,7 +15,7 @@
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
-    <string>com.singctl.proxy</string>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
     <key>CFBundleName</key>
     <string>Singctl</string>
     <key>CFBundlePackageType</key>

@@ -34,7 +34,7 @@ MANPAGE := cmd/singctl/singctl.1
 # build with sing-tun's pinned gVisor version).
 SINGBOX_TAGS := singbox with_utls with_clash_api
 
-.PHONY: build build-macos build-windows build-all app-macos \
+.PHONY: build build-macos build-windows build-all app-macos appstore \
 	build-unlicensed build-server docker-server \
 	test test-integration tidy run lint clean install-man uninstall-man \
 	install uninstall \
@@ -109,6 +109,44 @@ ifeq ($(UNAME_S),Darwin)
 	DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" NOTARY_PROFILE="$(NOTARY_PROFILE)" macos/Singctl/build.sh
 else
 	@echo "app-macos is macOS-only (needs Xcode + XcodeGen)." >&2; exit 1
+endif
+
+# App Store SKU (flagged SingctlAppStore target in macos/Singctl/project.yml,
+# SWIFT_ACTIVE_COMPILATION_CONDITIONS=APPSTORE): a sandboxed container app +
+# NEPacketTunnelProvider appex (PacketTunnel), built from the SAME
+# macos/Singctl/App/ sources as `make app-macos` rather than a separate
+# project. See docs/appstore-sku.md for the full architecture/runbook.
+#
+# NOTE: this archives and exports today, but the PacketTunnel appex is still a
+# stub (macos/Singctl/PacketTunnel/PacketTunnelProvider.swift) — a real VPN
+# datapath needs `gomobile bind` to produce Libbox.xcframework (the sing-box
+# core wrapped for Swift) and wiring it into the appex's startTunnel, which is
+# NOT done by this target yet.
+#
+#   make appstore                                 # uses the default team below
+#   make appstore DEVELOPMENT_TEAM=<your-team-id>  # override for another account
+#
+# Output: dist/SingctlAppStore.ipa (App Store Connect upload package) — see
+# macos/Singctl/ExportOptions-appstore.plist for the export method/team.
+appstore:
+ifeq ($(UNAME_S),Darwin)
+	cd macos/Singctl && xcodegen generate
+	cd macos/Singctl && xcodebuild \
+		-scheme SingctlAppStore \
+		-configuration Release \
+		-derivedDataPath ./build \
+		-archivePath build/SingctlAppStore.xcarchive \
+		-allowProvisioningUpdates \
+		DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" \
+		archive
+	mkdir -p dist
+	cd macos/Singctl && xcodebuild -exportArchive \
+		-archivePath build/SingctlAppStore.xcarchive \
+		-exportPath ../../dist \
+		-exportOptionsPlist ExportOptions-appstore.plist \
+		-allowProvisioningUpdates
+else
+	@echo "appstore is macOS-only (needs Xcode + XcodeGen)." >&2; exit 1
 endif
 
 # Hermetic dev build: stub core, no sing-box dependency. Used by the unit suite.

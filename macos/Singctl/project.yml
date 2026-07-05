@@ -69,10 +69,79 @@ targets:
         PROVISIONING_PROFILE_SPECIFIER: "singctl netext DevID"
         ENABLE_HARDENED_RUNTIME: YES
 
+  # --- App Store SKU (flagged via SWIFT_ACTIVE_COMPILATION_CONDITIONS=APPSTORE) ---
+  # Reuses the SAME App/ source tree as Singctl above (sandboxed, no per-app
+  # routing/system-extension code — see docs/appstore-sku.md). Excludes the
+  # screens/services that only make sense for the Developer-ID daemon model
+  # (per-app picker, Clash/control-socket clients, license activation UI);
+  # the App/ Swift sources themselves gate the rest behind #if APPSTORE (owned
+  # by a parallel change, not this file). Embeds the PacketTunnel appex in
+  # place of ProxyExtension.
+  SingctlAppStore:
+    type: application
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: App
+        excludes:
+          - "Screens/AppsScreen.swift"
+          - "Screens/ConnectionsScreen.swift"
+          - "Screens/ConsoleScreen.swift"
+          - "Screens/LicenseScreen.swift"
+          - "Core/ControlClient.swift"
+          - "Core/ClashClient.swift"
+          - "Core/InstalledApps.swift"
+          - "Core/InstanceDiscovery.swift"
+          - "Core/LicenseService.swift"
+    settings:
+      base:
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: APPSTORE
+        PRODUCT_BUNDLE_IDENTIFIER: com.singctl.appstore
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: SingctlAppStore.entitlements
+        # App Store distribution signing: automatic for now (App Store Connect
+        # handles provisioning); revisit if/when a Developer-ID-style manual
+        # profile is needed.
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: S3UCF4USYC
+        ENABLE_APP_SANDBOX: YES
+        ENABLE_HARDENED_RUNTIME: YES
+    dependencies:
+      - target: PacketTunnel
+        embed: true
+
+  # NEPacketTunnelProvider appex for the App Store SKU: runs sing-box (Libbox)
+  # over the tunnel fd. Currently a compiling stub (macos/Singctl/PacketTunnel/
+  # PacketTunnelProvider.swift) — the real Libbox datapath is a later step
+  # (needs Libbox.xcframework from `gomobile bind`, see docs/appstore-sku.md).
+  PacketTunnel:
+    type: app-extension
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - PacketTunnel
+    settings:
+      base:
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: APPSTORE
+        PRODUCT_BUNDLE_IDENTIFIER: com.singctl.appstore.tunnel
+        INFOPLIST_FILE: PacketTunnel/Info.plist
+        CODE_SIGN_ENTITLEMENTS: PacketTunnel.entitlements
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: S3UCF4USYC
+        ENABLE_APP_SANDBOX: YES
+        ENABLE_HARDENED_RUNTIME: YES
+
 schemes:
   Singctl:
     build:
       targets:
         Singctl: all
+    run:
+      config: Debug
+
+  SingctlAppStore:
+    build:
+      targets:
+        SingctlAppStore: all
     run:
       config: Debug

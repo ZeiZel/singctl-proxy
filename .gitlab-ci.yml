@@ -155,6 +155,30 @@ release:macos:
       - out/
     expire_in: 1 week
 
+release:appstore:
+  stage: release
+  tags:
+    - macos
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+      when: manual
+  allow_failure: true
+  script:
+    # App Store SKU (see docs/appstore-sku.md): sandboxed container app +
+    # NEPacketTunnelProvider appex, built from macos/Singctl/project.yml's
+    # flagged SingctlAppStore/PacketTunnel targets (SAME App/ sources as
+    # release:macos's Singctl target, gated by SWIFT_ACTIVE_COMPILATION_
+    # CONDITIONS=APPSTORE). Automatic signing via App Store Connect, so no
+    # DEVELOPMENT_TEAM override is needed beyond the Makefile default.
+    # Manual + allow_failure: the PacketTunnel appex is still a stub (no
+    # Libbox datapath yet — see the Makefile's `appstore` target), so this
+    # lane is not expected to produce a submittable build yet.
+    - make appstore
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 1 week
+
 release:publish:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest

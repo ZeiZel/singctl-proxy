@@ -2,7 +2,14 @@
 //
 // The live-data hub for the SwiftUI app: a 2s poll loop mirroring
 // gui/bridge/poller.go, but pull-based (published properties instead of Wails
-// events). Resilient to a missing/restarted daemon — see tick() below.
+// events). Talks to the injected `Backend` (`DaemonBackend` in the
+// Developer-ID build, `TunnelBackend` in the App Store build — see
+// Backend.swift) so the same loop drives both build flavors identically.
+//
+// Console output (`ConsoleScreen`) isn't part of the `Backend` contract — it
+// only exists in the Developer-ID build, and isn't something a kept screen
+// needs — so it's polled directly over `ControlClient` under `#if !APPSTORE`,
+// exactly as before.
 
 import Foundation
 
@@ -23,6 +30,7 @@ final class LiveStore: ObservableObject {
     @Published private(set) var latency: Latency = .empty
 
     /// Rolling window of the last maxConsoleLines captured stdout/stderr lines.
+    /// Only ever populated in the Developer-ID build (see tick() below).
     @Published private(set) var console: [ConsoleLine] = []
 
     // MARK: - Tuning (mirrors poller.go's pollInterval / rolling-window sizes)
@@ -33,15 +41,32 @@ final class LiveStore: ObservableObject {
 
     // MARK: - Internals
 
-    private let control = ControlClient()
+    private let backend: Backend
     private var loopTask: Task<Void, Never>?
 
     private var lastUp: Int64 = 0
     private var lastDown: Int64 = 0
     private var haveLastTraffic = false
-    private var lastConsoleID = 0
 
-    init() {}
+    #if !APPSTORE
+    // Console polling is a Dev-ID-only concern and isn't part of the Backend
+    // contract (ConsoleScreen doesn't exist in the App Store build), so it
+    // talks straight to ControlClient exactly as before.
+    private let control = ControlClient()
+    private var lastConsoleID = 0
+    #endif
+
+    /// `backend` defaults per build flag so call sites that don't care (e.g.
+    /// previews) get a working instance; `SingctlApp` passes its one shared
+    /// `Backend` explicitly so LiveStore and the injected `\.backend`
+    /// environment value are the same object.
+    init(backend: Backend? = nil) {
+        #if APPSTORE
+        self.backend = backend ?? TunnelBackend()
+        #else
+        self.backend = backend ?? DaemonBackend()
+        #endif
+    }
 
     /// Starts the 2s poll loop (idempotent — calling start() while already
     /// running is a no-op).
@@ -66,25 +91,23 @@ final class LiveStore: ObservableObject {
 
     /// One poll cycle. Mirrors poller.go's tick(): status is always attempted
     /// (so the UI reflects daemon presence/mode); everything else is best-
-    /// effort and only attempted while a daemon is live and Clash-enabled.
+    /// effort. `Backend.traffic()`/`.connections()`/`.latency()` each fail
+    /// (and are silently skipped via `try?`) exactly when the pre-`Backend`
+    /// code used to skip them — see DaemonBackend's doc comments for the
+    /// Dev-ID gating this preserves.
     private func tick() async {
-        guard let endpoint = InstanceDiscovery.currentEndpoint() else {
-            daemonRunning = false
-            haveLastTraffic = false
-            return
-        }
-
         do {
-            status = try await control.status()
+            status = try await backend.status()
             daemonRunning = true
         } catch {
-            // Daemon vanished (or the socket is stale) between discovery and
-            // the STATUS round trip — report absent, keep the last snapshot.
+            // No live daemon/tunnel (or it vanished between polls): report
+            // absent, keep the last snapshot.
             daemonRunning = false
             haveLastTraffic = false
             return
         }
 
+        #if !APPSTORE
         // Console output over the control socket — independent of Clash.
         if let lines = try? await control.consolePoll(since: lastConsoleID), !lines.isEmpty {
             for line in lines where line.id > lastConsoleID {
@@ -95,13 +118,12 @@ final class LiveStore: ObservableObject {
                 console.removeFirst(console.count - maxConsoleLines)
             }
         }
-
-        guard endpoint.clashEnabled else { return }
+        #endif
 
         // Cumulative byte counters -> per-second rate, guarded against counter
         // resets (e.g. a live core reload restarts the counters) — mirrors
         // poller.go's lastUp/lastDown/haveLast guard exactly.
-        if let traffic = try? await control.traffic() {
+        if let traffic = try? await backend.traffic() {
             if haveLastTraffic {
                 let secs = max(pollInterval, 1)
                 let upRate = traffic.up >= lastUp ? Double(traffic.up - lastUp) / secs : 0
@@ -116,15 +138,13 @@ final class LiveStore: ObservableObject {
             haveLastTraffic = true
         }
 
-        let clash = ClashClient(externalController: endpoint.clashAPIAddr, secret: endpoint.clashSecret)
-
-        if let conns = try? await clash.connections() {
-            connections = ClashClient.connRows(from: conns)
+        if let conns = try? await backend.connections() {
+            connections = conns.connRows
             totalUp = conns.uploadTotal
             totalDown = conns.downloadTotal
         }
 
-        if let proxies = try? await clash.proxies(), let lat = ClashClient.latency(from: proxies) {
+        if let lat = try? await backend.latency() {
             latency = lat
         }
     }

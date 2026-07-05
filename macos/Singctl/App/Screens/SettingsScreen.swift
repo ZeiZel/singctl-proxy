@@ -1,13 +1,19 @@
 // SettingsScreen.swift
 //
-// Daemon settings, read/edited/applied through `ControlClient.settingsGet()`/
-// `.settingsSet(_)`. Also hosts the destructive "Stop daemon" action
-// (`ControlClient.stop()`), gated behind a confirmation dialog.
+// Settings, read/edited/applied through `Backend.settingsGet()`/`.settingsSet(_)`.
+//
+// Developer-ID build: also hosts the SOCKS port + Clash API fields (daemon-
+// only concepts — there is no SOCKS listener or Clash API in the App Store
+// build's sandboxed tunnel) and the destructive "Stop daemon" action
+// (`Backend.stop()`), gated behind a confirmation dialog.
+//
+// App Store build: those daemon-only bits are hidden (`#if !APPSTORE`); in
+// their place, a "VPN" toggle drives the tunnel on/off via `Backend`.
 
 import SwiftUI
 
 struct SettingsScreen: View {
-    @Environment(\.controlClient) private var control
+    @Environment(\.backend) private var backend
 
     @State private var isLoading = true
     @State private var loadError: String?
@@ -24,9 +30,15 @@ struct SettingsScreen: View {
     @State private var applyMessage: String?
     @State private var applyIsError = false
 
+    #if !APPSTORE
     @State private var isStopping = false
     @State private var showStopConfirm = false
     @State private var stopError: String?
+    #else
+    @State private var vpnOn = false
+    @State private var isTogglingVPN = false
+    @State private var vpnError: String?
+    #endif
 
     var body: some View {
         Form {
@@ -34,17 +46,24 @@ struct SettingsScreen: View {
             if isLoading {
                 loadingSection
             } else {
+                #if !APPSTORE
                 proxySection
                 clashSection
+                #endif
                 urlTestSection
                 profileSection
                 applySection
+                #if APPSTORE
+                vpnSection
+                #else
                 dangerSection
+                #endif
             }
         }
         .formStyle(.grouped)
         .navigationTitle("Settings")
         .task { await load() }
+        #if !APPSTORE
         .confirmationDialog(
             "Stop the singctl daemon?", isPresented: $showStopConfirm, titleVisibility: .visible
         ) {
@@ -53,6 +72,7 @@ struct SettingsScreen: View {
         } message: {
             Text("This disconnects the proxy and stops routing traffic until the daemon is started again.")
         }
+        #endif
     }
 
     // MARK: - Sections
@@ -75,6 +95,7 @@ struct SettingsScreen: View {
         }
     }
 
+    #if !APPSTORE
     private var proxySection: some View {
         SwiftUI.Section("Proxy") {
             LabeledContent("SOCKS port") {
@@ -98,6 +119,7 @@ struct SettingsScreen: View {
             .disabled(!clashEnabled)
         }
     }
+    #endif
 
     private var urlTestSection: some View {
         SwiftUI.Section("URL Test") {
@@ -146,6 +168,7 @@ struct SettingsScreen: View {
         }
     }
 
+    #if !APPSTORE
     @ViewBuilder
     private var dangerSection: some View {
         SwiftUI.Section {
@@ -158,6 +181,21 @@ struct SettingsScreen: View {
             .disabled(isStopping)
         }
     }
+    #else
+    private var vpnSection: some View {
+        SwiftUI.Section("VPN") {
+            Toggle("VPN", isOn: vpnBinding)
+                .disabled(isTogglingVPN)
+            if let vpnError {
+                Text(vpnError).font(.callout).foregroundStyle(Color.sDanger)
+            }
+        }
+    }
+
+    private var vpnBinding: Binding<Bool> {
+        Binding(get: { vpnOn }, set: toggleVPN)
+    }
+    #endif
 
     // MARK: - Actions
 
@@ -165,12 +203,17 @@ struct SettingsScreen: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            let settings = try await control.settingsGet()
+            let settings = try await backend.settingsGet()
             populate(from: settings)
             loadError = nil
         } catch {
             loadError = error.localizedDescription
         }
+        #if APPSTORE
+        if let status = try? await backend.status() {
+            vpnOn = !status.mode.isEmpty && status.mode != "off"
+        }
+        #endif
     }
 
     private func populate(from settings: Settings) {
@@ -211,7 +254,7 @@ struct SettingsScreen: View {
         Task {
             defer { isApplying = false }
             do {
-                try await control.settingsSet(newSettings)
+                try await backend.settingsSet(newSettings)
                 applyIsError = false
                 applyMessage = "Applied."
             } catch {
@@ -221,16 +264,36 @@ struct SettingsScreen: View {
         }
     }
 
+    #if !APPSTORE
     private func stopDaemon() {
         isStopping = true
         stopError = nil
         Task {
             defer { isStopping = false }
             do {
-                try await control.stop()
+                try await backend.stop()
             } catch {
                 stopError = error.localizedDescription
             }
         }
     }
+    #else
+    private func toggleVPN(_ on: Bool) {
+        isTogglingVPN = true
+        vpnError = nil
+        Task {
+            defer { isTogglingVPN = false }
+            do {
+                if on {
+                    try await backend.setMode("vpn")
+                } else {
+                    try await backend.stop()
+                }
+                vpnOn = on
+            } catch {
+                vpnError = error.localizedDescription
+            }
+        }
+    }
+    #endif
 }

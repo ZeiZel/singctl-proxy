@@ -82,17 +82,20 @@ the core).
 - The **Network Extensions** capability (packet-tunnel-provider) must be requested
   from and granted by Apple on the developer account before submission.
 
-Scaffold lives in [`../packaging/macos/appstore/`](../packaging/macos/appstore/)
-(XcodeGen `project.yml`, both entitlements, a `PacketTunnelProvider.swift`
-skeleton) — all marked SCAFFOLD, to be completed on a Mac.
+Scaffold lives in [`../macos/Singctl/`](../macos/Singctl/) — the App Store SKU
+is a flagged target (`SingctlAppStore`, `SWIFT_ACTIVE_COMPILATION_CONDITIONS=
+APPSTORE`) in the unified `project.yml`, with the `PacketTunnel` appex sources
+under `macos/Singctl/PacketTunnel/` (both entitlements, a
+`PacketTunnelProvider.swift` skeleton) — all marked SCAFFOLD, to be completed
+on a Mac.
 
 ## Build / submit runbook (Mac)
 
 1. `go install golang.org/x/mobile/cmd/gomobile@latest && gomobile init`.
 2. Build the core library:
-   `gomobile bind -target=ios,macos -o packaging/macos/appstore/Libbox.xcframework ./mobile`
+   `gomobile bind -target=ios,macos -o macos/Singctl/Libbox.xcframework ./mobile`
    (or vendor sing-box's prebuilt Libbox and bind only the `mobile/` shim).
-3. `cd packaging/macos/appstore && xcodegen generate`.
+3. `cd macos/Singctl && xcodegen generate`.
 4. Open in Xcode (or `xcodebuild archive`), set the Team ID, ensure the Network
    Extensions capability + App Group are configured on both targets.
 5. Archive → validate → upload to **App Store Connect** (`xcodebuild -exportArchive`

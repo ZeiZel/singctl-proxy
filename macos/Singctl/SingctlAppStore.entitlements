@@ -1,13 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- SingctlAppStore.app entitlements — the sandboxed App Store SKU container
+     app. Unlike Singctl.entitlements (Developer ID, no sandbox, system
+     extension), this app is fully sandboxed and drives a NEPacketTunnelProvider
+     appex (PacketTunnel) via NETunnelProviderManager instead of installing a
+     system extension. The App Group is separate from the Developer-ID SKU's
+     (group.com.singctl.proxy) so the two SKUs never share state. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Packet Tunnel Provider appex: sandboxed, packet-tunnel-provider + App Group. -->
 <plist version="1.0">
 <dict>
     <key>com.apple.security.app-sandbox</key>
     <true/>
     <key>com.apple.security.network.client</key>
-    <true/>
-    <key>com.apple.security.network.server</key>
     <true/>
     <key>com.apple.developer.networking.networkextension</key>
     <array>
