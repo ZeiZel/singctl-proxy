@@ -4,6 +4,10 @@
 <dict>
     <key>CFBundleDisplayName</key>
     <string>singctl Tunnel</string>
+    <key>CFBundleName</key>
+    <string>PacketTunnel</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
     <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
     <key>CFBundlePackageType</key>
