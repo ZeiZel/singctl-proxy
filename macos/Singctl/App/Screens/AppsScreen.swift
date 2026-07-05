@@ -19,6 +19,7 @@ import SwiftUI
 struct AppsScreen: View {
     @EnvironmentObject private var store: LiveStore
     @Environment(\.controlClient) private var control
+    @ObservedObject private var activator = SystemExtensionActivator.shared
 
     // MARK: - "Launch app through proxy" (arbitrary command)
 
@@ -49,6 +50,7 @@ struct AppsScreen: View {
         VStack(alignment: .leading, spacing: Spacing.md) {
             SectionHeader(title: "Apps", subtitle: "Route individual applications or commands through the proxy")
 
+            extensionCard
             launchCommandCard
             installedAppsCard
 
@@ -63,6 +65,64 @@ struct AppsScreen: View {
         .searchable(text: $installedSearch, prompt: "Filter installed apps")
         .task { await loadInstalledApps() }
         .task { await refreshLoop() }
+    }
+
+    // MARK: - System extension status / activation
+
+    /// Per-app routing needs the ProxyExtension system extension activated;
+    /// this card shows where that stands and lets the user (re)request
+    /// activation. On MDM-managed Macs the exact failure text here is the
+    /// evidence of whether the Team ID is allowlisted.
+    private var extensionCard: some View {
+        Card(title: "System extension") {
+            statusBadge
+        } content: {
+            VStack(alignment: .leading, spacing: Spacing.md) {
+                Text("Per-app routing runs through the ProxyExtension network system extension. Install it once, then approve it in System Settings → General → Login Items & Extensions.")
+                    .font(.appSecondary)
+                    .foregroundStyle(Color.sTextDim)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: Spacing.sm) {
+                    AppButton(
+                        activator.status == .requesting ? "Requesting…" : "Install extension",
+                        kind: .primary,
+                        icon: "puzzlepiece.extension"
+                    ) {
+                        activator.activate()
+                    }
+                    .disabled(activator.status == .requesting)
+
+                    if activator.status == .needsUserApproval {
+                        AppButton("Open System Settings", kind: .ghost, icon: "gearshape") {
+                            NSWorkspace.shared.open(
+                                URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!
+                            )
+                        }
+                    }
+                }
+
+                if case .failed(let message) = activator.status {
+                    Text(message)
+                        .font(.appSecondary)
+                        .foregroundStyle(Color.sDanger)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private var statusBadge: Badge {
+        switch activator.status {
+        case .activated:
+            return Badge(text: activator.status.label, tone: .ok, dot: true)
+        case .activatedPendingReboot, .needsUserApproval, .requesting:
+            return Badge(text: activator.status.label, tone: .warn, dot: true)
+        case .failed:
+            return Badge(text: "Failed", tone: .danger, dot: true)
+        case .idle:
+            return Badge(text: activator.status.label, tone: .dim)
+        }
     }
 
     // MARK: - Launch app through proxy

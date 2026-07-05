@@ -57,7 +57,18 @@ struct SingctlApp: App {
                 .environmentObject(store)
                 .environment(\.backend, backend)
                 .appTheme()
-                .onAppear { store.start() }
+                .onAppear {
+                    store.start()
+                    #if !APPSTORE
+                    // Headless/scripted activation: `open -a Singctl --args
+                    // --activate-netext` submits the system-extension
+                    // activation request without touching the UI (result
+                    // still lands in AppsScreen's status card + os_log).
+                    if CommandLine.arguments.contains("--activate-netext") {
+                        SystemExtensionActivator.shared.activate()
+                    }
+                    #endif
+                }
                 .onDisappear { store.stop() }
         }
         .windowStyle(.hiddenTitleBar)
