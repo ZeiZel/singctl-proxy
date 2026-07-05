@@ -94,7 +94,7 @@ struct ConsoleScreen: View {
                 .foregroundStyle(color(for: line))
                 .textSelection(.enabled)
         }
-        .font(.system(.footnote, design: .monospaced))
+        .font(.system(.callout, design: .monospaced))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 

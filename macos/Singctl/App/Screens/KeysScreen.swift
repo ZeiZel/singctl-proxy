@@ -82,7 +82,7 @@ struct KeysScreen: View {
                     }
                 }
                 Text("Multiple keys form an automatic latency-tested failover group (priority follows order).")
-                    .font(.caption)
+                    .font(.callout)
                     .foregroundStyle(Color.sTextFaint)
             }
         }
@@ -101,20 +101,21 @@ struct KeysScreen: View {
                 Table(keys) {
                     TableColumn("#") { row in
                         Text("\(row.index + 1)")
+                            .font(.body)
                             .foregroundStyle(Color.sTextDim)
                     }
-                    .width(28)
+                    .width(32)
 
                     TableColumn("Name") { row in
                         Text(row.name)
-                            .font(.subheadline)
+                            .font(.body)
                             .foregroundStyle(Color.sText)
                     }
                     .width(min: 100, ideal: 160)
 
                     TableColumn("Key") { row in
                         Text(row.masked)
-                            .font(.system(.body, design: .monospaced))
+                            .font(.system(.callout, design: .monospaced))
                             .foregroundStyle(Color.sTextDim)
                     }
 
@@ -131,6 +132,7 @@ struct KeysScreen: View {
                     }
                     .width(min: 160, ideal: 180)
                 }
+                .controlSize(.large)
             }
         }
         .frame(maxHeight: .infinity)

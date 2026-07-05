@@ -9,8 +9,20 @@
 // resolve to changed.
 
 import SwiftUI
+import AppKit
 
 // MARK: - Palette
+
+extension NSColor {
+    /// Parses a "#RRGGBB" or "#RRGGBBAA" hex string. Unrecognized input
+    /// falls back to opaque black rather than crashing.
+    convenience init(hex: Int) {
+        let r = CGFloat((hex >> 16) & 0xFF) / 255
+        let g = CGFloat((hex >> 8) & 0xFF) / 255
+        let b = CGFloat(hex & 0xFF) / 255
+        self.init(srgbRed: r, green: g, blue: b, alpha: 1)
+    }
+}
 
 extension Color {
 
@@ -36,28 +48,40 @@ extension Color {
         )
     }
 
-    // Base surfaces — adaptive/translucent rather than opaque dark fills, so
-    // window vibrancy shows through. `sBg` is fully transparent (the window's
-    // own material provides the background); the others are subtle system
-    // surfaces used where a screen still wants a faint recessed/raised panel.
-    static let sBg = Color.clear
-    static let sBgSoft = Color(nsColor: .controlBackgroundColor)
-    static let sPanel = Color(nsColor: .controlBackgroundColor)
-    static let sPanelRaised = Color.primary.opacity(0.05)
-    static let sBorder = Color(nsColor: .separatorColor)
+    /// Builds an appearance-adaptive color from a light-mode and dark-mode
+    /// hex value (e.g. `0xECEDF1`). Used to define the soft-indigo pastel
+    /// palette below — every token picks its light or dark hex depending on
+    /// the window's current `NSAppearance`, the same way system dynamic
+    /// colors work, but with our own hand-tuned values instead of AppKit's.
+    static func dyn(light: Int, dark: Int) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? NSColor(hex: dark)
+                : NSColor(hex: light)
+        })
+    }
 
-    // Accents / semantic tones — system accent + standard semantic colors,
-    // all of which adapt automatically between Light and Dark.
-    static let sAccent = Color.accentColor
-    static let sAccentSoft = Color.accentColor
-    static let sOk = Color.green
-    static let sDanger = Color.red
-    static let sWarn = Color.orange
+    // Base surfaces — a calm, mostly-opaque soft-indigo pastel palette.
+    // Every token is adaptive (light/dark) via `dyn(light:dark:)`, and none
+    // ever bottoms out at pure black/white.
+    static let sBg = Color.dyn(light: 0xECEDF1, dark: 0x1E2027)
+    static let sBgSoft = Color.dyn(light: 0xF3F4F7, dark: 0x24262E)
+    static let sPanel = Color.dyn(light: 0xFBFBFD, dark: 0x262932)
+    static let sPanelRaised = Color.dyn(light: 0xF3F4F7, dark: 0x2E323D)
+    static let sBorder = Color.dyn(light: 0xDDDFE6, dark: 0x383C48)
 
-    // Text — system label colors.
-    static let sText = Color.primary
-    static let sTextDim = Color.secondary
-    static let sTextFaint = Color(nsColor: .tertiaryLabelColor)
+    // Accents / semantic tones — a single soft-indigo accent plus muted
+    // (not vivid) semantic colors, all adaptive between Light and Dark.
+    static let sAccent = Color.dyn(light: 0x5B67D8, dark: 0x7C88E8)
+    static let sAccentSoft = Color.sAccent.opacity(0.5)
+    static let sOk = Color.dyn(light: 0x3F9E77, dark: 0x6FBF9A)
+    static let sWarn = Color.dyn(light: 0xC79350, dark: 0xE0B173)
+    static let sDanger = Color.dyn(light: 0xCE6B78, dark: 0xE1808C)
+
+    // Text — soft near-black/near-white, never pure #000/#fff.
+    static let sText = Color.dyn(light: 0x23262E, dark: 0xE7E8EC)
+    static let sTextDim = Color.dyn(light: 0x61656F, dark: 0x9A9FAC)
+    static let sTextFaint = Color.dyn(light: 0x9AA0AC, dark: 0x6C7280)
 }
 
 // MARK: - Tone
@@ -69,12 +93,12 @@ enum Tone {
 
     var color: Color {
         switch self {
-        case .default: return .primary
-        case .dim: return .secondary
-        case .accent: return .accentColor
-        case .ok: return .green
-        case .warn: return .orange
-        case .danger: return .red
+        case .default: return .sText
+        case .dim: return .sTextDim
+        case .accent: return .sAccent
+        case .ok: return .sOk
+        case .warn: return .sWarn
+        case .danger: return .sDanger
         }
     }
 }
@@ -100,14 +124,13 @@ enum Radius {
 
 // MARK: - Scene modifier
 
-/// Root-level hook for app-wide appearance. The app now follows the system's
-/// Light/Dark appearance and native window vibrancy rather than forcing a
-/// palette, so this is intentionally a near-noop — kept as a call site so
-/// `SingctlApp.swift` doesn't need to change if a future global tweak (e.g.
-/// a non-default accent) is needed.
+/// Root-level hook for app-wide appearance. This is the ONE place the app's
+/// accent tint is set — applying `Color.sAccent` here means every default
+/// `.tint`-driven control (prominent buttons, selection, toggles, …) picks
+/// up the same soft-indigo accent instead of the raw system blue.
 struct AppTheme: ViewModifier {
     func body(content: Content) -> some View {
-        content
+        content.tint(Color.sAccent)
     }
 }
 

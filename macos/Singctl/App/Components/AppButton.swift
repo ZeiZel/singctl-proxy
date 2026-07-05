@@ -47,11 +47,11 @@ struct AppButton: View {
         Group {
             switch kind {
             case .primary:
-                button.buttonStyle(.borderedProminent)
+                button.buttonStyle(.borderedProminent).tint(Color.sAccent)
             case .ghost:
                 button.buttonStyle(.bordered)
             case .danger:
-                button.buttonStyle(.bordered).tint(.red)
+                button.buttonStyle(.bordered).tint(Color.sDanger)
             }
         }
         .controlSize(.regular)

@@ -53,7 +53,7 @@ struct AppsScreen: View {
             installedAppsCard
 
             if let listsError {
-                Text(listsError).font(.caption).foregroundStyle(Color.sDanger)
+                Text(listsError).font(.callout).foregroundStyle(Color.sDanger)
             }
 
             managementTables
@@ -71,11 +71,12 @@ struct AppsScreen: View {
         Card(title: "Launch app through proxy") {
             VStack(alignment: .leading, spacing: Spacing.sm) {
                 Text("Runs a command with its arguments routed through the proxy, e.g. \"/usr/bin/curl -v https://example.com\".")
-                    .font(.caption)
+                    .font(.callout)
                     .foregroundStyle(Color.sTextDim)
                 HStack(spacing: Spacing.sm) {
                     TextField("Command and arguments…", text: $launchCommand)
                         .textFieldStyle(.roundedBorder)
+                        .controlSize(.large)
                         .disabled(isLaunchingCommand)
                         .onSubmit { submitLaunchCommand() }
                     AppButton(
@@ -87,7 +88,7 @@ struct AppsScreen: View {
                     }
                 }
                 if let launchCommandError {
-                    Text(launchCommandError).font(.caption).foregroundStyle(Color.sDanger)
+                    Text(launchCommandError).font(.callout).foregroundStyle(Color.sDanger)
                 }
             }
         }
@@ -134,7 +135,7 @@ struct AppsScreen: View {
         } content: {
             VStack(alignment: .leading, spacing: Spacing.sm) {
                 if let installedError {
-                    Text(installedError).font(.caption).foregroundStyle(Color.sDanger)
+                    Text(installedError).font(.callout).foregroundStyle(Color.sDanger)
                 }
                 if filteredInstalledApps.isEmpty {
                     EmptyState(
@@ -144,12 +145,14 @@ struct AppsScreen: View {
                 } else {
                     Table(filteredInstalledApps, sortOrder: $installedSort) {
                         TableColumn("App", value: \.name) { app in
-                            Text(app.name).foregroundStyle(Color.sText)
+                            Text(app.name).font(.body).foregroundStyle(Color.sText)
                         }
                         .width(min: 160, ideal: 220)
 
                         TableColumn("Bundle ID", value: \.bundleID) { app in
-                            Text(app.bundleID).foregroundStyle(Color.sTextDim)
+                            Text(app.bundleID)
+                                .font(.system(.callout, design: .monospaced))
+                                .foregroundStyle(Color.sTextDim)
                         }
                         .width(min: 180, ideal: 280)
 
@@ -165,6 +168,7 @@ struct AppsScreen: View {
                         .width(min: 130, ideal: 150, max: 170)
                     }
                     .tableStyle(.inset)
+                    .controlSize(.large)
                 }
             }
         }
@@ -221,19 +225,22 @@ struct AppsScreen: View {
                 Table(sortedRunningApps, sortOrder: $appsSort) {
                     TableColumn("App", value: \.name) { app in
                         HStack(spacing: Spacing.sm) {
-                            Text(app.name).foregroundStyle(Color.sText)
+                            Text(app.name).font(.body).foregroundStyle(Color.sText)
                             Badge(text: app.running ? "Running" : "Not running", tone: app.running ? .ok : .dim)
                         }
                     }
                     .width(min: 160, ideal: 200)
 
                     TableColumn("Bundle ID", value: \.bundleID) { app in
-                        Text(app.bundleID).foregroundStyle(Color.sTextDim)
+                        Text(app.bundleID)
+                            .font(.system(.callout, design: .monospaced))
+                            .foregroundStyle(Color.sTextDim)
                     }
                     .width(min: 140, ideal: 220)
 
                     TableColumn("PIDs") { app in
                         Text(app.pids.map(String.init).joined(separator: ", "))
+                            .font(.body)
                             .foregroundStyle(Color.sTextDim)
                     }
                     .width(min: 60, ideal: 90)
@@ -259,6 +266,7 @@ struct AppsScreen: View {
                     .width(min: 110, ideal: 130, max: 150)
                 }
                 .tableStyle(.inset)
+                .controlSize(.large)
             }
         }
         .frame(maxWidth: .infinity)
@@ -308,14 +316,16 @@ struct AppsScreen: View {
                 Table(sortedProxiedApps, sortOrder: $proxiedSort) {
                     TableColumn("App", value: \.name) { app in
                         HStack(spacing: Spacing.sm) {
-                            Text(app.name).foregroundStyle(Color.sText)
+                            Text(app.name).font(.body).foregroundStyle(Color.sText)
                             Badge(text: app.running ? "Running" : "Not running", tone: app.running ? .ok : .dim)
                         }
                     }
                     .width(min: 160, ideal: 200)
 
                     TableColumn("Bundle ID", value: \.bundleID) { app in
-                        Text(app.bundleID).foregroundStyle(Color.sTextDim)
+                        Text(app.bundleID)
+                            .font(.system(.callout, design: .monospaced))
+                            .foregroundStyle(Color.sTextDim)
                     }
                     .width(min: 140, ideal: 220)
 
@@ -339,6 +349,7 @@ struct AppsScreen: View {
                     .width(min: 110, ideal: 120, max: 140)
                 }
                 .tableStyle(.inset)
+                .controlSize(.large)
             }
         }
         .frame(maxWidth: .infinity)

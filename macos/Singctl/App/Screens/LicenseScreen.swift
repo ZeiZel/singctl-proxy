@@ -74,7 +74,7 @@ struct LicenseScreen: View {
                 detailRow("Days left", status.daysLeft >= 0 ? "\(status.daysLeft)" : "—")
                 if !status.features.isEmpty {
                     VStack(alignment: .leading, spacing: Spacing.xs) {
-                        Text("FEATURES").font(.caption2).foregroundStyle(Color.sTextDim)
+                        Text("FEATURES").font(.subheadline).foregroundStyle(Color.sTextDim)
                         HStack {
                             ForEach(status.features, id: \.self) { feature in
                                 Badge(text: feature, tone: .accent)
@@ -92,7 +92,7 @@ struct LicenseScreen: View {
 
     private func detailRow(_ label: String, _ value: String) -> some View {
         HStack {
-            Text(label).font(.caption).foregroundStyle(Color.sTextDim)
+            Text(label).font(.callout).foregroundStyle(Color.sTextDim)
             Spacer()
             Text(value).font(.subheadline.weight(.medium)).foregroundStyle(Color.sText)
         }
@@ -113,16 +113,17 @@ struct LicenseScreen: View {
         Card(title: "Activate") {
             VStack(alignment: .leading, spacing: Spacing.md) {
                 VStack(alignment: .leading, spacing: Spacing.xs) {
-                    Text("EMAIL").font(.caption2).foregroundStyle(Color.sTextDim)
+                    Text("EMAIL").font(.subheadline).foregroundStyle(Color.sTextDim)
                     TextField("you@example.com", text: $email)
                         .textFieldStyle(.roundedBorder)
+                        .controlSize(.large)
                         .disableAutocorrection(true)
                         .disabled(isBusy)
                 }
 
                 VStack(alignment: .leading, spacing: Spacing.xs) {
                     HStack {
-                        Text("LICENSE TOKEN").font(.caption2).foregroundStyle(Color.sTextDim)
+                        Text("LICENSE TOKEN").font(.subheadline).foregroundStyle(Color.sTextDim)
                         Spacer()
                         AppButton("Import file…", kind: .ghost, icon: "doc.badge.plus", disabled: isBusy) {
                             importFile()
@@ -144,7 +145,7 @@ struct LicenseScreen: View {
 
                 if let actionMessage {
                     Text(actionMessage)
-                        .font(.caption)
+                        .font(.callout)
                         .foregroundStyle(actionIsError ? Color.sDanger : Color.sOk)
                 }
 

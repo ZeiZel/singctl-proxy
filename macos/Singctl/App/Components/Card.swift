@@ -1,12 +1,14 @@
 // Card.swift
 //
-// The frosted panel every screen builds on. Background is native
-// `.regularMaterial` (adapts to Light/Dark and lets window vibrancy show
-// through), with a hairline separator border and `Radius.card` corners.
+// The solid panel every screen builds on. Background is the opaque
+// `Color.sPanel` soft surface (adapts to Light/Dark) with a hairline
+// `Color.sBorder` border and `Radius.card` corners — deliberately not
+// translucent, so text stays readable regardless of what's behind the
+// window.
 
 import SwiftUI
 
-/// A frosted container with an optional title row (title + trailing
+/// A solid container with an optional title row (title + trailing
 /// accessory, e.g. a `Badge` or button) above arbitrary content.
 ///
 /// ```swift
@@ -55,7 +57,7 @@ struct Card<Content: View, Accessory: View>: View {
             content
         }
         .padding(Spacing.md)
-        .background(.regularMaterial)
+        .background(Color.sPanel)
         .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Radius.card, style: .continuous)

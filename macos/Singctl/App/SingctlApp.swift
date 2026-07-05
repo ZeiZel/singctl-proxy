@@ -52,7 +52,6 @@ private struct RootView: View {
         } detail: {
             DetailView(section: selection ?? .dashboard)
         }
-        .containerBackground(.regularMaterial, for: .window)
     }
 }
 
@@ -111,6 +110,7 @@ private struct DetailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color.sBg)
     }
 }
 
@@ -168,7 +168,7 @@ private struct MenuBarContentView: View {
         }
         .padding(Spacing.md)
         .frame(width: 240)
-        .background(.regularMaterial)
+        .background(Color.sPanel)
     }
 
     private func applyMode(_ mode: String) {

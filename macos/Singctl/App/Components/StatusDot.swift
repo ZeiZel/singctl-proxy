@@ -28,6 +28,6 @@ struct StatusDot: View {
             .resizable()
             .frame(width: size, height: size)
             .foregroundStyle(on ? Color.sOk : Color.sTextFaint)
-            .shadow(color: on ? Color.sOk.opacity(0.7) : .clear, radius: size * 0.6)
+            .shadow(color: on ? Color.sOk.opacity(0.4) : .clear, radius: size * 0.6)
     }
 }

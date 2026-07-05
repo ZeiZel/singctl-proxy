@@ -80,6 +80,7 @@ struct SettingsScreen: View {
             LabeledContent("SOCKS port") {
                 TextField("1080", text: $socksPortText)
                     .multilineTextAlignment(.trailing)
+                    .controlSize(.large)
                     .frame(width: 120)
             }
         }
@@ -91,6 +92,7 @@ struct SettingsScreen: View {
             LabeledContent("Clash API address") {
                 TextField("127.0.0.1:9090", text: $clashAddr)
                     .multilineTextAlignment(.trailing)
+                    .controlSize(.large)
                     .frame(width: 200)
             }
             .disabled(!clashEnabled)
@@ -102,16 +104,19 @@ struct SettingsScreen: View {
             LabeledContent("URLTest URL") {
                 TextField("https://www.gstatic.com/generate_204", text: $urlTestURL)
                     .multilineTextAlignment(.trailing)
+                    .controlSize(.large)
                     .frame(width: 260)
             }
             LabeledContent("URLTest interval") {
                 TextField("3m", text: $urlTestInterval)
                     .multilineTextAlignment(.trailing)
+                    .controlSize(.large)
                     .frame(width: 120)
             }
             LabeledContent("URLTest tolerance (ms)") {
                 TextField("50", text: $urlTestToleranceText)
                     .multilineTextAlignment(.trailing)
+                    .controlSize(.large)
                     .frame(width: 120)
             }
         }
@@ -134,7 +139,7 @@ struct SettingsScreen: View {
                 }
                 if let applyMessage {
                     Text(applyMessage)
-                        .font(.caption)
+                        .font(.callout)
                         .foregroundStyle(applyIsError ? Color.sDanger : Color.sOk)
                 }
             }
@@ -145,7 +150,7 @@ struct SettingsScreen: View {
     private var dangerSection: some View {
         SwiftUI.Section {
             if let stopError {
-                Text(stopError).font(.caption).foregroundStyle(Color.sDanger)
+                Text(stopError).font(.callout).foregroundStyle(Color.sDanger)
             }
             Button("Stop daemon", role: .destructive) {
                 showStopConfirm = true

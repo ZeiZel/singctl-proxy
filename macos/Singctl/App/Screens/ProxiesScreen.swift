@@ -70,7 +70,7 @@ private struct LatencyGaugeRow: View {
                 EmptyView()
             } currentValueLabel: {
                 Text(delayLabel)
-                    .font(.caption.monospacedDigit())
+                    .font(.callout.monospacedDigit())
                     .foregroundStyle(Color.sTextDim)
             }
             .gaugeStyle(.accessoryLinearCapacity)

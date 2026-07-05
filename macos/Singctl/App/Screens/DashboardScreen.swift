@@ -78,7 +78,7 @@ struct DashboardScreen: View {
                 SegmentedControl(options: modeOptions, selection: modeBinding, disabled: isApplyingMode)
 
                 if let modeError {
-                    Text(modeError).font(.caption).foregroundStyle(Color.sDanger)
+                    Text(modeError).font(.callout).foregroundStyle(Color.sDanger)
                 }
 
                 LabeledContent("Selected node", value: selectedNodeLabel)
@@ -213,7 +213,7 @@ private struct TrafficChart: View {
     private func legendEntry(color: Color, label: String) -> some View {
         HStack(spacing: Spacing.xs) {
             Circle().fill(color).frame(width: 8, height: 8)
-            Text(label).font(.caption).foregroundStyle(Color.sTextDim)
+            Text(label).font(.callout).foregroundStyle(Color.sTextDim)
         }
     }
 }
