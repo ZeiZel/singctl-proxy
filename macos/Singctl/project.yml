@@ -111,18 +111,34 @@ targets:
         embed: true
 
   # NEPacketTunnelProvider appex for the App Store SKU: runs sing-box (Libbox)
-  # over the tunnel fd. Currently a compiling stub (macos/Singctl/PacketTunnel/
-  # PacketTunnelProvider.swift) — the real Libbox datapath is a later step
-  # (needs Libbox.xcframework from `gomobile bind`, see docs/appstore-sku.md).
+  # over the tunnel fd (macos/Singctl/PacketTunnel/PacketTunnelProvider.swift).
+  # Links Libbox.xcframework — built by `gomobile bind` from
+  # github.com/sagernet/sing-box/experimental/libbox plus this repo's ./mobile
+  # shim (see docs/appstore-sku.md) — statically: gomobile-bind Apple
+  # xcframeworks bundle a static archive (no dynamic library to load at
+  # runtime), so `embed: false` here is correct — only linking is needed, and
+  # there is nothing to code-sign/embed separately. SingctlAppStore (the
+  # container app) never imports Libbox directly (TunnelBackend just writes
+  # raw config.json for this appex to read — see TunnelBackend.swift), so it
+  # does not need this dependency at all.
   PacketTunnel:
     type: app-extension
     platform: macOS
     deploymentTarget: "26.0"
     sources:
       - PacketTunnel
+    dependencies:
+      - framework: Libbox.xcframework
+        embed: false
     settings:
       base:
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: APPSTORE
+        # Go's net package pulls in the cgo-based system resolver
+        # (res_9_ninit/res_9_nclose etc., from libresolv) whenever anything in
+        # the statically-linked Libbox archive touches DNS — which sing-box
+        # does. Without this the linker fails with "symbol(s) not found"
+        # for those symbols (confirmed against the built Libbox.xcframework).
+        OTHER_LDFLAGS: -lresolv
         PRODUCT_BUNDLE_IDENTIFIER: com.singctl.appstore.tunnel
         INFOPLIST_FILE: PacketTunnel/Info.plist
         CODE_SIGN_ENTITLEMENTS: PacketTunnel.entitlements

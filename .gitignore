@@ -21,3 +21,6 @@ deploy/compose/.env
 /macos/Singctl/Singctl.xcodeproj/
 /singctl
 /server
+
+# gomobile-built sing-box core (reproduce with `make libbox`; ~68MB, not committed)
+macos/Singctl/Libbox.xcframework/

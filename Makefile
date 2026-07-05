@@ -34,7 +34,7 @@ MANPAGE := cmd/singctl/singctl.1
 # build with sing-tun's pinned gVisor version).
 SINGBOX_TAGS := singbox with_utls with_clash_api
 
-.PHONY: build build-macos build-windows build-all app-macos appstore \
+.PHONY: build build-macos build-windows build-all app-macos appstore libbox \
 	build-unlicensed build-server docker-server \
 	test test-integration tidy run lint clean install-man uninstall-man \
 	install uninstall \
@@ -147,6 +147,27 @@ ifeq ($(UNAME_S),Darwin)
 		-allowProvisioningUpdates
 else
 	@echo "appstore is macOS-only (needs Xcode + XcodeGen)." >&2; exit 1
+endif
+
+# gomobile-built sing-box core for the App Store SKU. Binds sing-box's
+# experimental/libbox PLUS the repo-local ./mobile shim (mobile.BuildConfig,
+# which turns the container app's TunnelConfig JSON into a sing-box config via
+# internal/vless + internal/singbox) into macos/Singctl/Libbox.xcframework —
+# the framework PacketTunnel/ imports. ~68MB, gitignored; rerun after bumping
+# sing-box or changing ./mobile. Uses sagernet's gomobile fork (pinned in
+# go.mod) and the same minimal build tags as the daemon (SINGBOX_TAGS).
+LIBBOX_TAGS := with_utls,with_clash_api,badlinkname,tfogo_checklinkname0,grpcnotrace
+libbox:
+ifeq ($(UNAME_S),Darwin)
+	$(GO) install github.com/sagernet/gomobile/cmd/gomobile github.com/sagernet/gomobile/cmd/gobind
+	PATH="$(shell $(GO) env GOPATH)/bin:$$PATH" gomobile bind -v -target macos -libname=box \
+		-trimpath -buildvcs=false \
+		-ldflags "-X github.com/sagernet/sing-box/constant.Version=$(VERSION) -s -w -buildid= -checklinkname=0" \
+		-tags "$(LIBBOX_TAGS)" \
+		-o macos/Singctl/Libbox.xcframework \
+		github.com/sagernet/sing-box/experimental/libbox ./mobile
+else
+	@echo "libbox is macOS-only (needs the macOS/gomobile toolchain)." >&2; exit 1
 endif
 
 # Hermetic dev build: stub core, no sing-box dependency. Used by the unit suite.

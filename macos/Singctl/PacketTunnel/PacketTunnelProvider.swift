@@ -1,69 +1,202 @@
-// PacketTunnelProvider.swift — App Store SKU VPN datapath (STUB, still to be
-// wired to a real datapath).
+// PacketTunnelProvider.swift — App Store SKU VPN datapath.
 //
-// An NEPacketTunnelProvider that will run the sing-box core (via the
-// gomobile-built Libbox) over the tunnel. Mirrors sing-box's official Apple
-// app. The sing-box config JSON is built by the Go `mobile/` shim from the
-// user's VLESS key(s) + settings (reusing internal/vless + internal/singbox)
-// and stored in the App Group container by the SwiftUI app (App/). See
-// ../../../docs/appstore-sku.md.
+// An NEPacketTunnelProvider running the sing-box core over the tunnel fd via
+// Libbox (sing-box v1.13.12's gomobile binding, built into
+// Libbox.xcframework by the Makefile from github.com/sagernet/sing-box/
+// experimental/libbox + this repo's ./mobile shim — see project.yml and
+// docs/appstore-sku.md).
+//
+// IMPORTANT — this does NOT use the classic `LibboxNewService`/
+// `LibboxBoxService.start()/.close()` shape some older sing-box docs (and
+// sing-box-for-apple's own `main` branch, which tracks a newer/renamed
+// sing-box) describe. Reading the *pinned* v1.13.12 sources directly
+// (experimental/libbox/service.go, command_server.go, setup.go) shows that
+// version's actual entry point:
+//   - `LibboxSetup(options, &error)`                         — base/working/temp dirs (setup.go)
+//   - `LibboxNewCommandServer(handler, platformInterface, &error) -> LibboxCommandServer?`
+//     (command_server.go: `NewCommandServer(handler CommandServerHandler,
+//     platformInterface PlatformInterface)`) — `handler` and
+//     `platformInterface` are the same object (ExtensionPlatformInterface),
+//     matching how sing-box's own Apple app does it.
+//   - `commandServer.startOrReloadService(configJSON, options:)` is what
+//     actually parses the config and starts the sing-box instance (including
+//     calling into `PlatformInterface.openTun` — see
+//     ExtensionPlatformInterface.swift). `CommandServer.start()` merely opens
+//     an *optional* local control socket (command.sock, for a companion app
+//     to query live stats over) — nothing in this datapath needs it, so it's
+//     deliberately not called (see the open-risk note in the report).
 //
 // Part of the unified Singctl.xcodeproj (macos/Singctl/project.yml), built by
-// the PacketTunnel app-extension target embedded in SingctlAppStore.app. This
-// compiles today; the real Libbox datapath is a later step (see TODOs below).
+// the PacketTunnel app-extension target embedded in SingctlAppStore.app.
 
 import Foundation
 import NetworkExtension
+import Libbox
 import os.log
-// import Libbox   // gomobile-built; add Libbox.xcframework to the target first.
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private let log = OSLog(subsystem: "com.singctl.appstore.tunnel", category: "tunnel")
 
-    // The running sing-box instance (Libbox handle). Typed `Any?` here only
-    // because Libbox is not importable in this scaffold.
-    private var boxService: Any?
+    private static let appGroupID = "group.com.singctl.appstore"
+
+    // Implements both LibboxPlatformInterfaceProtocol (openTun etc.) and
+    // LibboxCommandServerHandlerProtocol (serviceStop etc.) — see
+    // ExtensionPlatformInterface.swift for why one object does both.
+    private var platformInterface: ExtensionPlatformInterface?
+    private var commandServer: LibboxCommandServer?
 
     override func startTunnel(options: [String: NSObject]? = nil,
                               completionHandler: @escaping (Error?) -> Void) {
-        guard let configJSON = loadConfigJSON() else {
-            completionHandler(NSError(domain: "singctl", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "no config in App Group container"]))
+        guard let tunnelConfigJSON = loadConfigJSON() else {
+            let error = NSError(domain: "singctl", code: 1,
+                                userInfo: [NSLocalizedDescriptionKey: "no config in App Group container"])
+            os_log("startTunnel: %{public}@", log: log, type: .error, error.localizedDescription)
+            completionHandler(error)
             return
         }
 
-        // TODO (Mac): set tunnel network settings (addresses, DNS, routes) to match
-        // the sing-box tun inbound, then start Libbox over self.packetFlow:
-        //
-        //   let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
-        //   settings.ipv4Settings = NEIPv4Settings(addresses: ["198.18.0.1"], subnetMasks: ["255.255.255.252"])
-        //   settings.ipv4Settings?.includedRoutes = [NEIPv4Route.default()]
-        //   settings.dnsSettings = NEDNSSettings(servers: ["1.1.1.1"])
-        //   setTunnelNetworkSettings(settings) { error in
-        //       if let error { completionHandler(error); return }
-        //       self.boxService = LibboxNewService(configJSON, PlatformInterface(self.packetFlow))
-        //       try? (self.boxService as? LibboxBoxService)?.start()
-        //       completionHandler(nil)
-        //   }
-        _ = configJSON
-        os_log("startTunnel: scaffold — wire Libbox + setTunnelNetworkSettings", log: log, type: .error)
-        completionHandler(NSError(domain: "singctl", code: 2,
-            userInfo: [NSLocalizedDescriptionKey: "PacketTunnelProvider is a scaffold"]))
+        // config.json in the App Group container is TunnelBackend's
+        // TunnelConfig (mode/keys/settings), not a sing-box config — turn it
+        // into one via the repo-local `mobile` gomobile shim. mobile.BuildConfig
+        // returns (string, error) in Go; as a plain top-level function (not a
+        // reverse-bound protocol method) that binds to the NSErrorPointer
+        // form, not `throws`.
+        var buildError: NSError?
+        let configJSON = MobileBuildConfig(tunnelConfigJSON, &buildError)
+        if let buildError {
+            os_log("startTunnel: MobileBuildConfig failed: %{public}@", log: log, type: .error,
+                   buildError.localizedDescription)
+            completionHandler(buildError)
+            return
+        }
+
+        guard let containerURL = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: Self.appGroupID) else {
+            let error = NSError(domain: "singctl", code: 2,
+                                userInfo: [NSLocalizedDescriptionKey: "no App Group container"])
+            os_log("startTunnel: %{public}@", log: log, type: .error, error.localizedDescription)
+            completionHandler(error)
+            return
+        }
+
+        // Setup(options) (setup.go) wants base/working/temp directories to
+        // exist; base is the container root itself (also where CommandServer
+        // would put command.sock, if we ever start it), working/temp are
+        // subdirectories sing-box uses for cache/rule-set storage etc.
+        let basePath = containerURL.path
+        let workingPath = containerURL.appendingPathComponent("Working").path
+        let tempPath = containerURL.appendingPathComponent("Temp").path
+        do {
+            try FileManager.default.createDirectory(atPath: workingPath, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(atPath: tempPath, withIntermediateDirectories: true)
+        } catch {
+            os_log("startTunnel: create working/temp dirs failed: %{public}@", log: log, type: .error,
+                   error.localizedDescription)
+            completionHandler(error)
+            return
+        }
+
+        let setupOptions = LibboxSetupOptions()
+        setupOptions.basePath = basePath
+        setupOptions.workingPath = workingPath
+        setupOptions.tempPath = tempPath
+        setupOptions.logMaxLines = 3000
+
+        var setupError: NSError?
+        LibboxSetup(setupOptions, &setupError)
+        if let setupError {
+            os_log("startTunnel: LibboxSetup failed: %{public}@", log: log, type: .error,
+                   setupError.localizedDescription)
+            completionHandler(setupError)
+            return
+        }
+
+        let iface = ExtensionPlatformInterface(provider: self)
+        platformInterface = iface
+
+        var serverError: NSError?
+        let server = LibboxNewCommandServer(iface, iface, &serverError)
+        if let serverError {
+            os_log("startTunnel: LibboxNewCommandServer failed: %{public}@", log: log, type: .error,
+                   serverError.localizedDescription)
+            platformInterface = nil
+            completionHandler(serverError)
+            return
+        }
+        guard let server else {
+            let error = NSError(domain: "singctl", code: 3,
+                                userInfo: [NSLocalizedDescriptionKey: "LibboxNewCommandServer returned nil"])
+            os_log("startTunnel: %{public}@", log: log, type: .error, error.localizedDescription)
+            platformInterface = nil
+            completionHandler(error)
+            return
+        }
+        commandServer = server
+
+        do {
+            // This is the call that actually parses configJSON, builds the
+            // sing-box instance, and starts it — including the
+            // PlatformInterface.openTun round-trip that configures
+            // NEPacketTunnelNetworkSettings and hands back the tun fd.
+            try server.startOrReloadService(configJSON, options: LibboxOverrideOptions())
+        } catch {
+            os_log("startTunnel: startOrReloadService failed: %{public}@", log: log, type: .error,
+                   error.localizedDescription)
+            commandServer = nil
+            platformInterface = nil
+            completionHandler(error)
+            return
+        }
+
+        os_log("startTunnel: sing-box started", log: log, type: .info)
+        completionHandler(nil)
     }
 
     override func stopTunnel(with reason: NEProviderStopReason,
                              completionHandler: @escaping () -> Void) {
         os_log("stopTunnel reason=%d", log: log, type: .info, reason.rawValue)
-        // try? (boxService as? LibboxBoxService)?.close()
-        boxService = nil
+        do {
+            try commandServer?.closeService()
+        } catch {
+            os_log("stopTunnel: closeService failed: %{public}@", log: log, type: .error,
+                   error.localizedDescription)
+        }
+        commandServer?.close()
+        commandServer = nil
+        platformInterface?.reset()
+        platformInterface = nil
         completionHandler()
     }
 
-    /// Reads the sing-box config JSON the SwiftUI app wrote to the App Group
-    /// container (built by the Go `mobile.BuildConfig` shim from the user's keys).
+    // MARK: - Sleep/wake pass-through
+    //
+    // CommandServer.pause()/.wake() (command_server.go) drive
+    // PauseManager.DevicePause()/DeviceWake() on the running box instance —
+    // sing-box's own way of quiescing timers/keepalives while macOS suspends
+    // the extension, so this is a direct pass-through rather than a no-op.
+
+    override func sleep(completionHandler: @escaping () -> Void) {
+        commandServer?.pause()
+        completionHandler()
+    }
+
+    override func wake() {
+        commandServer?.wake()
+    }
+
+    override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)? = nil) {
+        // No control-channel protocol defined yet between the container app
+        // and this appex (TunnelBackend currently always restarts the whole
+        // tunnel via VPNController rather than messaging a running one) — ack
+        // with nothing so callers don't hang waiting on a reply.
+        completionHandler?(nil)
+    }
+
+    /// Reads the App Group's config.json (TunnelBackend.TunnelConfig JSON:
+    /// mode/keys/settings), written by the SwiftUI app's TunnelConfigStore.
     private func loadConfigJSON() -> String? {
         guard let url = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: "group.com.singctl.appstore")?
+            .containerURL(forSecurityApplicationGroupIdentifier: Self.appGroupID)?
             .appendingPathComponent("config.json"),
               let data = try? Data(contentsOf: url) else { return nil }
         return String(data: data, encoding: .utf8)
