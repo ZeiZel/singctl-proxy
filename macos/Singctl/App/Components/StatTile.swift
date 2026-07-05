@@ -1,0 +1,49 @@
+// StatTile.swift
+//
+// A small "label / big value / optional sub-line" tile, used in dashboard-
+// style stat grids. Not itself a `Card` — wrap in one if you want the frosted
+// background (Dashboard puts each tile in its own `Card`).
+
+import SwiftUI
+
+/// ```swift
+/// StatTile(label: "Upload rate", value: "1.2 MB/s", tone: .accent)
+/// StatTile(label: "Total down", value: "340 MB", sub: "since daemon start")
+/// ```
+struct StatTile: View {
+    let label: String
+    let value: String
+    var sub: String?
+    var tone: Tone = .default
+
+    /// - Parameters:
+    ///   - label: Small uppercase caption above the value.
+    ///   - value: The headline figure (already formatted, e.g. via `ByteFormat`).
+    ///   - sub: Optional secondary line below the value.
+    ///   - tone: Color applied to `value` (label/sub are always dim).
+    init(label: String, value: String, sub: String? = nil, tone: Tone = .default) {
+        self.label = label
+        self.value = value
+        self.sub = sub
+        self.tone = tone
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            Text(label.uppercased())
+                .font(.caption2)
+                .tracking(0.6)
+                .foregroundStyle(Color.sTextDim)
+            Text(value)
+                .font(.system(.title2, design: .rounded).weight(.bold))
+                .foregroundStyle(tone.color)
+                .monospacedDigit()
+            if let sub {
+                Text(sub)
+                    .font(.caption)
+                    .foregroundStyle(Color.sTextFaint)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
