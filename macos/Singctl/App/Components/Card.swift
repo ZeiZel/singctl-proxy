@@ -42,7 +42,7 @@ struct Card<Content: View, Accessory: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.sm) {
+        VStack(alignment: .leading, spacing: Spacing.md) {
             if title != nil || Accessory.self != EmptyView.self {
                 HStack(alignment: .firstTextBaseline) {
                     if let title {
@@ -56,8 +56,8 @@ struct Card<Content: View, Accessory: View>: View {
             }
             content
         }
-        .padding(Spacing.md)
-        .background(Color.sPanel.opacity(0.85))
+        .padding(Spacing.lg)
+        .background(Color.sPanel.opacity(0.92))
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay(

@@ -37,7 +37,7 @@ struct StatTile: View {
                 .tracking(0.6)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.appTitle)
+                .font(.appValue)
                 .foregroundStyle(tone.color)
                 .monospacedDigit()
             if let sub {

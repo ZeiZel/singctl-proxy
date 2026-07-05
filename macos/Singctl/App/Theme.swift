@@ -66,7 +66,7 @@ extension Color {
     // ever bottoms out at pure black/white.
     static let sBg = Color.dyn(light: 0xECEDF1, dark: 0x1E2027)
     static let sBgSoft = Color.dyn(light: 0xF3F4F7, dark: 0x24262E)
-    static let sPanel = Color.dyn(light: 0xFBFBFD, dark: 0x262932)
+    static let sPanel = Color.dyn(light: 0xF7F8FA, dark: 0x23262E)
     static let sPanelRaised = Color.dyn(light: 0xF3F4F7, dark: 0x2E323D)
     static let sBorder = Color.dyn(light: 0xDDDFE6, dark: 0x383C48)
 
@@ -130,11 +130,15 @@ enum Radius {
 /// legible scale than the system defaults. Screens/tables (later wave)
 /// reuse these same tokens.
 extension Font {
-    static let appTitle = Font.system(size: 26, weight: .semibold)
-    static let appHeadline = Font.system(size: 20, weight: .semibold)
-    static let appBody = Font.system(size: 18)
-    static let appSecondary = Font.system(size: 16)
-    static let appCaption = Font.system(size: 16)
+    // Type scale — the single source of truth. Only THREE sizes (22 / 18 / 16;
+    // minimum 16). Reuse these tokens across every component/screen; never use
+    // raw SwiftUI semantic fonts (they're <16 on macOS) or ad-hoc sizes.
+    static let appTitle = Font.system(size: 22, weight: .semibold)     // page / section titles
+    static let appHeadline = Font.system(size: 18, weight: .semibold)  // card / block headers
+    static let appValue = Font.system(size: 18, weight: .medium)       // numeric / stat values
+    static let appBody = Font.system(size: 16)                         // primary text, nav items
+    static let appSecondary = Font.system(size: 16)                    // secondary / dim labels (pair with .secondary color)
+    static let appCaption = Font.system(size: 16)                      // hints / axis (smallest allowed)
 }
 
 // MARK: - Scene modifier
