@@ -53,7 +53,7 @@ struct AppsScreen: View {
             installedAppsCard
 
             if let listsError {
-                Text(listsError).font(.callout).foregroundStyle(Color.sDanger)
+                Text(listsError).font(.appSecondary).foregroundStyle(Color.sDanger)
             }
 
             managementTables
@@ -71,7 +71,7 @@ struct AppsScreen: View {
         Card(title: "Launch app through proxy") {
             VStack(alignment: .leading, spacing: Spacing.sm) {
                 Text("Runs a command with its arguments routed through the proxy, e.g. \"/usr/bin/curl -v https://example.com\".")
-                    .font(.callout)
+                    .font(.appSecondary)
                     .foregroundStyle(Color.sTextDim)
                 HStack(spacing: Spacing.sm) {
                     TextField("Command and arguments…", text: $launchCommand)
@@ -88,7 +88,7 @@ struct AppsScreen: View {
                     }
                 }
                 if let launchCommandError {
-                    Text(launchCommandError).font(.callout).foregroundStyle(Color.sDanger)
+                    Text(launchCommandError).font(.appSecondary).foregroundStyle(Color.sDanger)
                 }
             }
         }
@@ -135,7 +135,7 @@ struct AppsScreen: View {
         } content: {
             VStack(alignment: .leading, spacing: Spacing.sm) {
                 if let installedError {
-                    Text(installedError).font(.callout).foregroundStyle(Color.sDanger)
+                    Text(installedError).font(.appSecondary).foregroundStyle(Color.sDanger)
                 }
                 if filteredInstalledApps.isEmpty {
                     EmptyState(
@@ -151,7 +151,7 @@ struct AppsScreen: View {
                                     .foregroundStyle(Color.sText)
                                     .frame(minWidth: 160, alignment: .leading)
                                 Text(app.bundleID)
-                                    .font(.system(size: 13, design: .monospaced))
+                                    .font(.system(size: 16, design: .monospaced))
                                     .foregroundStyle(Color.sTextDim)
                                     .lineLimit(1)
                                 Spacer()
@@ -234,7 +234,7 @@ struct AppsScreen: View {
 
                     TableColumn("Bundle ID", value: \.bundleID) { app in
                         Text(app.bundleID)
-                            .font(.system(size: 13, design: .monospaced))
+                            .font(.system(size: 16, design: .monospaced))
                             .foregroundStyle(Color.sTextDim)
                     }
                     .width(min: 140, ideal: 220)
@@ -326,7 +326,7 @@ struct AppsScreen: View {
 
                     TableColumn("Bundle ID", value: \.bundleID) { app in
                         Text(app.bundleID)
-                            .font(.system(size: 13, design: .monospaced))
+                            .font(.system(size: 16, design: .monospaced))
                             .foregroundStyle(Color.sTextDim)
                     }
                     .width(min: 140, ideal: 220)

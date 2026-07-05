@@ -32,7 +32,7 @@ struct DashboardScreen: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.lg) {
+            VStack(alignment: .leading, spacing: Spacing.xxl) {
                 if !store.daemonRunning {
                     GroupBox {
                         Label(
@@ -65,13 +65,13 @@ struct DashboardScreen: View {
             ToolbarItemGroup {
                 if store.status.ciscoActive {
                     Label("Cisco active", systemImage: "exclamationmark.triangle.fill")
-                        .font(.appSecondary)
+                        .font(.appCaption)
                         .foregroundStyle(Color.sWarn)
                 }
                 HStack(spacing: Spacing.xs) {
                     StatusDot(on: store.daemonRunning)
                     Text(store.daemonRunning ? "Running" : "Offline")
-                        .font(.appSecondary)
+                        .font(.appCaption)
                         .foregroundStyle(store.daemonRunning ? Color.sOk : Color.sDanger)
                 }
             }
@@ -95,7 +95,7 @@ struct DashboardScreen: View {
                 LabeledContent("Selected node", value: selectedNodeLabel)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, Spacing.xs)
+            .padding(.top, Spacing.sm)
         }
     }
 
@@ -143,7 +143,7 @@ struct DashboardScreen: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, Spacing.xs)
+            .padding(.top, Spacing.sm)
         }
     }
 
@@ -161,7 +161,7 @@ struct DashboardScreen: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, Spacing.xs)
+            .padding(.top, Spacing.sm)
         }
     }
 
@@ -192,32 +192,43 @@ private struct TrafficChart: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
             Chart(points) { point in
-                AreaMark(x: .value("t", point.id), y: .value("Upload", point.up))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Color.sAccent.opacity(0.30), .clear],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
+                AreaMark(
+                    x: .value("t", point.id),
+                    yStart: .value("z", 0.0),
+                    yEnd: .value("rate", point.up),
+                    series: .value("Series", "Upload")
+                )
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [Color.sAccent.opacity(0.30), .clear],
+                        startPoint: .top,
+                        endPoint: .bottom
                     )
-                    .interpolationMethod(.monotone)
-                LineMark(x: .value("t", point.id), y: .value("Upload", point.up))
+                )
+                .interpolationMethod(.catmullRom)
+                LineMark(x: .value("t", point.id), y: .value("rate", point.up), series: .value("Series", "Upload"))
                     .foregroundStyle(Color.sAccent)
-                    .interpolationMethod(.monotone)
+                    .interpolationMethod(.catmullRom)
 
-                AreaMark(x: .value("t", point.id), y: .value("Download", point.down))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Color.sOk.opacity(0.30), .clear],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
+                AreaMark(
+                    x: .value("t", point.id),
+                    yStart: .value("z", 0.0),
+                    yEnd: .value("rate", point.down),
+                    series: .value("Series", "Download")
+                )
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [Color.sOk.opacity(0.30), .clear],
+                        startPoint: .top,
+                        endPoint: .bottom
                     )
-                    .interpolationMethod(.monotone)
-                LineMark(x: .value("t", point.id), y: .value("Download", point.down))
+                )
+                .interpolationMethod(.catmullRom)
+                LineMark(x: .value("t", point.id), y: .value("rate", point.down), series: .value("Series", "Download"))
                     .foregroundStyle(Color.sOk)
-                    .interpolationMethod(.monotone)
+                    .interpolationMethod(.catmullRom)
             }
+            .chartYScale(domain: .automatic(includesZero: true))
             .chartXAxis(.hidden)
             .chartYAxis {
                 AxisMarks(position: .leading) { value in

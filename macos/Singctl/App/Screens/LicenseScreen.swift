@@ -40,10 +40,10 @@ struct LicenseScreen: View {
             if isLoadingStatus {
                 HStack(spacing: Spacing.sm) {
                     ProgressView().controlSize(.small)
-                    Text("Checking license…").font(.subheadline).foregroundStyle(Color.sTextDim)
+                    Text("Checking license…").font(.appSecondary).foregroundStyle(Color.sTextDim)
                 }
             } else if let loadError {
-                Text(loadError).font(.subheadline).foregroundStyle(Color.sDanger)
+                Text(loadError).font(.appSecondary).foregroundStyle(Color.sDanger)
             } else if let status {
                 statusDetails(status)
             } else {
@@ -74,7 +74,7 @@ struct LicenseScreen: View {
                 detailRow("Days left", status.daysLeft >= 0 ? "\(status.daysLeft)" : "—")
                 if !status.features.isEmpty {
                     VStack(alignment: .leading, spacing: Spacing.xs) {
-                        Text("FEATURES").font(.subheadline).foregroundStyle(Color.sTextDim)
+                        Text("FEATURES").font(.appSecondary).foregroundStyle(Color.sTextDim)
                         HStack {
                             ForEach(status.features, id: \.self) { feature in
                                 Badge(text: feature, tone: .accent)
@@ -85,16 +85,16 @@ struct LicenseScreen: View {
             }
         } else {
             Text(status.reason.isEmpty ? "No valid license." : status.reason)
-                .font(.subheadline)
+                .font(.appSecondary)
                 .foregroundStyle(Color.sDanger)
         }
     }
 
     private func detailRow(_ label: String, _ value: String) -> some View {
         HStack {
-            Text(label).font(.callout).foregroundStyle(Color.sTextDim)
+            Text(label).font(.appSecondary).foregroundStyle(Color.sTextDim)
             Spacer()
-            Text(value).font(.subheadline.weight(.medium)).foregroundStyle(Color.sText)
+            Text(value).font(.appBody.weight(.medium)).foregroundStyle(Color.sText)
         }
     }
 
@@ -113,7 +113,7 @@ struct LicenseScreen: View {
         Card(title: "Activate") {
             VStack(alignment: .leading, spacing: Spacing.md) {
                 VStack(alignment: .leading, spacing: Spacing.xs) {
-                    Text("EMAIL").font(.subheadline).foregroundStyle(Color.sTextDim)
+                    Text("EMAIL").font(.appSecondary).foregroundStyle(Color.sTextDim)
                     TextField("you@example.com", text: $email)
                         .textFieldStyle(.roundedBorder)
                         .controlSize(.large)
@@ -123,14 +123,14 @@ struct LicenseScreen: View {
 
                 VStack(alignment: .leading, spacing: Spacing.xs) {
                     HStack {
-                        Text("LICENSE TOKEN").font(.subheadline).foregroundStyle(Color.sTextDim)
+                        Text("LICENSE TOKEN").font(.appSecondary).foregroundStyle(Color.sTextDim)
                         Spacer()
                         AppButton("Import file…", kind: .ghost, icon: "doc.badge.plus", disabled: isBusy) {
                             importFile()
                         }
                     }
                     TextEditor(text: $token)
-                        .font(.system(.body, design: .monospaced))
+                        .font(.system(size: 16, design: .monospaced))
                         .frame(minHeight: 120)
                         .scrollContentBackground(.hidden)
                         .padding(Spacing.xs)
@@ -145,7 +145,7 @@ struct LicenseScreen: View {
 
                 if let actionMessage {
                     Text(actionMessage)
-                        .font(.callout)
+                        .font(.appSecondary)
                         .foregroundStyle(actionIsError ? Color.sDanger : Color.sOk)
                 }
 

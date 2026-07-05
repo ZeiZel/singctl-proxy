@@ -63,7 +63,7 @@ struct ConnectionsScreen: View {
 
             TableColumn("Chain", value: \.chain) { row in
                 Text(row.chain)
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(.system(size: 16, design: .monospaced))
                     .foregroundStyle(Color.sTextDim)
             }
             .width(min: 100, ideal: 170)

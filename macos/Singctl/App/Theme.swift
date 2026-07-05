@@ -113,6 +113,7 @@ enum Spacing {
     static let md: CGFloat = 16
     static let lg: CGFloat = 24
     static let xl: CGFloat = 32
+    static let xxl: CGFloat = 48
 }
 
 /// Corner-radius scale. `.card` mirrors Tailwind's `rounded-card` (12px).
@@ -129,11 +130,11 @@ enum Radius {
 /// legible scale than the system defaults. Screens/tables (later wave)
 /// reuse these same tokens.
 extension Font {
-    static let appTitle = Font.system(size: 20, weight: .semibold)
-    static let appHeadline = Font.system(size: 16, weight: .semibold)
-    static let appBody = Font.system(size: 15)
-    static let appSecondary = Font.system(size: 13)
-    static let appCaption = Font.system(size: 12)
+    static let appTitle = Font.system(size: 26, weight: .semibold)
+    static let appHeadline = Font.system(size: 20, weight: .semibold)
+    static let appBody = Font.system(size: 18)
+    static let appSecondary = Font.system(size: 16)
+    static let appCaption = Font.system(size: 16)
 }
 
 // MARK: - Scene modifier

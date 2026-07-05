@@ -57,7 +57,7 @@ struct Card<Content: View, Accessory: View>: View {
             content
         }
         .padding(Spacing.md)
-        .background(Color.sPanel.opacity(0.35))
+        .background(Color.sPanel.opacity(0.85))
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay(

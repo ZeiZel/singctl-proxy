@@ -181,7 +181,9 @@ private struct RootView: View {
         } detail: {
             DetailView(section: selection ?? .dashboard)
         }
-        .containerBackground(.regularMaterial, for: .window)
+        .containerBackground(for: .window) {
+            Rectangle().fill(.regularMaterial).overlay(Color.black.opacity(0.22))
+        }
     }
 }
 
@@ -204,7 +206,7 @@ private struct SidebarView: View {
                 HStack(spacing: Spacing.sm) {
                     StatusDot(on: store.daemonRunning)
                     Text("singctl")
-                        .font(.headline)
+                        .font(.appHeadline)
                         .foregroundStyle(Color.sText)
                 }
                 .padding(.bottom, Spacing.xs)

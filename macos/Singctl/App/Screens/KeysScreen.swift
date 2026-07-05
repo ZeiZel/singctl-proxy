@@ -40,7 +40,7 @@ struct KeysScreen: View {
 
             if let errorMessage {
                 Text(errorMessage)
-                    .font(.subheadline)
+                    .font(.appSecondary)
                     .foregroundStyle(Color.sDanger)
             }
 
@@ -84,7 +84,7 @@ struct KeysScreen: View {
                     }
                 }
                 Text("Multiple keys form an automatic latency-tested failover group (priority follows order).")
-                    .font(.callout)
+                    .font(.appSecondary)
                     .foregroundStyle(Color.sTextFaint)
             }
         }
@@ -112,7 +112,7 @@ struct KeysScreen: View {
                                 .foregroundStyle(Color.sText)
                                 .frame(minWidth: 100, alignment: .leading)
                             Text(row.masked)
-                                .font(.system(size: 13, design: .monospaced))
+                                .font(.system(size: 16, design: .monospaced))
                                 .foregroundStyle(Color.sTextDim)
                                 .lineLimit(1)
                             Spacer()

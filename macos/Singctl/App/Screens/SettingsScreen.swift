@@ -161,7 +161,7 @@ struct SettingsScreen: View {
                 }
                 if let applyMessage {
                     Text(applyMessage)
-                        .font(.callout)
+                        .font(.appSecondary)
                         .foregroundStyle(applyIsError ? Color.sDanger : Color.sOk)
                 }
             }
@@ -173,7 +173,7 @@ struct SettingsScreen: View {
     private var dangerSection: some View {
         SwiftUI.Section {
             if let stopError {
-                Text(stopError).font(.callout).foregroundStyle(Color.sDanger)
+                Text(stopError).font(.appSecondary).foregroundStyle(Color.sDanger)
             }
             Button("Stop daemon", role: .destructive) {
                 showStopConfirm = true
@@ -187,7 +187,7 @@ struct SettingsScreen: View {
             Toggle("VPN", isOn: vpnBinding)
                 .disabled(isTogglingVPN)
             if let vpnError {
-                Text(vpnError).font(.callout).foregroundStyle(Color.sDanger)
+                Text(vpnError).font(.appSecondary).foregroundStyle(Color.sDanger)
             }
         }
     }
