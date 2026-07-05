@@ -223,8 +223,8 @@ Store) с включённым `*-systemextension`-entitlement Network Extension
 ## 3. Entitlements в репозитории
 
 Файлы уже есть, при необходимости подставь свой Team ID / идентификаторы:
-- `packaging/macos/netextension/ProxyExtension/ProxyExtension.entitlements`
-- `packaging/macos/netextension/ContainerApp/ContainerApp.entitlements`
+- `macos/Singctl/ProxyExtension.entitlements`
+- `macos/Singctl/Singctl.entitlements`
 
 Оба объявляют `com.apple.developer.networking.networkextension`
 (`*-systemextension`) и App Group `group.com.singctl.proxy`.
@@ -252,21 +252,21 @@ codesign --force --options runtime \
   bin/singctl
 ```
 
-## 4. Сборка расширения + контейнера
+## 4. Сборка приложения + расширения
 
 ```sh
-make build-netext                    # defaults to DEVELOPMENT_TEAM=S3UCF4USYC
-make build-netext DEVELOPMENT_TEAM=OTHERTEAMID   # override for another Apple account
-# = packaging/macos/netextension/build.sh: xcodegen generate + xcodebuild Release
+make app-macos                       # defaults to DEVELOPMENT_TEAM=S3UCF4USYC
+make app-macos DEVELOPMENT_TEAM=OTHERTEAMID   # override for another Apple account
+# = macos/Singctl/build.sh: xcodegen generate + xcodebuild Release
 ```
 
-Альтернатива — вручную в Xcode: `cd packaging/macos/netextension && xcodegen
-generate && open SingctlProxy.xcodeproj`, выставить Team у обоих таргетов,
+Альтернатива — вручную в Xcode: `cd macos/Singctl && xcodegen
+generate && open Singctl.xcodeproj`, выставить Team у обоих таргетов,
 Product → Archive.
 
 ## 5. Первый запуск и одобрение
 
-1. Запусти собранный `SingctlProxy.app` один раз.
+1. Запусти собранный `Singctl.app` один раз.
 2. Одобри расширение: **System Settings → General → Login Items & Extensions →
    Network Extensions** (на старых macOS — Security & Privacy).
 3. Разреши конфигурацию прокси, если система спросит.
@@ -283,9 +283,12 @@ xcrun notarytool store-credentials singctl-notary \
   --apple-id <you@example.com> --team-id S3UCF4USYC --password <app-specific-pwd>
 
 # собрать .pkg/.zip с .app, затем:
-xcrun notarytool submit SingctlProxy.zip --keychain-profile singctl-notary --wait
-xcrun stapler staple SingctlProxy.app
+xcrun notarytool submit Singctl.zip --keychain-profile singctl-notary --wait
+xcrun stapler staple Singctl.app
 ```
+
+`make app-macos NOTARY_PROFILE=<profile>` делает это автоматически (см.
+`macos/Singctl/build.sh`).
 
 ## 7. Дистрибуция
 

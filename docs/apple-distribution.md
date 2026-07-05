@@ -11,8 +11,6 @@ Developer, как собрать **лицензионный**, подписан�
 - **[LICENSATION.md](../LICENSATION.md)** — часть A (лицензионный сервер,
   Ed25519, `issue`/`revoke`) и часть B (Apple-модули: App IDs, App Group,
   entitlements, нотаризация системного расширения).
-- **[packaging/macos/netextension/RUNBOOK.md](../packaging/macos/netextension/RUNBOOK.md)**
-  — что уже сделано в Swift-коде расширения и что остаётся доделать на Mac.
 - **[packaging/README.md](../packaging/README.md)** — команды сборки `.pkg`/`.dmg`,
   переменные окружения подписи, CI-джоба `release:macos`.
 - **[docs/deploy-gitlab.md](deploy-gitlab.md)** — разворачивание лицензионного
@@ -79,9 +77,7 @@ Developer, как собрать **лицензионный**, подписан�
    App-Specific Passwords), не пароль от аккаунта.
 
 Подробное описание каждого пункта (entitlements-файлы, XML-примеры,
-траблшутинг) — [LICENSATION.md, часть B, §0–3](../LICENSATION.md); что
-конкретно ещё требует Mac-разработки в самом расширении — в
-[RUNBOOK.md](../packaging/macos/netextension/RUNBOOK.md).
+траблшутинг) — [LICENSATION.md, часть B, §0–3](../LICENSATION.md).
 
 ---
 
@@ -107,8 +103,8 @@ Developer, как собрать **лицензионный**, подписан�
   подписи (с предупреждением в лог).
 
 Логика активации (`cmd/singctl/license.go:enforceLicense`,
-`internal/license/decide.go:DecideEnforcement`, зеркалируется в GUI —
-`gui/bridge/license.go`):
+`internal/license/decide.go:DecideEnforcement`, зеркалируется в macOS-приложении
+— `macos/Singctl/App/Core/LicenseService.swift`):
 
 - **Первое подключение обязательно.** Пока токен ни разу не подтверждён
   сервером (`ActivatedOnce == false`), любая сетевая ошибка блокирует запуск
@@ -142,42 +138,38 @@ Developer, как собрать **лицензионный**, подписан�
    make build-macos LICENSE_PUBKEY=<pub> LICENSE_SERVER_URL=https://license.<домен>
    ```
 
-3. **Собрать GUI** (Wails-приложение):
+3. **Собрать нативное macOS-приложение** (`macos/Singctl/`, SwiftUI + встроенный
+   System Extension для per-app изоляции — расширение больше не собирается
+   отдельно, оно folded в это приложение, нужен Xcode + XcodeGen):
 
    ```sh
-   make gui GUI_TAGS= LICENSE_PUBKEY=<pub> LICENSE_SERVER_URL=https://license.<домен>
+   make app-macos DEVELOPMENT_TEAM=S3UCF4USYC
    ```
 
-   `GUI_TAGS=` обязателен — без него по умолчанию собирается dev-вариант с
-   тегом `unlicensed` (проверка лицензии скомпилирована из GUI и экран
-   лицензии показывает «development build»).
+   Приложение подписывается Developer ID сразу при сборке (`xcodebuild`, manual
+   signing pinned in `macos/Singctl/project.yml` / `Singctl.entitlements`) —
+   лицензионные переменные (`LICENSE_PUBKEY`/`LICENSE_SERVER_URL`) в него не
+   пробрасываются отдельно: приложение общается с демоном/сервером лицензий
+   через тот же control-сокет и `internal/license`, что и CLI.
 
-4. **Собрать System Extension + контейнер-приложение** (per-app изоляция,
-   отдельно от лицензии, macOS-only, нужен Xcode + XcodeGen):
-
-   ```sh
-   make build-netext DEVELOPMENT_TEAM=S3UCF4USYC
-   ```
-
-5. **Собрать `.pkg`/`.dmg`**:
+4. **Собрать `.pkg`/`.dmg`**:
 
    ```sh
    make pkg-macos PKG_VERSION=x.y.z CLI_BIN=bin/singctl-darwin-arm64
    ```
 
-   `pkg-macos` (`packaging/macos/build-installers.sh`) сам подписывает
-   staged-копию CLI отдельным entitlements-файлом с App Group
+   `pkg-macos` (`packaging/macos/build-installers.sh`) верифицирует подпись
+   `Singctl.app` (уже подписан на шаге 3, повторно не подписывается) и
+   отдельно подписывает staged-копию CLI entitlements-файлом с App Group
    (`packaging/macos/singctl-cli.entitlements`) — иначе CLI не сможет писать
-   общий `config.json` для расширения. Подпись GUI-`.app` идёт с
-   `packaging/macos/singctl.entitlements` (sandbox выключен, как у
-   clash-verge-rev — GUI общается с демоном через unix-сокет).
+   общий `config.json` для расширения.
 
    Переменные окружения, включающие реальную подпись/нотаризацию (без них
    получаются несигнированные артефакты — годится для dry-run):
 
    | env | назначение |
    |---|---|
-   | `CODESIGN_IDENTITY` | `Developer ID Application: <Name> (S3UCF4USYC)` — подпись `.app` и CLI |
+   | `CODESIGN_IDENTITY` | `Developer ID Application: <Name> (S3UCF4USYC)` — подпись CLI (`.app` уже подписан на шаге 3) |
    | `INSTALLER_IDENTITY` | `Developer ID Installer: <Name> (S3UCF4USYC)` — подпись `.pkg` |
    | `NOTARY_PROFILE` | keychain-профиль `notarytool` (альтернатива — тройка `AC_*` ниже) |
    | `AC_APPLE_ID` / `AC_PASSWORD` / `AC_TEAM_ID` | учётные данные нотаризации напрямую, напр. `AC_TEAM_ID=S3UCF4USYC` |
@@ -201,20 +193,10 @@ Developer, как собрать **лицензионный**, подписан�
 ### Автоматизация
 
 `.gitlab-ci.yml` → джоба `release:macos` (ручная, `when: manual`, раннер с
-тегом `macos`) воспроизводит шаги 2–5 на теге `vX.Y.Z`. Полное описание
-переменных CI/CD и порядка регистрации Mac-раннера —
-[docs/deploy-gitlab.md, шаг 6](deploy-gitlab.md#шаг-6--релизы).
-
-> **Расхождение на момент написания:** `release:macos` в `.gitlab-ci.yml`
-> сейчас передаёт в сборку только `LICENSE_PUBKEY` (`make build-macos
-> LICENSE_PUBKEY="$LICENSE_PUBKEY"`, `make gui GUI_TAGS=
-> LICENSE_PUBKEY="$LICENSE_PUBKEY"`) — `LICENSE_SERVER_URL` в джобе не
-> проброшен (переменная в `Makefile` появилась позже джобы). Пока это не
-> починено в `.gitlab-ci.yml`, CI-релиз macOS выходит без встроенного адреса
-> сервера: активация/суточная сверка отключены, и после установки нужно
-> явно задавать `SINGCTL_LICENSE_SERVER` на машине пользователя, либо
-> добавить свою переменную CI/CD `LICENSE_SERVER_URL` и дописать её в
-> команды джобы, либо собирать `.pkg`/`.dmg` локально по шагам выше.
+тегом `macos`) воспроизводит шаги 2–4 на теге `vX.Y.Z`
+(`make build-macos LICENSE_PUBKEY=… LICENSE_SERVER_URL=…`, `make app-macos`,
+`make pkg-macos`). Полное описание переменных CI/CD и порядка регистрации
+Mac-раннера — [docs/deploy-gitlab.md, шаг 6](deploy-gitlab.md#шаг-6--релизы).
 
 ---
 
@@ -271,9 +253,9 @@ curl -fsS -XPOST https://license.<домен>/v1/admin/issue \
 
 **Установка у коллеги:**
 
-1. `.dmg` → перетащить `SingctlProxy`/`singctl-gui` в Applications (или
-   запустить `.pkg` — он дополнительно ставит CLI в `/usr/local/bin` и
-   LaunchDaemon для системного VPN-режима).
+1. `.dmg` → перетащить `Singctl.app` в Applications (или запустить `.pkg` — он
+   дополнительно ставит CLI в `/usr/local/bin` и LaunchDaemon для системного
+   VPN-режима).
 2. Первый запуск — Gatekeeper молчит (подпись Developer ID + нотаризация
    пройдены).
 3. Если нужна **per-app изоляция** (не системный VPN) — одобрить расширение:
@@ -281,8 +263,9 @@ curl -fsS -XPOST https://license.<домен>/v1/admin/issue \
    (см. [docs/macos.md](macos.md#per-app-на-macos--системное-расширение)).
    Для обычного системного VPN-режима этот шаг не нужен.
 4. **Активировать лицензию:**
-   - в GUI — вставить токен в разделе лицензии (`ActivateLicense`,
-     `gui/frontend/src/features/activate-license`); GUI сразу же обращается к
+   - в приложении — вставить токен в разделе лицензии (`LicenseScreen`,
+     `macos/Singctl/App/Core/LicenseService.swift:activate`), которое запускает
+     `singctl --install <токен> --email <адрес>` и сразу же обращается к
      серверу для подтверждения активации;
    - в CLI — `singctl --license <токен>` сохраняет и офлайн-проверяет токен
      (без похода на сервер), а онлайн-активация происходит на **следующем**
@@ -320,8 +303,8 @@ curl -fsS -XPOST https://license.<домен>/v1/admin/revoke \
 2. **`bin/singctl-server keygen`** → сохранить `LICENSE_PUBKEY` (в сборку) и
    `LICENSE_PRIVATE_KEY` (на сервер, не коммитить).
 3. **Развернуть лицензионный сервер** — [docs/deploy-gitlab.md](deploy-gitlab.md).
-4. **Собрать лицензионный билд** — `make build-macos` / `make gui` (с
-   `LICENSE_PUBKEY` + `LICENSE_SERVER_URL`) → `make build-netext` →
+4. **Собрать лицензионный билд** — `make build-macos` (с `LICENSE_PUBKEY` +
+   `LICENSE_SERVER_URL`) → `make app-macos` →
    `make pkg-macos` (с `CODESIGN_IDENTITY`/`INSTALLER_IDENTITY`/`NOTARY_PROFILE`).
 5. **Нотарификация + staple** — встроено в `pkg-macos`, проверить
    `spctl -a -vv` / `xcrun stapler validate`.

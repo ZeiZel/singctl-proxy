@@ -57,12 +57,11 @@ test:go:
     - go build ./cmd/singctl
     - go build -tags unlicensed ./cmd/singctl
 
-# test:gui (Wails/Node) removed — the Wails GUI (gui/) is no longer part of the
-# packaging pipeline, replaced by the native SwiftUI app in macos/Singctl/
-# (built via `make app-macos`). gui/ itself hasn't been deleted yet (a later
-# phase does that), so it has no CI job for now. Swift-side tests for the new
-# app run via `xcodebuild test` on the macOS runner (not yet wired into a CI
-# job here — see macos/Singctl/ProxyExtension/Tests).
+# The old Wails GUI (gui/) has been removed; the desktop app is now the native
+# SwiftUI app in macos/Singctl/ (built via `make app-macos`), so there is no
+# test:gui job anymore. Swift-side tests for the new app run via `xcodebuild
+# test` on the macOS runner (not yet wired into a CI job here — see
+# macos/Singctl/ProxyExtension/Tests).
 
 # --- build stage (mirrors .github/workflows/deploy.yml "image" job) ----------
 

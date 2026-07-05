@@ -7,8 +7,8 @@
 им исходящий доступ.
 
 Проект разворачивается из CLI/TUI в готовый к продаже продукт: к утилите
-добавляются фоновый сервис-демон (старт при загрузке), десктоп-GUI в стиле
-clash-verge-rev и сервер лицензий.
+добавляются фоновый сервис-демон (старт при загрузке), нативное macOS-приложение
+и сервер лицензий.
 
 ## Компоненты
 
@@ -16,12 +16,13 @@ clash-verge-rev и сервер лицензий.
 | --- | --- | --- |
 | **CLI / TUI** | `cmd/singctl` | терминальный интерфейс (Bubble Tea, рус.), флаги, man-страница |
 | **Демон** | `singctl --daemon --headless` | фоновый рутовый сервис (LaunchDaemon/systemd), держит прокси и отдаёт control-сокет |
-| **Десктоп-GUI** | `gui/` | Wails-приложение (Go + React, англ.), управляет демоном — см. [`gui/README.md`](gui/README.md) |
+| **macOS-приложение** | `macos/Singctl/` | нативное SwiftUI-приложение, хостит System Extension для per-app изоляции и управляет демоном — см. [docs/macos.md](docs/macos.md) |
 | **Сервер лицензий** | `cmd/server`, `internal/licensesrv` | выпуск/отзыв/проверка Ed25519-лицензий — см. [`LICENSATION.md`](LICENSATION.md) |
 
-GUI **непривилегированный**: он не линкует sing-box и не требует root — все
-привилегированные операции (TUN, маршруты, cgroup/nftables) живут в демоне, а GUI
-управляет им через control-сокет + Clash API.
+macOS-приложение не линкует sing-box и не требует root само по себе — все
+привилегированные операции (TUN, маршруты) живут в демоне, а приложение
+управляет им через control-сокет + Clash API; System Extension (для per-app
+изоляции) запускается от имени пользователя после одобрения в System Settings.
 
 ## Архитектура
 
@@ -60,8 +61,8 @@ build-тегом.
 cmd/singctl     CLI/TUI + точка сборки шиппинг-бинарника
 cmd/server      сервер лицензий
 internal/       ядро (см. «Архитектура»); только core/real.go импортирует sing-box
-gui/            десктоп-GUI (Wails: Go + React) — отдельный модуль singctl/gui
-packaging/      macOS (LaunchDaemon, NetworkExtension)
+macos/Singctl/  нативное macOS-приложение (SwiftUI) + System Extension
+packaging/      macOS (LaunchDaemon, установщики .pkg/.dmg)
 scripts/        install-macos.sh
 deploy/         сервер лицензий: Dockerfile, Helm-чарт, Ansible
 docs/           дополнительная документация
@@ -86,9 +87,7 @@ make build              # версионированный бинарник в .
 make build-all          # кросс-сборка macOS/Windows
 make build-server       # сервер лицензий
 make install            # установка CLI + демона (LaunchDaemon на macOS)
-make gui                # сборка десктоп-GUI (wails build)
-make gui-dev            # GUI в режиме разработки
-make gui-test           # тесты GUI (Go bridge + frontend vitest)
+make app-macos          # сборка нативного macOS-приложения (macos/Singctl/)
 ```
 
 `singctl` для VPN/TUN запускается **под root** (управление TUN и маршрутами);
@@ -98,11 +97,12 @@ make gui-test           # тесты GUI (Go bridge + frontend vitest)
 Подробные платформенные оговорки (Windows/wintun, кросс-компиляция, man-страница) —
 в [`README-build.md`](README-build.md).
 
-## Десктоп-GUI
+## macOS-приложение
 
-Сборка и разработка GUI описаны в [`gui/README.md`](gui/README.md): требования
-(Wails CLI), `make gui`/`gui-dev`/`gui-test`, структура (Feature-Sliced Design +
-Tailwind + Zustand) и соглашения.
+Нативное SwiftUI-приложение живёт в [`macos/Singctl/`](macos/Singctl/) и хостит
+встроенный System Extension для per-app изоляции трафика. Сборка — `make
+app-macos` (нужны Xcode + XcodeGen); подробнее об архитектуре и подписи — в
+[docs/macos.md](docs/macos.md) и [`LICENSATION.md`](LICENSATION.md).
 
 ## Лицензирование и поставка
 

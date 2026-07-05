@@ -63,9 +63,9 @@ identity родителя). Никаких env-переменных, флаго�
 
 Что для этого нужно (разово):
 
-1. Собрать и подписать расширение + контейнер-приложение:
-   `make build-netext DEVELOPMENT_TEAM=<TEAM_ID>`.
-2. Запустить контейнер-приложение и **одобрить** расширение в System Settings →
+1. Собрать и подписать нативное macOS-приложение (`macos/Singctl/`), которое
+   хостит встроенное расширение: `make app-macos DEVELOPMENT_TEAM=<TEAM_ID>`.
+2. Запустить `Singctl.app` и **одобрить** расширение в System Settings →
    General → Login Items & Extensions.
 3. Полную последовательность (Apple Developer Program, App IDs, capabilities,
    нотаризация, подпись CLI) см. в **[LICENSATION.md](../LICENSATION.md)**.
@@ -86,7 +86,7 @@ identity родителя). Никаких env-переменных, флаго�
 запущенного).
 
 Если расширение не установлено/не одобрено, эти действия вернут понятную ошибку со
-ссылкой на сборку (`make build-netext`) и LICENSATION.md.
+ссылкой на сборку (`make app-macos`) и LICENSATION.md.
 
 ## Сосуществование с Cisco
 

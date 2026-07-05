@@ -161,9 +161,9 @@ Settings → CI/CD → Variables. Все — Protected (видны только 
 git push origin main
 ```
 
-Запускает пайплайн `test:go`/`test:gui` → `build:image` → `deploy:compose`:
+Запускает пайплайн `test:go` → `build:image` → `deploy:compose`:
 
-- `test:go` / `test:gui` — `go vet`/`go test`/сборка CLI, фронтенд + Go-тесты GUI.
+- `test:go` — `go vet`/`go test`/сборка CLI.
 - `build:image` — собирает `deploy/server.Dockerfile`, пушит
   `$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA` (и `:latest` на `main`) в GitLab
   Container Registry.
@@ -203,14 +203,15 @@ git push --tags
 
 - `release:macos` — **ручная** джоба (`when: manual`, `allow_failure: true`) на
   раннере с тегом `macos`; нужно нажать ▶ в UI пайплайна, и раннер должен быть
-  онлайн. Собирает CLI/GUI и `.pkg`/`.dmg` (подробности сборки —
-  [packaging/README.md](../packaging/README.md)), кладёт их в артефакты джобы.
+  онлайн. Собирает CLI, нативное macOS-приложение (`macos/Singctl/`) и
+  `.pkg`/`.dmg` (подробности сборки — [packaging/README.md](../packaging/README.md)),
+  кладёт их в артефакты джобы.
 - `release:publish` — ждёт (опционально) `release:macos`, заливает файлы в
   Generic Package Registry проекта
   (`.../packages/generic/singctl/$CI_COMMIT_TAG/…`) и создаёт GitLab Release
   со ссылками на них.
 
-`release:macos` собирает через `make build-macos` и `make gui` с
+`release:macos` собирает через `make build-macos` и `make app-macos` с
 `LICENSE_PUBKEY="$LICENSE_PUBKEY" LICENSE_SERVER_URL="$LICENSE_SERVER_URL"`.
 Без CI/CD-переменных `LICENSE_SERVER_URL` и `LICENSE_PUBKEY` (шаг 4) релизная
 сборка выходит с пустым дефолтным сервером — активация лицензии сработает

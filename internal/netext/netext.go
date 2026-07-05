@@ -1,5 +1,5 @@
 // Package netext is the singctl (Go) side of the macOS transparent-proxy System
-// Extension (see packaging/macos/netextension). The extension catches EVERY
+// Extension (see macos/Singctl/ProxyExtension). The extension catches EVERY
 // network stack of a captured app — Chromium, Node/undici, raw sockets — so it
 // is the only macOS mechanism that fully proxies Cursor/VS Code per-app, unlike
 // the --proxy-server / HTTP_PROXY levers in internal/procproxy which each cover
@@ -23,14 +23,13 @@ import (
 
 // ExtensionID is the bundle identifier of the system extension; AppGroup is the
 // shared container the extension reads config.json from. Kept in sync with
-// packaging/macos/netextension (Info.plist / entitlements).
+// macos/Singctl/ProxyExtension (Info.plist / entitlements).
 const (
 	ExtensionID = "com.singctl.proxy.netext"
 	AppGroup    = "group.com.singctl.proxy"
 )
 
-// Config is the JSON contract written for the extension. It mirrors
-// packaging/macos/netextension/config.example.json byte-for-byte in shape.
+// Config is the JSON contract written for the extension.
 type Config struct {
 	Targets   []string `json:"targets"`
 	SocksHost string   `json:"socksHost"`

@@ -34,10 +34,10 @@ MANPAGE := cmd/singctl/singctl.1
 # build with sing-tun's pinned gVisor version).
 SINGBOX_TAGS := singbox with_utls with_clash_api
 
-.PHONY: build build-macos build-windows build-all build-netext app-macos \
+.PHONY: build build-macos build-windows build-all app-macos \
 	build-unlicensed build-server docker-server \
 	test test-integration tidy run lint clean install-man uninstall-man \
-	install uninstall gui gui-dev gui-test gui-reset \
+	install uninstall \
 	pkg-macos
 
 # Install prefix for the binary (`make install`).
@@ -86,42 +86,23 @@ build-windows:
 
 build-all: build-macos build-windows
 
-# Build the macOS transparent-proxy System Extension scaffold (Variant C of the
-# Cursor-leak plan, bead singctl-proxy-4uy). macOS-only: needs Xcode + XcodeGen
-# (`brew install xcodegen`) and an Apple Developer Team ID. The extension catches
-# an app's WHOLE network stack (Chromium, Node/undici, raw sockets) — the only
-# way to fully proxy Cursor/VS Code per-app on macOS. After building, run the
-# .app once to approve the extension, then notarize (see the script's output).
-#
-#   make build-netext                          # uses the default team below
-#   make build-netext DEVELOPMENT_TEAM=<your-team-id>   # override for another account
-#
-# DEVELOPMENT_TEAM defaults to the project's Apple Developer Team ID; override it
-# on the command line to build/sign with a different account.
-DEVELOPMENT_TEAM ?= S3UCF4USYC
-NETEXT_DIR := packaging/macos/netextension
-build-netext:
-ifeq ($(UNAME_S),Darwin)
-	DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" $(NETEXT_DIR)/build.sh
-else
-	@echo "build-netext is macOS-only (needs Xcode + the NetworkExtension SDK)." >&2; exit 1
-endif
-
 # Native SwiftUI macOS app (macos/Singctl/) that HOSTS the embedded
-# ProxyExtension transparent-proxy system extension — replaces the Wails
-# `gui` target in the packaging pipeline (build-netext/netextension's
-# separate SingctlProxy.app container is now folded into this app). Needs
-# Xcode + XcodeGen (`brew install xcodegen`) and an Apple Developer Team ID;
-# see macos/Singctl/build.sh for the full env knobs. Signing identity +
-# provisioning profiles are pinned in macos/Singctl/project.yml (Developer
-# ID, manual signing) so the output is already signed — no separate
-# codesign step needed afterward.
+# ProxyExtension transparent-proxy system extension (captures an app's WHOLE
+# network stack — Chromium, Node/undici, raw sockets — the only way to fully
+# proxy Cursor/VS Code per-app on macOS). Needs Xcode + XcodeGen (`brew install
+# xcodegen`) and an Apple Developer Team ID; see macos/Singctl/build.sh for the
+# full env knobs. Signing identity + provisioning profiles are pinned in
+# macos/Singctl/project.yml (Developer ID, manual signing) so the output is
+# already signed — no separate codesign step needed afterward. After building,
+# run the .app once to approve the extension, then notarize (see the script's
+# output).
 #
 #   make app-macos                                 # uses the default team below
 #   make app-macos DEVELOPMENT_TEAM=<your-team-id>  # override for another account
 #   make app-macos NOTARY_PROFILE=<profile>         # also notarize+staple the .app
 #
 # Output: macos/Singctl/build/Build/Products/Release/Singctl.app
+DEVELOPMENT_TEAM ?= S3UCF4USYC
 NOTARY_PROFILE ?=
 app-macos:
 ifeq ($(UNAME_S),Darwin)
@@ -169,7 +150,7 @@ uninstall-man:
 # the build stays non-root; the install step self-elevates with sudo for the
 # privileged copy. Installs a LaunchDaemon (scripts/install-macos.sh) that runs
 # a boot-start, system-wide VPN daemon (singctl --headless --vpn) that the
-# desktop GUI drives over the control socket. SUDO is empty when already root
+# desktop app drives over the control socket. SUDO is empty when already root
 # so `sudo make install` also works. macOS-only.
 SUDO := $(shell [ "$$(id -u)" = "0" ] || echo sudo)
 install: build
@@ -178,51 +159,15 @@ install: build
 uninstall:
 	./scripts/install-macos.sh uninstall
 
-# --- Desktop GUI (Wails: Go + React, drives the daemon over the control socket) ---
-# SUPERSEDED for packaging by `app-macos` (macos/Singctl/, native SwiftUI) — kept
-# only until a later phase removes gui/ entirely. `make pkg-macos` no longer
-# builds or stages this target.
-# The GUI lives in its own nested module (gui/) so it never pulls sing-box into
-# the main build. No platform build tag is needed on macOS. WAILS resolves to
-# an installed `wails` (on PATH or in $(go env GOPATH)/bin), else falls back to
-# `go run` so no global install is required. Override with `make gui WAILS=wails`
-# once it is on your PATH.
-WAILS_VERSION ?= v2.12.0
-WAILS ?= $(shell command -v wails 2>/dev/null || ([ -x "$$(go env GOPATH)/bin/wails" ] && echo "$$(go env GOPATH)/bin/wails") || echo "go run github.com/wailsapp/wails/v2/cmd/wails@$(WAILS_VERSION)")
-# Dev GUI builds compile out the license gate (like build-unlicensed): the GUI's
-# License screen then shows "development build". Production packaging overrides
-# `GUI_TAGS=` and embeds the pubkey (LICENSE_PUBKEY) to enable real validation.
-GUI_TAGS ?= unlicensed
-GUI_ALL_TAGS := $(strip $(GUI_TAGS))
-GUI_TAGFLAG := $(if $(GUI_ALL_TAGS),-tags "$(GUI_ALL_TAGS)",)
-GUI_LDX := $(if $(strip $(LICENSE_PUBKEY)),-X singctl/internal/license.PublicKeyB64=$(LICENSE_PUBKEY),)
-GUI_LDX += $(if $(strip $(LICENSE_SERVER_URL)),-X singctl/internal/license.LicenseServerDefault=$(LICENSE_SERVER_URL),)
-GUI_LDFLAGS := $(if $(strip $(GUI_LDX)),-ldflags "$(strip $(GUI_LDX))",)
-gui:
-	cd gui && $(WAILS) build $(GUI_TAGFLAG) $(GUI_LDFLAGS)
-
-gui-dev:
-	cd gui && $(WAILS) dev $(GUI_TAGFLAG) $(GUI_LDFLAGS)
-
-gui-test:
-	cd gui && go test ./...
-	cd gui/frontend && npm run test
-
-# Wipe the frontend's installed deps + lockfile. Needed when switching the OS that
-# builds the GUI on a shared checkout (node_modules holds platform-specific
-# rollup/esbuild binaries); the next `make gui`/`gui-dev` reinstalls them.
-gui-reset:
-	rm -rf gui/frontend/node_modules gui/frontend/package-lock.json gui/frontend/dist
-
 # --- Installers / packaging (output to dist/) ---
 # Version without a leading 'v' (deb/rpm reject it); release tags are clean.
 PKG_VERSION ?= $(patsubst v%,%,$(VERSION))
 PKG_ARCH ?= $(shell $(GO) env GOARCH)
 
-# macOS notarized .pkg + .dmg. Needs the GUI (make gui) + CLI (make build) built;
-# signing/notarization apply only when the identity/cred env vars are set.
+# macOS notarized .pkg + .dmg. Needs the app (make app-macos) + CLI (make build)
+# built; signing/notarization apply only when the identity/cred env vars are set.
 pkg-macos:
 	PKG_VERSION="$(PKG_VERSION)" packaging/macos/build-installers.sh
 
 clean:
-	rm -rf bin dist gui/build/bin gui/frontend/dist
+	rm -rf bin dist

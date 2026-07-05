@@ -19,7 +19,7 @@ import (
 // Surfaced verbatim in the TUI (procErr/errText).
 var errExtensionUnavailable = errors.New(
 	"system extension is not installed or not approved — build and approve it " +
-		"(make build-netext DEVELOPMENT_TEAM=…, then System Settings → Login Items & " +
+		"(make app-macos DEVELOPMENT_TEAM=…, then System Settings → Login Items & " +
 		"Extensions; see LICENSATION.md for details)")
 
 // darwinRouter is the macOS per-app backend. Unlike the Linux cgroup router or

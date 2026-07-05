@@ -1,9 +1,0 @@
-{
-  "_comment": "Contract between singctl (Go) and the System Extension. singctl writes this into the App Group shared container (group.com.singctl.proxy/config.json) and/or the manager providerConfiguration. 'targets' are the bundle IDs to capture; an empty list disables capture. socksHost/socksPort point at singctl's local SOCKS proxy.",
-  "targets": [
-    "com.todesktop.230313mzl4w4u92",
-    "com.microsoft.VSCode"
-  ],
-  "socksHost": "127.0.0.1",
-  "socksPort": 1080
-}

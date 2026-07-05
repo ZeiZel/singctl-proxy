@@ -36,10 +36,6 @@ VERSION="${VERSION#v}"
 OUT_DIR="${OUT_DIR:-$REPO_ROOT/dist}"
 APP_PATH="${APP_PATH:-$REPO_ROOT/macos/Singctl/build/Build/Products/Release/Singctl.app}"
 CLI_BIN="${CLI_BIN:-$REPO_ROOT/bin/singctl}"
-# packaging/macos/singctl.entitlements (old Wails GUI entitlements, incl. JIT)
-# is no longer used here — the new app is signed at build time with
-# macos/Singctl/Singctl.entitlements instead. Left in place, unused, until a
-# later phase removes gui/.
 CLI_ENTITLEMENTS="$REPO_ROOT/packaging/macos/singctl-cli.entitlements"
 PKG_ID="com.singctl.proxy"
 

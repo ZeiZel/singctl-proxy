@@ -59,7 +59,7 @@ func probeExtension() bool {
 // darwinController is the real Controller: it tracks the captured-app set and,
 // when the system extension is approved, writes the singctl<->extension
 // config.json into the App Group shared container. The extension picks it up
-// (providerConfiguration / file watch — see packaging/macos/netextension).
+// (providerConfiguration / file watch — see macos/Singctl/ProxyExtension).
 type darwinController struct {
 	mu      sync.Mutex
 	set     *targetSet
