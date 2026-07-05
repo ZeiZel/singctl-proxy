@@ -69,12 +69,12 @@ struct AppButton: View {
         if isLoading {
             HStack(spacing: Spacing.xs) {
                 ProgressView().controlSize(.small)
-                Text(title)
+                Text(title).font(.appBody)
             }
         } else if let icon {
-            Label(title, systemImage: icon)
+            Label(title, systemImage: icon).font(.appBody)
         } else {
-            Text(title)
+            Text(title).font(.appBody)
         }
     }
 }

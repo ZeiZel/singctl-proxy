@@ -59,6 +59,7 @@ private struct LatencyGaugeRow: View {
                     StatusDot(on: true)
                 }
                 Text(row.tag)
+                    .font(.appBody)
                     .foregroundStyle(Color.sText)
                 if row.selected {
                     Badge(text: "selected", tone: .ok)
@@ -70,7 +71,7 @@ private struct LatencyGaugeRow: View {
                 EmptyView()
             } currentValueLabel: {
                 Text(delayLabel)
-                    .font(.callout.monospacedDigit())
+                    .font(.appBody.monospacedDigit())
                     .foregroundStyle(Color.sTextDim)
             }
             .gaugeStyle(.accessoryLinearCapacity)

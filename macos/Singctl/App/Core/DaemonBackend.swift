@@ -21,6 +21,14 @@ import Foundation
 final class DaemonBackend: Backend {
     private let control = ControlClient()
 
+    /// Throttle state for the single-server latency probe in `latency()` —
+    /// see that method's doc comment. Both are only ever touched from
+    /// `latency()`, which LiveStore's poll loop calls serially (never
+    /// concurrently), so plain (non-actor-isolated) storage is safe here.
+    private var lastProbe: Date?
+    private var lastProbedDelay: Int?
+    private let probeInterval: TimeInterval = 10
+
     // MARK: - Status / lifecycle
 
     func status() async throws -> DaemonStatus {
@@ -53,12 +61,51 @@ final class DaemonBackend: Backend {
     /// ("proxy") is present, so a transient/absent group leaves the
     /// last-known `LiveStore.latency` untouched (the caller wraps this in
     /// `try?`) instead of resetting it to `.empty`.
+    ///
+    /// A single VLESS key configures `proxy` as a standalone outbound rather
+    /// than a urltest group, so sing-box never auto-probes it: its Clash
+    /// `history` stays empty and `ClashClient.latency(from:)` reports a
+    /// `delay` of 0 ("timeout") forever, even though the proxy works fine.
+    /// Fix: when the selected row comes back unprobed, actively hit Clash's
+    /// `/proxies/{tag}/delay` (`ClashClient.delay`) and splice the result
+    /// into that row. Throttled to once per `probeInterval` (~10s) — NOT on
+    /// every 2s LiveStore tick — reusing the last probed delay in between so
+    /// the UI doesn't flicker back to "timeout" while waiting for the next
+    /// probe window.
     func latency() async throws -> Latency {
-        let proxies = try await clashClient().proxies()
-        guard let lat = ClashClient.latency(from: proxies) else {
+        let client = try clashClient()
+        let proxies = try await client.proxies()
+        guard var lat = ClashClient.latency(from: proxies) else {
             throw ControlClientError.badReply("no failover group in /proxies")
         }
+
+        if let idx = lat.rows.firstIndex(where: { $0.selected }), lat.rows[idx].delay <= 0 {
+            let now = Date()
+            if let lastProbe, now.timeIntervalSince(lastProbe) < probeInterval {
+                if let lastProbedDelay, lastProbedDelay > 0 {
+                    lat.rows[idx].delay = lastProbedDelay
+                }
+            } else {
+                lastProbe = now
+                let testURL = await probeURL()
+                if let delay = try? await client.delay(tag: lat.rows[idx].tag, url: testURL, timeoutMs: 3000),
+                   delay > 0 {
+                    lastProbedDelay = delay
+                    lat.rows[idx].delay = delay
+                }
+            }
+        }
+
         return lat
+    }
+
+    /// The URL to actively probe with, mirroring Settings.URLTestURL when
+    /// available (falls back to sing-box's own default probe target).
+    private func probeURL() async -> String {
+        if let settings = try? await control.settingsGet(), !settings.urlTestURL.isEmpty {
+            return settings.urlTestURL
+        }
+        return "http://www.gstatic.com/generate_204"
     }
 
     func connections() async throws -> ClashConnections {

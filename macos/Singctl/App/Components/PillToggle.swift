@@ -27,9 +27,9 @@ struct PillToggle: View {
     var body: some View {
         Toggle(isOn: $isOn) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(label).foregroundStyle(.primary)
+                Text(label).font(.appBody).foregroundStyle(.primary)
                 if let sub {
-                    Text(sub).font(.caption).foregroundStyle(.secondary)
+                    Text(sub).font(.appCaption).foregroundStyle(.secondary)
                 }
             }
         }

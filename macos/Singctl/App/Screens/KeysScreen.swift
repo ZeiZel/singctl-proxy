@@ -100,41 +100,39 @@ struct KeysScreen: View {
                 EmptyState(text: isLoading ? "Loading keys…" : "No keys loaded.", symbol: "key")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                Table(keys) {
-                    TableColumn("#") { row in
-                        Text("\(row.index + 1)")
-                            .font(.body)
-                            .foregroundStyle(Color.sTextDim)
-                    }
-                    .width(32)
-
-                    TableColumn("Name") { row in
-                        Text(row.name)
-                            .font(.body)
-                            .foregroundStyle(Color.sText)
-                    }
-                    .width(min: 100, ideal: 160)
-
-                    TableColumn("Key") { row in
-                        Text(row.masked)
-                            .font(.system(.callout, design: .monospaced))
-                            .foregroundStyle(Color.sTextDim)
-                    }
-
-                    TableColumn("") { row in
-                        HStack(spacing: Spacing.xs) {
-                            AppButton("Rename", kind: .ghost, disabled: isMutating) {
-                                renameTarget = row
-                                renameText = row.name
-                            }
-                            AppButton("Delete", kind: .danger, disabled: isMutating) {
-                                deleteTarget = row
+                List {
+                    ForEach(keys) { row in
+                        HStack(spacing: Spacing.md) {
+                            Text("\(row.index + 1)")
+                                .font(.appSecondary)
+                                .foregroundStyle(Color.sTextDim)
+                                .frame(width: 24, alignment: .leading)
+                            Text(row.name)
+                                .font(.appBody)
+                                .foregroundStyle(Color.sText)
+                                .frame(minWidth: 100, alignment: .leading)
+                            Text(row.masked)
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundStyle(Color.sTextDim)
+                                .lineLimit(1)
+                            Spacer()
+                            HStack(spacing: Spacing.xs) {
+                                AppButton("Rename", kind: .ghost, disabled: isMutating) {
+                                    renameTarget = row
+                                    renameText = row.name
+                                }
+                                AppButton("Delete", kind: .danger, disabled: isMutating) {
+                                    deleteTarget = row
+                                }
                             }
                         }
+                        .padding(.vertical, Spacing.xs)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                     }
-                    .width(min: 160, ideal: 180)
                 }
-                .controlSize(.large)
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
         }
         .frame(maxHeight: .infinity)

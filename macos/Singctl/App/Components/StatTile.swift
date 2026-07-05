@@ -33,16 +33,16 @@ struct StatTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
             Text(label.uppercased())
-                .font(.caption2)
+                .font(.appSecondary)
                 .tracking(0.6)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.system(.title2, design: .rounded).weight(.bold))
+                .font(.appTitle)
                 .foregroundStyle(tone.color)
                 .monospacedDigit()
             if let sub {
                 Text(sub)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.tertiary)
             }
         }

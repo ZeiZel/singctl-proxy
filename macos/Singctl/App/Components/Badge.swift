@@ -26,7 +26,7 @@ struct Badge: View {
 
     var body: some View {
         Text(text)
-            .font(.caption.weight(.medium))
+            .font(.appCaption.weight(.medium))
             .foregroundStyle(tone.color)
             .padding(.horizontal, Spacing.sm)
             .padding(.vertical, 4)

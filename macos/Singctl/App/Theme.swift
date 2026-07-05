@@ -122,6 +122,20 @@ enum Radius {
     static let card: CGFloat = 12
 }
 
+// MARK: - Typography
+
+/// Shared font tokens. `.controlSize(.large)` doesn't enlarge `Text`, so
+/// components apply these explicitly to get a visibly larger, more
+/// legible scale than the system defaults. Screens/tables (later wave)
+/// reuse these same tokens.
+extension Font {
+    static let appTitle = Font.system(size: 20, weight: .semibold)
+    static let appHeadline = Font.system(size: 16, weight: .semibold)
+    static let appBody = Font.system(size: 15)
+    static let appSecondary = Font.system(size: 13)
+    static let appCaption = Font.system(size: 12)
+}
+
 // MARK: - Scene modifier
 
 /// Root-level hook for app-wide appearance. This is the ONE place the app's

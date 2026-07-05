@@ -1,10 +1,10 @@
 // Card.swift
 //
-// The solid panel every screen builds on. Background is the opaque
-// `Color.sPanel` soft surface (adapts to Light/Dark) with a hairline
-// `Color.sBorder` border and `Radius.card` corners — deliberately not
-// translucent, so text stays readable regardless of what's behind the
-// window.
+// The frosted panel every screen builds on. Background is `.regularMaterial`
+// (frosted/translucent, adapts to Light/Dark) with a subtle `Color.sPanel`
+// tint layered on top so cards stay readable over the blurred window
+// background without becoming an opaque slab, plus a hairline `Color.sBorder`
+// border and `Radius.card` corners.
 
 import SwiftUI
 
@@ -47,7 +47,7 @@ struct Card<Content: View, Accessory: View>: View {
                 HStack(alignment: .firstTextBaseline) {
                     if let title {
                         Text(title)
-                            .font(.headline)
+                            .font(.appHeadline)
                             .foregroundStyle(Color.sText)
                     }
                     Spacer()
@@ -57,7 +57,8 @@ struct Card<Content: View, Accessory: View>: View {
             content
         }
         .padding(Spacing.md)
-        .background(Color.sPanel)
+        .background(Color.sPanel.opacity(0.35))
+        .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Radius.card, style: .continuous)

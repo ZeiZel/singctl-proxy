@@ -33,11 +33,11 @@ struct SectionHeader<Accessory: View>: View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.title2.weight(.bold))
+                    .font(.appTitle)
                     .foregroundStyle(.primary)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.subheadline)
+                        .font(.appSecondary)
                         .foregroundStyle(.secondary)
                 }
             }

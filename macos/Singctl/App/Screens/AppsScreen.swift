@@ -143,32 +143,33 @@ struct AppsScreen: View {
                         symbol: "app.dashed"
                     )
                 } else {
-                    Table(filteredInstalledApps, sortOrder: $installedSort) {
-                        TableColumn("App", value: \.name) { app in
-                            Text(app.name).font(.body).foregroundStyle(Color.sText)
-                        }
-                        .width(min: 160, ideal: 220)
-
-                        TableColumn("Bundle ID", value: \.bundleID) { app in
-                            Text(app.bundleID)
-                                .font(.system(.callout, design: .monospaced))
-                                .foregroundStyle(Color.sTextDim)
-                        }
-                        .width(min: 180, ideal: 280)
-
-                        TableColumn("") { app in
-                            AppButton(
-                                "Launch in proxy", icon: "bolt.fill",
-                                isLoading: launchingBundleID == app.bundleID,
-                                disabled: launchingBundleID != nil
-                            ) {
-                                launchInstalled(app)
+                    List {
+                        ForEach(filteredInstalledApps) { app in
+                            HStack(spacing: Spacing.md) {
+                                Text(app.name)
+                                    .font(.appBody)
+                                    .foregroundStyle(Color.sText)
+                                    .frame(minWidth: 160, alignment: .leading)
+                                Text(app.bundleID)
+                                    .font(.system(size: 13, design: .monospaced))
+                                    .foregroundStyle(Color.sTextDim)
+                                    .lineLimit(1)
+                                Spacer()
+                                AppButton(
+                                    "Launch in proxy", icon: "bolt.fill",
+                                    isLoading: launchingBundleID == app.bundleID,
+                                    disabled: launchingBundleID != nil
+                                ) {
+                                    launchInstalled(app)
+                                }
                             }
+                            .padding(.vertical, Spacing.xs)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                         }
-                        .width(min: 130, ideal: 150, max: 170)
                     }
-                    .tableStyle(.inset)
-                    .controlSize(.large)
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                 }
             }
         }
@@ -225,7 +226,7 @@ struct AppsScreen: View {
                 Table(sortedRunningApps, sortOrder: $appsSort) {
                     TableColumn("App", value: \.name) { app in
                         HStack(spacing: Spacing.sm) {
-                            Text(app.name).font(.body).foregroundStyle(Color.sText)
+                            Text(app.name).font(.appBody).foregroundStyle(Color.sText)
                             Badge(text: app.running ? "Running" : "Not running", tone: app.running ? .ok : .dim)
                         }
                     }
@@ -233,14 +234,14 @@ struct AppsScreen: View {
 
                     TableColumn("Bundle ID", value: \.bundleID) { app in
                         Text(app.bundleID)
-                            .font(.system(.callout, design: .monospaced))
+                            .font(.system(size: 13, design: .monospaced))
                             .foregroundStyle(Color.sTextDim)
                     }
                     .width(min: 140, ideal: 220)
 
                     TableColumn("PIDs") { app in
                         Text(app.pids.map(String.init).joined(separator: ", "))
-                            .font(.body)
+                            .font(.appBody)
                             .foregroundStyle(Color.sTextDim)
                     }
                     .width(min: 60, ideal: 90)
@@ -265,8 +266,9 @@ struct AppsScreen: View {
                     }
                     .width(min: 110, ideal: 130, max: 150)
                 }
-                .tableStyle(.inset)
-                .controlSize(.large)
+                .tableStyle(.inset(alternatesRowBackgrounds: false))
+                .scrollContentBackground(.hidden)
+                .background(.clear)
             }
         }
         .frame(maxWidth: .infinity)
@@ -316,7 +318,7 @@ struct AppsScreen: View {
                 Table(sortedProxiedApps, sortOrder: $proxiedSort) {
                     TableColumn("App", value: \.name) { app in
                         HStack(spacing: Spacing.sm) {
-                            Text(app.name).font(.body).foregroundStyle(Color.sText)
+                            Text(app.name).font(.appBody).foregroundStyle(Color.sText)
                             Badge(text: app.running ? "Running" : "Not running", tone: app.running ? .ok : .dim)
                         }
                     }
@@ -324,7 +326,7 @@ struct AppsScreen: View {
 
                     TableColumn("Bundle ID", value: \.bundleID) { app in
                         Text(app.bundleID)
-                            .font(.system(.callout, design: .monospaced))
+                            .font(.system(size: 13, design: .monospaced))
                             .foregroundStyle(Color.sTextDim)
                     }
                     .width(min: 140, ideal: 220)
@@ -348,8 +350,9 @@ struct AppsScreen: View {
                     }
                     .width(min: 110, ideal: 120, max: 140)
                 }
-                .tableStyle(.inset)
-                .controlSize(.large)
+                .tableStyle(.inset(alternatesRowBackgrounds: false))
+                .scrollContentBackground(.hidden)
+                .background(.clear)
             }
         }
         .frame(maxWidth: .infinity)

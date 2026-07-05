@@ -1,7 +1,8 @@
 // SingctlApp.swift — @main entry point.
 //
 // One regular windowed app (NavigationSplitView: sidebar + detail) that ALSO
-// exposes a MenuBarExtra for quick glance/mode-toggle access. Shared state:
+// drives a menu-bar status item for quick glance/mode-toggle access. Shared
+// state:
 //   - `LiveStore` — the 2s poll loop, injected as `.environmentObject` so any
 //     screen can `@EnvironmentObject var store: LiveStore`.
 //   - `Backend` — status/mode/keys/settings/traffic/latency/connections,
@@ -9,6 +10,13 @@
 //     AppModel.swift) so any kept screen can `@Environment(\.backend) var
 //     backend`. One instance is constructed here and shared with `LiveStore`
 //     so both see the same underlying `DaemonBackend`/`TunnelBackend`.
+//
+// The menu-bar presence is a plain AppKit `NSStatusItem` owned by
+// `AppDelegate` rather than a `MenuBarExtra` scene, so a right-click can show
+// a native `NSMenu` (mode switch + About/Quit) while a left-click keeps the
+// exact same SwiftUI `MenuBarContentView` popover as before. `AppDelegate` is
+// handed the SAME `store`/`backend` instances constructed below — see
+// `init()`.
 //
 // The sidebar's `Section` cases (Navigation.swift) already differ per build
 // flag; `DetailView` below mirrors that with matching `#if APPSTORE` guards
@@ -19,13 +27,20 @@ import AppKit
 
 @main
 struct SingctlApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store: LiveStore
     private let backend: Backend
 
     init() {
         let backend = SingctlApp.makeBackend()
         self.backend = backend
-        _store = StateObject(wrappedValue: LiveStore(backend: backend))
+        let liveStore = LiveStore(backend: backend)
+        _store = StateObject(wrappedValue: liveStore)
+        // Hand the AppDelegate (already constructed by the adaptor above)
+        // the SAME instances rather than letting it create its own, so
+        // there's exactly one poll loop and one backend for the whole app.
+        appDelegate.store = liveStore
+        appDelegate.backend = backend
     }
 
     private static func makeBackend() -> Backend {
@@ -46,14 +61,109 @@ struct SingctlApp: App {
                 .onDisappear { store.stop() }
         }
         .windowStyle(.hiddenTitleBar)
+    }
+}
 
-        MenuBarExtra("singctl", systemImage: "shield") {
-            MenuBarContentView()
-                .environmentObject(store)
+// MARK: - Menu-bar status item
+
+/// Owns the app's `NSStatusItem`. Left-click shows the existing SwiftUI
+/// `MenuBarContentView` in an `NSPopover` (identical content/behavior to the
+/// former `MenuBarExtra`); right-click shows a native `NSMenu` for a fast
+/// mode switch plus About/Quit. `store`/`backend` are set by `SingctlApp`
+/// right after this delegate is constructed (see `SingctlApp.init()`) so
+/// this never creates its own instances.
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    var store: LiveStore!
+    var backend: Backend!
+
+    private var statusItem: NSStatusItem?
+    private var popover: NSPopover?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let button = item.button {
+            button.image = NSImage(systemSymbolName: "shield", accessibilityDescription: "singctl")
+            button.target = self
+            button.action = #selector(statusItemClicked(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+        statusItem = item
+    }
+
+    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            showMenu(on: sender)
+        } else {
+            togglePopover(relativeTo: sender)
+        }
+    }
+
+    /// Builds the right-click `NSMenu` on demand and shows it immediately by
+    /// assigning it to the status item, replaying the click, then clearing
+    /// it — so left-clicks keep triggering `statusItemClicked` instead of
+    /// always opening a menu.
+    private func showMenu(on button: NSStatusBarButton) {
+        let currentMode = store.status.mode.isEmpty ? "off" : store.status.mode
+
+        let menu = NSMenu()
+        for (mode, title) in [("off", "Off"), ("proxy", "Proxy"), ("vpn", "VPN")] {
+            let item = NSMenuItem(title: title, action: #selector(selectMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode
+            item.state = (mode == currentMode) ? .on : .off
+            menu.addItem(item)
+        }
+
+        menu.addItem(.separator())
+
+        let about = NSMenuItem(title: "About singctl", action: #selector(showAbout), keyEquivalent: "")
+        about.target = self
+        menu.addItem(about)
+
+        let quit = NSMenuItem(title: "Quit singctl", action: #selector(quitApp), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
+
+        statusItem?.menu = menu
+        button.performClick(nil)
+        statusItem?.menu = nil
+    }
+
+    @objc private func selectMode(_ sender: NSMenuItem) {
+        guard let mode = sender.representedObject as? String else { return }
+        Task { try? await backend.setMode(mode) }
+    }
+
+    @objc private func showAbout() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.orderFrontStandardAboutPanel(nil)
+    }
+
+    @objc private func quitApp() {
+        NSApp.terminate(nil)
+    }
+
+    private func togglePopover(relativeTo button: NSStatusBarButton) {
+        if let popover, popover.isShown {
+            popover.performClose(nil)
+            return
+        }
+        let popover = self.popover ?? makePopover()
+        self.popover = popover
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    }
+
+    private func makePopover() -> NSPopover {
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(
+            rootView: MenuBarContentView()
+                .environmentObject(store!)
                 .environment(\.backend, backend)
                 .appTheme()
-        }
-        .menuBarExtraStyle(.window)
+        )
+        return popover
     }
 }
 
@@ -71,6 +181,7 @@ private struct RootView: View {
         } detail: {
             DetailView(section: selection ?? .dashboard)
         }
+        .containerBackground(.regularMaterial, for: .window)
     }
 }
 
@@ -85,7 +196,9 @@ private struct SidebarView: View {
         List(selection: $selection) {
             SwiftUI.Section {
                 ForEach(Section.allCases) { section in
-                    Label(section.title, systemImage: section.symbol).tag(section)
+                    Label(section.title, systemImage: section.symbol)
+                        .font(.appBody)
+                        .tag(section)
                 }
             } header: {
                 HStack(spacing: Spacing.sm) {
@@ -102,7 +215,7 @@ private struct SidebarView: View {
         .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
         .safeAreaInset(edge: .bottom) {
             Text(store.daemonRunning ? "daemon connected" : "daemon offline")
-                .font(.caption)
+                .font(.appSecondary)
                 .foregroundStyle(store.daemonRunning ? Color.sOk : Color.sTextFaint)
                 .padding(Spacing.sm)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -134,7 +247,6 @@ private struct DetailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.sBg)
     }
 }
 
@@ -168,15 +280,15 @@ private struct MenuBarContentView: View {
             HStack(spacing: Spacing.sm) {
                 StatusDot(on: store.daemonRunning)
                 Text(store.daemonRunning ? "Daemon running" : "Daemon offline")
-                    .font(.subheadline.weight(.medium))
+                    .font(.appSecondary.weight(.medium))
                     .foregroundStyle(Color.sText)
             }
 
             VStack(alignment: .leading, spacing: Spacing.xs) {
-                Text("MODE").font(.caption2).foregroundStyle(Color.sTextDim)
+                Text("MODE").font(.appCaption).foregroundStyle(Color.sTextDim)
                 SegmentedControl(options: modeOptions, selection: modeBinding, disabled: isApplyingMode)
                 if let modeError {
-                    Text(modeError).font(.caption).foregroundStyle(Color.sDanger)
+                    Text(modeError).font(.appCaption).foregroundStyle(Color.sDanger)
                 }
             }
 
@@ -192,7 +304,7 @@ private struct MenuBarContentView: View {
         }
         .padding(Spacing.md)
         .frame(width: 240)
-        .background(Color.sPanel)
+        .background(.regularMaterial)
     }
 
     private func applyMode(_ mode: String) {

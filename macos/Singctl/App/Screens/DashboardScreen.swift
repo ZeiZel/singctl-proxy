@@ -64,12 +64,16 @@ struct DashboardScreen: View {
         .toolbar {
             ToolbarItemGroup {
                 if store.status.ciscoActive {
-                    Badge(text: "Cisco active", tone: .warn)
+                    Label("Cisco active", systemImage: "exclamationmark.triangle.fill")
+                        .font(.appSecondary)
+                        .foregroundStyle(Color.sWarn)
                 }
-                Badge(
-                    text: store.daemonRunning ? "Running" : "Offline",
-                    tone: store.daemonRunning ? .ok : .danger
-                )
+                HStack(spacing: Spacing.xs) {
+                    StatusDot(on: store.daemonRunning)
+                    Text(store.daemonRunning ? "Running" : "Offline")
+                        .font(.appSecondary)
+                        .foregroundStyle(store.daemonRunning ? Color.sOk : Color.sDanger)
+                }
             }
         }
         #if !APPSTORE
@@ -85,7 +89,7 @@ struct DashboardScreen: View {
                 SegmentedControl(options: modeOptions, selection: modeBinding, disabled: isApplyingMode)
 
                 if let modeError {
-                    Text(modeError).font(.callout).foregroundStyle(Color.sDanger)
+                    Text(modeError).font(.appBody).foregroundStyle(Color.sDanger)
                 }
 
                 LabeledContent("Selected node", value: selectedNodeLabel)
@@ -189,13 +193,27 @@ private struct TrafficChart: View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
             Chart(points) { point in
                 AreaMark(x: .value("t", point.id), y: .value("Upload", point.up))
-                    .foregroundStyle(Color.sAccent.opacity(0.25))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color.sAccent.opacity(0.30), .clear],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .interpolationMethod(.monotone)
                 LineMark(x: .value("t", point.id), y: .value("Upload", point.up))
                     .foregroundStyle(Color.sAccent)
                     .interpolationMethod(.monotone)
 
                 AreaMark(x: .value("t", point.id), y: .value("Download", point.down))
-                    .foregroundStyle(Color.sOk.opacity(0.2))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color.sOk.opacity(0.30), .clear],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .interpolationMethod(.monotone)
                 LineMark(x: .value("t", point.id), y: .value("Download", point.down))
                     .foregroundStyle(Color.sOk)
                     .interpolationMethod(.monotone)
@@ -206,6 +224,7 @@ private struct TrafficChart: View {
                     AxisGridLine().foregroundStyle(Color.sBorder)
                     if let bytes = value.as(Double.self) {
                         AxisValueLabel(ByteFormat.rate(bytes))
+                            .font(.appCaption)
                             .foregroundStyle(Color.sTextFaint)
                     }
                 }
@@ -222,7 +241,7 @@ private struct TrafficChart: View {
     private func legendEntry(color: Color, label: String) -> some View {
         HStack(spacing: Spacing.xs) {
             Circle().fill(color).frame(width: 8, height: 8)
-            Text(label).font(.callout).foregroundStyle(Color.sTextDim)
+            Text(label).font(.appSecondary).foregroundStyle(Color.sTextDim)
         }
     }
 }
