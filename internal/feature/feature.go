@@ -28,7 +28,7 @@ type FlagSpec struct {
 // Descriptor is a module's static self-description.
 type Descriptor struct {
 	Name    string // stable id, e.g. "keys"
-	Title   string // human title, e.g. "Ключи (VLESS)"
+	Title   string // human title, e.g. "Keys (VLESS)"
 	Summary string // one-line summary shown beside the title
 	Doc     string // long-form prose (man page / future use)
 	Flags   []FlagSpec
@@ -108,10 +108,10 @@ func writeFlag(b *strings.Builder, f FlagSpec) {
 	left := "  " + flagLabel(f)
 	usage := f.Usage
 	if f.Repeatable {
-		usage += " (повторяемый)"
+		usage += " (repeatable)"
 	}
 	if f.Default != "" {
-		usage += " (по умолчанию: " + f.Default + ")"
+		usage += " (default: " + f.Default + ")"
 	}
 	if usage == "" {
 		b.WriteString(left + "\n")

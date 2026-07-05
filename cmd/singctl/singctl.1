@@ -7,7 +7,10 @@ singctl \- VLESS proxy / VPN client on an embedded sing-box core
 .SH DESCRIPTION
 .B singctl
 runs a VLESS proxy on an embedded sing-box core and toggles a system-wide VPN
-(TUN) mode from a terminal UI. It passively coexists with Cisco Secure Client
+(TUN) mode. It is driven entirely by flags (
+.BR \-\-headless " or " \-\-daemon
+to run it, \-\-status/\-\-attach/\-\-stop to manage a running instance); there
+is no interactive terminal UI. It passively coexists with Cisco Secure Client
 (observe-only): while a corporate VPN is connecting or active, singctl yields
 the routing table to avoid AnyConnect's IP-forwarding integrity check.
 .PP
@@ -26,13 +29,14 @@ servers; the proxy then picks the fastest reachable one automatically
 (latency-tested, priority follows the order given).
 .TP
 .B \-\-headless
-Run without the terminal UI. Requires a key from
+Run the proxy in the foreground (the only way to run it interactively; there is
+no terminal UI). Requires a key from
 .BR \-\-key ,
 .B $SINGCTL_KEY
 or the saved profile.
 .TP
 .BR \-l ", " \-\-logs
-Stream sing-box logs to stdout (headless) or open the logs view on start (TUI).
+Stream sing-box logs to stdout.
 .TP
 .B \-\-verbose
 Verbose sing-box logging (level=info). The default is a quiet
@@ -99,11 +103,14 @@ Runs without root.
 Note: simply launching
 .B singctl
 again while an instance is already running does NOT start a second proxy (which
-would fail to bind the port) — the new TUI automatically ATTACHES to the running
-instance and can change its mode/settings/keys in real time over the control
-socket. A second
+would fail to bind the port) — it applies the requested mode (\-\-proxy/\-\-vpn)
+to the running instance over the control socket and exits, the same as an
+explicit second
 .B \-\-headless
-launch applies the requested mode (\-\-proxy/\-\-vpn) to the running instance and exits.
+launch. A bare
+.B singctl
+with nothing running and no flags prints status/help instead of starting
+anything.
 .TP
 .B \-\-stop
 Tell the running instance to shut down. Runs without root.
@@ -128,11 +135,23 @@ Print this man page (roff) and exit.
 .BI \-\-license " token|path"
 Install a license (a token string or a path to a file containing one) and exit.
 .TP
+.BI \-\-install " token|path"
+Alias for \-\-license.
+.TP
 .B \-\-license\-status
 Print the current license status and exit.
 .TP
+.B \-\-json
+With \-\-license\-status, print machine-readable JSON instead of text (used by
+GUI clients): a single object with
+.BR valid ", " dev ", " subject ", " expiresAt ", " daysLeft ", " features " and " reason .
+Exits 0 even when the license is invalid; validity is carried in the JSON.
+.TP
+.B \-\-license\-remove
+Remove the installed license and its activation state, then exit.
+.TP
 .BI \-\-email " address"
-Contact email to register with \-\-license for device activation (resent on re-activation and daily rechecks).
+Contact email to register with \-\-license/\-\-install for device activation (resent on re-activation and daily rechecks).
 .TP
 .BR \-v ", " \-\-version
 Print version and exit.
@@ -171,15 +190,15 @@ These variables can also be placed in a .env file in the working directory.
 Saved VLESS key(s).
 .TP
 .B ~/.config/singctl/singbox.log
-sing-box log output (TUI mode).
+sing-box log output.
 .SH NOTES
 singctl must run as root: creating the TUN device and managing routes requires
 privileges. Re-run with
 .BR sudo .
 .PP
 Applications started or restarted through the proxy
-.RB ( \-\-launch ", " \-\-restart\-pid ,
-or the in-UI picker) are dropped back to the invoking user (resolved via
+.RB ( \-\-launch " or " \-\-restart\-pid )
+are dropped back to the invoking user (resolved via
 .BR SUDO_USER )
 rather than inheriting root, so GUI apps that refuse to run as root in a user's
 session (e.g. Zen) start correctly.

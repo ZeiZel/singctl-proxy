@@ -1,7 +1,8 @@
 // Package app is the composition root's glue: the Executor builds the runtime
-// from a pasted link, implements ui.Backend, applies the monitor's policy
-// decisions to the manager (auto fail-closed / refresh), and pushes status to
-// the UI. It is testable end-to-end on fakes (FakeCore + fake prober/routes).
+// from a pasted link, applies the monitor's policy decisions to the manager
+// (auto fail-closed / refresh), and pushes status notes (see internal/notify)
+// to a channel headless mode drains and prints. It is testable end-to-end on
+// fakes (FakeCore + fake prober/routes).
 package app
 
 import (
@@ -16,8 +17,6 @@ import (
 	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"singctl/internal/clashapi"
 	"singctl/internal/clashui"
 	"singctl/internal/control"
@@ -25,13 +24,13 @@ import (
 	"singctl/internal/daemon"
 	"singctl/internal/monitor"
 	"singctl/internal/netext"
+	"singctl/internal/notify"
 	"singctl/internal/policy"
 	"singctl/internal/proclist"
 	"singctl/internal/procproxy"
 	"singctl/internal/runtime"
 	"singctl/internal/singbox"
 	"singctl/internal/types"
-	"singctl/internal/ui"
 	"singctl/internal/vless"
 )
 
@@ -45,7 +44,7 @@ type Executor struct {
 	factory core.Factory
 	prober  runtime.InterfaceProber
 	routes  runtime.RouteController
-	notes   chan tea.Msg
+	notes   chan any
 
 	mu    sync.Mutex
 	mgr   *runtime.Manager
@@ -160,15 +159,15 @@ func (e *Executor) ConsoleSince(id int) []ConsoleEntry {
 
 // ListProcesses enumerates processes with network sockets so the UI can offer a
 // picker for per-process routing.
-func (e *Executor) ListProcesses(ctx context.Context) ([]ui.ProcInfo, error) {
+func (e *Executor) ListProcesses(ctx context.Context) ([]notify.ProcInfo, error) {
 	e.listerOnce.Do(func() { e.lister = proclist.NewLister() })
 	procs, err := e.lister.List(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rows := make([]ui.ProcInfo, 0, len(procs))
+	rows := make([]notify.ProcInfo, 0, len(procs))
 	for _, p := range procs {
-		rows = append(rows, ui.ProcInfo{PID: p.PID, Name: p.Name, Ports: p.PortsString(), Children: p.Children})
+		rows = append(rows, notify.ProcInfo{PID: p.PID, Name: p.Name, Ports: p.PortsString(), Children: p.Children})
 	}
 	return rows, nil
 }
@@ -232,7 +231,7 @@ func (e *Executor) SetLaunchUser(u *procproxy.LaunchUser) {
 	e.launchUser = u
 }
 
-func NewExecutor(f core.Factory, p runtime.InterfaceProber, r runtime.RouteController, notes chan tea.Msg) *Executor {
+func NewExecutor(f core.Factory, p runtime.InterfaceProber, r runtime.RouteController, notes chan any) *Executor {
 	e := &Executor{factory: f, prober: p, routes: r, notes: notes, store: newAppStore(proxiedAppsPath)}
 	_ = e.store.Load() // best-effort: a missing/corrupt store just starts empty
 	return e
@@ -265,7 +264,7 @@ func (e *Executor) MarkIntroSeen() error {
 	return fn()
 }
 
-// --- ui.Backend ---
+// --- Backend port (see internal/app.Executor's methods) ---
 
 // LoadLink validates+remembers the link and prepares the runtime WITHOUT
 // starting anything (the user explicitly enables a mode afterwards). Changing
@@ -341,7 +340,7 @@ func (e *Executor) AddLink(ctx context.Context, link string) error {
 func (e *Executor) DeleteLink(ctx context.Context, index int) error {
 	links := e.CurrentLinks()
 	if index < 0 || index >= len(links) {
-		return fmt.Errorf("неверный индекс ключа: %d", index)
+		return fmt.Errorf("invalid key index: %d", index)
 	}
 	remaining := append(links[:index:index], links[index+1:]...)
 	if len(remaining) == 0 {
@@ -371,7 +370,7 @@ func (e *Executor) DeleteLink(ctx context.Context, index int) error {
 func (e *Executor) RenameLink(ctx context.Context, index int, name string) error {
 	links := e.CurrentLinks()
 	if index < 0 || index >= len(links) {
-		return fmt.Errorf("неверный индекс ключа: %d", index)
+		return fmt.Errorf("invalid key index: %d", index)
 	}
 	renamed, err := vless.SetName(links[index], name)
 	if err != nil {
@@ -486,7 +485,7 @@ func (e *Executor) startPoller() {
 // sends it non-blocking (a dropped update is harmless — the next tick replaces
 // it, and we must never wedge the poller on a quit UI).
 func (e *Executor) pushConnections(conns []clashapi.Connection) {
-	e.pushNonBlocking(ui.ConnectionsMsg{Rows: clashui.ConnRows(conns)})
+	e.pushNonBlocking(notify.ConnectionsMsg{Rows: clashui.ConnRows(conns)})
 }
 
 // pushProxies extracts the failover group's per-server latency and selection
@@ -499,7 +498,7 @@ func (e *Executor) pushProxies(proxies map[string]clashapi.ProxyState) {
 
 // pushNonBlocking sends a message to the UI notes channel without blocking; if
 // no reader is ready the message is dropped.
-func (e *Executor) pushNonBlocking(msg tea.Msg) {
+func (e *Executor) pushNonBlocking(msg any) {
 	if e.notes == nil {
 		return
 	}
@@ -662,7 +661,7 @@ func (e *Executor) PushDisplay(ctx context.Context, ns types.NetState) {
 	}
 	// netext.Available is cheap off darwin (no exec) and TTL-cached on darwin, so
 	// calling it on every poll (this is the monitor's per-tick callback) is fine.
-	e.push(ctx, ui.NetStateMsg{Cisco: ns.CiscoActive, PhysIface: ns.PhysicalIface, Bypass: bypass, NetextAvailable: netext.Available()})
+	e.push(ctx, notify.NetStateMsg{Cisco: ns.CiscoActive, PhysIface: ns.PhysicalIface, Bypass: bypass, NetextAvailable: netext.Available()})
 }
 
 // ProxyBoundToPhysical reports whether the proxy is running in proxy-only mode
@@ -711,22 +710,22 @@ func (e *Executor) StateLabel() string {
 }
 
 // runMode maps the manager state to the UI's running state.
-func (e *Executor) runMode() ui.RunMode {
+func (e *Executor) runMode() notify.RunMode {
 	m := e.manager()
 	if m == nil {
-		return ui.RunOff
+		return notify.RunOff
 	}
 	switch m.State() {
 	case runtime.StateVPN:
-		return ui.RunVPN
+		return notify.RunVPN
 	case runtime.StateProxyOnly:
-		return ui.RunProxy
+		return notify.RunProxy
 	default:
-		return ui.RunOff
+		return notify.RunOff
 	}
 }
 
-// --- per-process proxying (ui.Backend) ---
+// --- per-process proxying ---
 
 // proxyRunning reports whether the proxy listeners are up (required before
 // routing a process through them).
@@ -751,7 +750,7 @@ func (e *Executor) procRouter() procproxy.Router {
 			LaunchUser: e.launchUser,
 			Output: procproxy.SinkFunc(func(l procproxy.OutputLine) {
 				e.appendConsole(l) // ring for CONSOLE-POLL (attached clients)
-				e.pushNonBlocking(ui.ConsoleMsg{PID: l.PID, App: l.App, Stream: l.Stream, Text: l.Text})
+				e.pushNonBlocking(notify.ConsoleMsg{PID: l.PID, App: l.App, Stream: l.Stream, Text: l.Text})
 			}),
 		})
 		e.routerBuilt = true
@@ -941,7 +940,7 @@ func (e *Executor) RouteApp(ctx context.Context, bundleID string) error {
 		}
 	}
 	if len(pids) == 0 {
-		return fmt.Errorf("приложение %s сейчас не запущено", bundleID)
+		return fmt.Errorf("app %s is not currently running", bundleID)
 	}
 	r := e.procRouter()
 	var firstErr error
@@ -966,7 +965,7 @@ func (e *Executor) RouteApp(ctx context.Context, bundleID string) error {
 func (e *Executor) UnrouteApp(ctx context.Context, bundleID string) error {
 	br, ok := e.procRouter().(procproxy.BundleRouter)
 	if !ok {
-		return fmt.Errorf("маршрутизация по приложениям не поддерживается на этой платформе")
+		return fmt.Errorf("per-app routing is not supported on this platform")
 	}
 	r := e.procRouter()
 	var firstErr error
@@ -1120,7 +1119,7 @@ func (e *Executor) LaunchProxiedApp(ctx context.Context, appPath string) (int, e
 		id = bundleIDForPID(pid)
 	}
 	if id == "" {
-		return pid, fmt.Errorf("приложение запущено (PID %d), но bundle ID не определён — захват расширением не активирован", pid)
+		return pid, fmt.Errorf("app launched (PID %d), but its bundle ID could not be resolved — extension capture was not activated", pid)
 	}
 	name := strings.TrimSuffix(filepath.Base(appPath), ".app")
 	if err := e.store.Upsert(id, name, true); err != nil {
@@ -1149,12 +1148,12 @@ func (e *Executor) TrafficSnapshot(ctx context.Context) (control.Traffic, error)
 	return control.Traffic{Up: up, Down: down}, nil
 }
 
-// CurrentSettings returns the live tunables as a ui.Settings (the inverse of
+// CurrentSettings returns the live tunables as a notify.Settings (the inverse of
 // ApplySettings) so a remote client / SETTINGS-GET can seed its form.
-func (e *Executor) CurrentSettings() ui.Settings {
+func (e *Executor) CurrentSettings() notify.Settings {
 	e.cfgMu.Lock()
 	defer e.cfgMu.Unlock()
-	return ui.Settings{
+	return notify.Settings{
 		SocksPort:        e.ports.Socks,
 		ClashEnabled:     e.clashAddr != "",
 		ClashAddr:        e.clashAddr,
@@ -1167,7 +1166,7 @@ func (e *Executor) CurrentSettings() ui.Settings {
 
 // ApplySettings reloads the running core with edited tunables (port, Clash API,
 // urltest) and re-enables the current mode so the changes take effect live.
-func (e *Executor) ApplySettings(ctx context.Context, s ui.Settings) error {
+func (e *Executor) ApplySettings(ctx context.Context, s notify.Settings) error {
 	e.SetSocksPort(s.SocksPort)
 	if s.ClashEnabled {
 		e.cfgMu.Lock()
@@ -1231,11 +1230,11 @@ func (e *Executor) Daemonize(_ context.Context) error {
 	return daemon.Spawn(cfg)
 }
 
-// StopDaemon is part of ui.Backend but only meaningful for a remote (attached)
+// StopDaemon is only meaningful for a remote (attached)
 // client; the local executor is the process itself, so it has no background
 // instance to stop.
 func (e *Executor) StopDaemon(context.Context) error {
-	return fmt.Errorf("нет фонового процесса (это локальный запуск)")
+	return fmt.Errorf("no background process (this is a local run)")
 }
 
 // resetRouter tears down the per-process router so the next route uses fresh
@@ -1293,7 +1292,7 @@ func (e *Executor) manager() *runtime.Manager {
 	return e.mgr
 }
 
-func (e *Executor) push(ctx context.Context, msg tea.Msg) {
+func (e *Executor) push(ctx context.Context, msg any) {
 	if e.notes == nil {
 		return
 	}
@@ -1355,10 +1354,10 @@ func (e *Executor) updateCoexist(ctx context.Context, mgr *runtime.Manager, ns t
 	if note == "" {
 		return
 	}
-	e.push(ctx, ui.StatusMsg{Mode: e.runMode(), Note: note})
+	e.push(ctx, notify.StatusMsg{Mode: e.runMode(), Note: note})
 	// The UI never initiates these (driven by Cisco connect/disconnect), so also
 	// surface them in the action log.
-	e.pushNonBlocking(ui.ActionMsg{Level: level, Text: note})
+	e.pushNonBlocking(notify.ActionMsg{Level: level, Text: note})
 }
 
 // coexistNote returns the user-facing message + action-log level for a
@@ -1368,16 +1367,16 @@ func coexistNote(s coexistState, physIface string) (string, int) {
 	case coexistBypass:
 		iface := physIface
 		if iface == "" {
-			iface = "физический интерфейс"
+			iface = "the physical interface"
 		}
-		return "Cisco активен — proxy работает в обход Cisco (egress через " + iface + ")", ui.ActOk
+		return "Cisco is active — proxy is bypassing Cisco (egress via " + iface + ")", notify.ActOk
 	case coexistFallback:
-		return "Cisco активен — не удалось привязать proxy к физическому интерфейсу, трафик идёт через Cisco (fallback)", ui.ActWarn
+		return "Cisco is active — could not bind the proxy to the physical interface, traffic is riding Cisco (fallback)", notify.ActWarn
 	case coexistSuspended:
-		return "Cisco активен — наш VPN остановлен (fail-closed), вернёмся после отключения Cisco", ui.ActWarn
+		return "Cisco is active — our VPN has stopped (fail-closed), we will resume once Cisco disconnects", notify.ActWarn
 	case coexistNone:
-		return "Cisco отключён — proxy вернулся на основной маршрут", ui.ActInfo
+		return "Cisco disconnected — proxy is back on the default route", notify.ActInfo
 	default:
-		return "", ui.ActInfo
+		return "", notify.ActInfo
 	}
 }

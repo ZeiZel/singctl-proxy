@@ -14,7 +14,6 @@ import (
 	"singctl/internal/proclist"
 	"singctl/internal/procproxy"
 	"singctl/internal/runtime"
-	"singctl/internal/ui"
 	"singctl/internal/vless"
 )
 
@@ -192,19 +191,26 @@ func (m *controlModule) Bind(fs *flag.FlagSet) {
 	fs.BoolVar(&m.status, "status", false, "print the status of a running singctl instance")
 }
 
-// licenseModule: --license (install token/file), --license-status, --email
-// (contact address sent with --license for activation/re-activation).
+// licenseModule: --license/--install (install token/file), --license-status
+// (+ --json for machine-readable output, used by the Swift GUI),
+// --license-remove, --email (contact address sent with --license/--install
+// for activation/re-activation).
 type licenseModule struct {
 	install string
 	status  bool
+	json    bool
+	remove  bool
 	email   string
 }
 
 func (m *licenseModule) Descriptor() feature.Descriptor { return license.FeatureDescriptor() }
 func (m *licenseModule) Bind(fs *flag.FlagSet) {
 	fs.StringVar(&m.install, "license", "", "install a license (token or path to a file) and exit")
+	fs.StringVar(&m.install, "install", "", "install a license (token or path to a file) and exit; alias for --license")
 	fs.BoolVar(&m.status, "license-status", false, "print license status and exit")
-	fs.StringVar(&m.email, "email", "", "contact email to register with --license (used for device activation)")
+	fs.BoolVar(&m.json, "json", false, "with --license-status, print machine-readable JSON instead of text")
+	fs.BoolVar(&m.remove, "license-remove", false, "remove the installed license and exit")
+	fs.StringVar(&m.email, "email", "", "contact email to register with --license/--install (used for device activation)")
 }
 
 // rootModule: global flags --version/-v, --man, --env-file.
@@ -217,12 +223,12 @@ type rootModule struct {
 
 func (m *rootModule) Descriptor() feature.Descriptor {
 	return feature.Descriptor{
-		Name: "global", Title: "Общие", Summary: "версия / справка / окружение",
+		Name: "global", Title: "Global", Summary: "version / help / environment",
 		Flags: []feature.FlagSpec{
-			{Names: []string{"v", "version"}, Usage: "показать версию и выйти"},
-			{Names: []string{"man"}, Usage: "напечатать man-страницу и выйти"},
-			{Names: []string{"y", "yes"}, Usage: "не спрашивать подтверждение для опасных действий (--stop/--restart-pid)"},
-			{Names: []string{"env-file"}, Placeholder: "<path>", Usage: "загрузить переменные окружения из файла (по умолчанию ./.env)"},
+			{Names: []string{"v", "version"}, Usage: "print version and exit"},
+			{Names: []string{"man"}, Usage: "print the man page and exit"},
+			{Names: []string{"y", "yes"}, Usage: "skip confirmation for destructive actions (--stop/--restart-pid)"},
+			{Names: []string{"env-file"}, Placeholder: "<path>", Usage: "load environment variables from a file (default: ./.env)"},
 		},
 	}
 }
@@ -267,8 +273,7 @@ func (c *cli) buildRegistry() {
 		Add(&c.ctl).
 		Add(&c.lic).
 		Add(&c.root).
-		Add(docModule{proclist.FeatureDescriptor()}).
-		Add(docModule{ui.FeatureDescriptor()})
+		Add(docModule{proclist.FeatureDescriptor()})
 }
 
 // parseCLI builds the registry, binds + parses flags, captures trailing argv and

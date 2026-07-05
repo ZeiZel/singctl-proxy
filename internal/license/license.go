@@ -25,7 +25,7 @@ const tokenPrefix = "SINGCTL-LIC.v1."
 var b64 = base64.RawURLEncoding
 
 // ErrExpired is returned by Verify when a license is past its ExpiresAt.
-var ErrExpired = errors.New("license: срок действия лицензии истёк")
+var ErrExpired = errors.New("license: license has expired")
 
 // Claims is the signed license payload. Field order is fixed so encoding/json
 // output is deterministic (canonical signing bytes). JSON tags are short to keep
@@ -90,11 +90,11 @@ func Verify(token string, pub ed25519.PublicKey, now time.Time) (Claims, error) 
 	}
 	rest, ok := strings.CutPrefix(strings.TrimSpace(token), tokenPrefix)
 	if !ok {
-		return c, errors.New("license: неизвестный формат токена")
+		return c, errors.New("license: unrecognized token format")
 	}
 	payloadB64, sigB64, ok := strings.Cut(rest, ".")
 	if !ok {
-		return c, errors.New("license: повреждённый токен")
+		return c, errors.New("license: corrupted token")
 	}
 	payload, err := b64.DecodeString(payloadB64)
 	if err != nil {
@@ -105,7 +105,7 @@ func Verify(token string, pub ed25519.PublicKey, now time.Time) (Claims, error) 
 		return c, fmt.Errorf("license: bad signature encoding: %w", err)
 	}
 	if !ed25519.Verify(pub, payload, sig) {
-		return c, errors.New("license: подпись не совпадает (поддельная или повреждённая лицензия)")
+		return c, errors.New("license: signature mismatch (forged or corrupted license)")
 	}
 	if err := json.Unmarshal(payload, &c); err != nil {
 		return c, fmt.Errorf("license: bad payload json: %w", err)
@@ -122,11 +122,11 @@ func Verify(token string, pub ed25519.PublicKey, now time.Time) (Claims, error) 
 func PeekID(token string) (string, error) {
 	rest, ok := strings.CutPrefix(strings.TrimSpace(token), tokenPrefix)
 	if !ok {
-		return "", errors.New("license: неизвестный формат токена")
+		return "", errors.New("license: unrecognized token format")
 	}
 	payloadB64, _, ok := strings.Cut(rest, ".")
 	if !ok {
-		return "", errors.New("license: повреждённый токен")
+		return "", errors.New("license: corrupted token")
 	}
 	payload, err := b64.DecodeString(payloadB64)
 	if err != nil {

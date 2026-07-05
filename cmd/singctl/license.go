@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -45,62 +46,163 @@ func loadLicenseToken() string {
 	return strings.TrimSpace(os.Getenv(envLicenseToken))
 }
 
-// runLicenseInstall validates a token (or file) and saves it, along with the
-// contact email (--email) used to (re-)activate it against the license
-// server. Returns an exit code.
+// runLicenseInstall validates a token (or file), activates it against the
+// license server (binding this device + email — mirrors gui/bridge's
+// activateLicenseIn), and saves the token + activation state. Returns an exit
+// code.
 func runLicenseInstall(arg, email string) int {
 	token := strings.TrimSpace(arg)
 	if data, err := os.ReadFile(arg); err == nil { // arg is a path
 		token = strings.TrimSpace(string(data))
 	}
-	if _, err := license.Check(token, time.Now()); err != nil {
-		fmt.Fprintln(os.Stderr, "error: лицензия недействительна:", err)
+	claims, err := license.Check(token, time.Now())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error: invalid license:", err)
 		return 1
 	}
 	store := newLicenseStore()
 	if store == nil {
-		fmt.Fprintln(os.Stderr, "error: не удалось определить каталог конфигурации")
+		fmt.Fprintln(os.Stderr, "error: could not resolve the config directory")
 		return 1
 	}
+	email = strings.TrimSpace(email)
+
+	if base := license.ServerURL(); base != "" {
+		// Mirror the CLI's/GUI's "must contact the server successfully at least
+		// once" activation gate: bind this device (+ email) to the license id and
+		// require the server to confirm "active" before the token is accepted.
+		ctx, cancel := context.WithTimeout(context.Background(), licenseFetchTimeout)
+		status, ferr := license.Activate(ctx, base, claims.ID, platform.DeviceID(), email)
+		cancel()
+		dec := license.DecideEnforcement(profile.LicenseState{}, status, ferr, time.Now())
+		dec.State.Email = email
+		if err := store.SaveLicenseState(dec.State); err != nil {
+			fmt.Fprintln(os.Stderr, "error: could not save license state:", err)
+			return 1
+		}
+		if !dec.Allow {
+			fmt.Fprintln(os.Stderr, "error:", dec.Reason)
+			return 1
+		}
+	} else {
+		// No server configured: preserve a previously-captured email and defer
+		// activation to the next enforceLicense call (offline-only deployments).
+		state, _ := store.LoadLicenseState()
+		state.ActivatedOnce = false
+		if email != "" {
+			state.Email = email
+		}
+		if err := store.SaveLicenseState(state); err != nil {
+			fmt.Fprintln(os.Stderr, "error: could not save license state:", err)
+			return 1
+		}
+	}
+
 	if err := store.SaveLicense(token); err != nil {
-		fmt.Fprintln(os.Stderr, "error: не удалось сохранить лицензию:", err)
+		fmt.Fprintln(os.Stderr, "error: could not save the license:", err)
 		return 1
 	}
-	// Installing a (possibly new/different) token invalidates any previous
-	// activation: force a fresh Activate call (not just a status recheck) on
-	// the next run. Preserve a previously-captured email when --email is
-	// omitted on a re-install, so re-activation doesn't silently lose it.
-	state, _ := store.LoadLicenseState()
-	state.ActivatedOnce = false
-	if email = strings.TrimSpace(email); email != "" {
-		state.Email = email
-	}
-	if err := store.SaveLicenseState(state); err != nil {
-		fmt.Fprintln(os.Stderr, "error: не удалось сохранить состояние лицензии:", err)
-		return 1
-	}
-	fmt.Println("Лицензия установлена.")
+	fmt.Println("License installed.")
 	return 0
 }
 
-// runLicenseStatus prints the current license state. Returns an exit code.
-func runLicenseStatus() int {
+// runLicenseRemove deletes the installed license and its activation state
+// (mirrors gui/bridge's removeLicenseIn). Returns an exit code.
+func runLicenseRemove() int {
+	store := newLicenseStore()
+	if store == nil {
+		fmt.Fprintln(os.Stderr, "error: could not resolve the config directory")
+		return 1
+	}
+	if err := store.RemoveLicense(); err != nil {
+		fmt.Fprintln(os.Stderr, "error: could not remove the license:", err)
+		return 1
+	}
+	fmt.Println("License removed.")
+	return 0
+}
+
+// licenseStatusJSON is the machine-readable payload for `--license-status
+// --json`, consumed by the Swift GUI. It mirrors gui/bridge's LicenseInfo
+// fields (Dev takes the place of the inverse of Enforced: true in an
+// unlicensed/development build).
+type licenseStatusJSON struct {
+	Valid     bool     `json:"valid"`
+	Dev       bool     `json:"dev"`
+	Subject   string   `json:"subject"`
+	ExpiresAt int64    `json:"expiresAt"`
+	DaysLeft  int      `json:"daysLeft"`
+	Features  []string `json:"features"`
+	Reason    string   `json:"reason"`
+}
+
+// licenseStatusInfo computes the current license state (offline signature +
+// expiry check, plus the last online verdict persisted in license-state.json)
+// without any network I/O, so `--license-status --json` is fast and always
+// exits 0 — validity is reported in the JSON, not the exit code.
+func licenseStatusInfo(now time.Time) licenseStatusJSON {
 	if !license.Enabled() {
-		fmt.Println("Сборка без проверки лицензии (unlicensed).")
+		return licenseStatusJSON{Valid: true, Dev: true, Subject: "development build", DaysLeft: -1, Features: []string{}}
+	}
+	claims, err := license.Check(loadLicenseToken(), now)
+	if err != nil {
+		return licenseStatusJSON{Valid: false, Reason: err.Error(), DaysLeft: -1, Features: []string{}}
+	}
+	features := claims.Features
+	if features == nil {
+		features = []string{}
+	}
+	info := licenseStatusJSON{
+		Valid:     true,
+		Subject:   claims.Subject,
+		ExpiresAt: claims.ExpiresAt,
+		Features:  features,
+		DaysLeft:  -1,
+	}
+	if claims.ExpiresAt != 0 {
+		info.DaysLeft = int(time.Unix(claims.ExpiresAt, 0).Sub(now).Hours() / 24)
+	}
+	if store := newLicenseStore(); store != nil {
+		if state, err := store.LoadLicenseState(); err == nil {
+			switch license.Status(state.LastStatus) {
+			case license.StatusRevoked:
+				info.Valid, info.Reason = false, "license revoked — contact the vendor"
+			case license.StatusExpired:
+				info.Valid, info.Reason = false, "license expired"
+			case license.StatusSuperseded:
+				info.Valid, info.Reason = false, "the key was activated on another device — re-activate it here"
+			}
+		}
+	}
+	return info
+}
+
+// runLicenseStatus prints the current license state, either as JSON (for the
+// Swift GUI) or as human-readable text. Always exits 0 for --json (validity is
+// carried in the payload); the text form keeps its original non-zero exit on
+// an invalid/revoked license.
+func runLicenseStatus(jsonOut bool) int {
+	if jsonOut {
+		data, _ := json.Marshal(licenseStatusInfo(time.Now()))
+		fmt.Println(string(data))
+		return 0
+	}
+	if !license.Enabled() {
+		fmt.Println("Unlicensed build (license checking disabled).")
 		return 0
 	}
 	claims, err := license.Check(loadLicenseToken(), time.Now())
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Лицензия:", err)
+		fmt.Fprintln(os.Stderr, "License:", err)
 		return 1
 	}
-	fmt.Printf("Лицензия активна: %s (id %s)\n", claims.Subject, claims.ID)
+	fmt.Printf("License active: %s (id %s)\n", claims.Subject, claims.ID)
 	if claims.ExpiresAt != 0 {
-		fmt.Println("Действует до:", time.Unix(claims.ExpiresAt, 0).Format("2006-01-02"))
+		fmt.Println("Valid until:", time.Unix(claims.ExpiresAt, 0).Format("2006-01-02"))
 	}
 	if base := license.ServerURL(); base != "" {
 		if revoked, _ := license.CheckRevoked(context.Background(), base, claims.ID); revoked {
-			fmt.Fprintln(os.Stderr, "ВНИМАНИЕ: лицензия отозвана сервером")
+			fmt.Fprintln(os.Stderr, "WARNING: license has been revoked by the server")
 			return 1
 		}
 	}
@@ -126,17 +228,17 @@ func runLicenseStatus() int {
 // behavior — only the offline signature check applies, with a warning.
 func enforceLicense() error {
 	if !license.Enabled() {
-		fmt.Fprintln(os.Stderr, "⚠ singctl: UNLICENSED BUILD — проверка лицензии отключена")
+		fmt.Fprintln(os.Stderr, "⚠ singctl: UNLICENSED BUILD — license checking is disabled")
 		return nil
 	}
 	claims, err := license.Check(loadLicenseToken(), time.Now())
 	if err != nil {
-		return fmt.Errorf("%w\nАктивируйте лицензию: sudo singctl --license <токен>", err)
+		return fmt.Errorf("%w\nActivate a license: sudo singctl --license <token>", err)
 	}
 
 	base := license.ServerURL()
 	if base == "" {
-		fmt.Fprintln(os.Stderr, "⚠ singctl: сервер лицензий не настроен — активация и ежедневная сверка отключены")
+		fmt.Fprintln(os.Stderr, "⚠ singctl: no license server configured — activation and the daily re-check are disabled")
 		return nil
 	}
 
@@ -216,7 +318,7 @@ func licenseRefreshLoop(ctx context.Context, store *profile.Store, base, id stri
 				fmt.Fprintln(os.Stderr, "⚠", dec.Warn)
 			}
 			if !dec.Allow {
-				fmt.Fprintln(os.Stderr, "error: лицензия недействительна —", dec.Reason, "— остановка singctl")
+				fmt.Fprintln(os.Stderr, "error: license invalid —", dec.Reason, "— stopping singctl")
 				cancel()
 				return
 			}

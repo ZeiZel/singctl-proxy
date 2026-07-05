@@ -16,6 +16,7 @@ type FS interface {
 	WriteFile(name string, data []byte, perm os.FileMode) error
 	ReadFile(name string) ([]byte, error)
 	Chown(name string, uid, gid int) error
+	Remove(name string) error
 }
 
 // Store reads/writes a single saved profile link.
@@ -118,6 +119,19 @@ func (s *Store) SaveLicenseState(st LicenseState) error {
 	return nil
 }
 
+// RemoveLicense deletes the stored license token and its activation state (no
+// error if either is already absent), for `singctl --license-remove` and the
+// GUI's equivalent action.
+func (s *Store) RemoveLicense() error {
+	if err := s.fs.Remove(s.licensePath()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := s.fs.Remove(s.licenseStatePath()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // HasSeenIntro reports whether the first-run intro animation has already played.
 func (s *Store) HasSeenIntro() bool {
 	_, err := s.fs.ReadFile(s.introPath())
@@ -171,3 +185,4 @@ func (OSFS) MkdirAll(p string, perm os.FileMode) error            { return os.Mk
 func (OSFS) WriteFile(n string, d []byte, perm os.FileMode) error { return os.WriteFile(n, d, perm) }
 func (OSFS) ReadFile(n string) ([]byte, error)                    { return os.ReadFile(n) }
 func (OSFS) Chown(n string, uid, gid int) error                   { return os.Chown(n, uid, gid) }
+func (OSFS) Remove(n string) error                                { return os.Remove(n) }

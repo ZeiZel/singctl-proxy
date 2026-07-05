@@ -21,26 +21,19 @@ func TestRequireRoot(t *testing.T) {
 
 func TestDecideStartup(t *testing.T) {
 	cases := []struct {
-		name                           string
-		alive, headless, daemon, child bool
-		want                           startupAction
+		name                 string
+		alive, daemon, child bool
+		want                 startupAction
 	}{
-		{"no instance → local", false, false, false, false, actLocal},
-		{"alive + TUI → remote TUI", true, false, false, false, actRemoteTUI},
-		{"alive + headless → remote headless", true, true, false, false, actRemoteHeadless},
-		{"--daemon forces local", true, false, true, false, actLocal},
-		{"daemon child forces local", true, false, false, true, actLocal},
-		{"no instance + headless → local", false, true, false, false, actLocal},
+		{"no instance → local", false, false, false, actLocal},
+		{"alive → remote headless (no TUI to fall back to)", true, false, false, actRemoteHeadless},
+		{"--daemon forces local", true, true, false, actLocal},
+		{"daemon child forces local", true, false, true, actLocal},
+		{"no instance + daemon → local", false, true, false, actLocal},
 	}
 	for _, tc := range cases {
-		if got := decideStartup(tc.alive, tc.headless, tc.daemon, tc.child); got != tc.want {
+		if got := decideStartup(tc.alive, tc.daemon, tc.child); got != tc.want {
 			t.Errorf("%s: decideStartup = %d, want %d", tc.name, got, tc.want)
 		}
-	}
-}
-
-func TestModeFromLabel(t *testing.T) {
-	if modeFromLabel("vpn") != 2 || modeFromLabel("proxy") != 1 || modeFromLabel("off") != 0 {
-		t.Error("modeFromLabel mapping wrong")
 	}
 }

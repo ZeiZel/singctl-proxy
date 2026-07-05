@@ -6,18 +6,18 @@ import "singctl/internal/feature"
 func FeatureDescriptor() feature.Descriptor {
 	return feature.Descriptor{
 		Name:    "procproxy",
-		Title:   "Проксирование процессов",
-		Summary: "по PID / запуск / перезапуск",
-		Doc: "На Linux — настоящий перехват трафика процесса по PID (cgroup v2 + " +
-			"nftables). На остальных ОС — запуск команды с проброшенными proxy-env. " +
-			"--restart-pid перезапускает уже запущенный процесс в proxy-режиме.",
+		Title:   "Process proxying",
+		Summary: "by PID / launch / restart",
+		Doc: "On Linux — real per-process traffic capture by PID (cgroup v2 + " +
+			"nftables). On other OSes — launch a command with proxy-env forwarded. " +
+			"--restart-pid restarts an already-running process in proxy mode.",
 		Flags: []feature.FlagSpec{
 			{Names: []string{"route-pid"}, Placeholder: "<pid>", Repeatable: true,
-				Usage: "маршрутизировать процесс по PID через прокси (Linux)"},
+				Usage: "route a process by PID through the proxy (Linux)"},
 			{Names: []string{"restart-pid"}, Placeholder: "<pid>", Repeatable: true,
-				Usage: "перезапустить процесс в proxy-режиме"},
+				Usage: "restart a process in proxy mode"},
 			{Names: []string{"launch"}, Placeholder: "-- <cmd>",
-				Usage: "запустить команду через прокси"},
+				Usage: "launch a command through the proxy"},
 		},
 	}
 }

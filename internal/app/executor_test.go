@@ -9,17 +9,15 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"singctl/internal/core"
 	"singctl/internal/monitor"
 	"singctl/internal/netext"
+	"singctl/internal/notify"
 	"singctl/internal/policy"
 	"singctl/internal/proclist"
 	"singctl/internal/procproxy"
 	"singctl/internal/runtime"
 	"singctl/internal/types"
-	"singctl/internal/ui"
 )
 
 type fakeProber struct{}
@@ -32,8 +30,8 @@ func (fakeRoutes) CleanupOrphans() error { return nil }
 
 const validLink = "vless://4ce58870-27d3-489b-87a0-3109db4fb919@193.188.22.147:443?type=grpc&security=reality&pbk=k&sni=cursor.com&fp=chrome#t"
 
-func newExecutor() (*Executor, chan tea.Msg) {
-	notes := make(chan tea.Msg, 32)
+func newExecutor() (*Executor, chan any) {
+	notes := make(chan any, 32)
 	ff := core.NewFakeFactory()
 	e := NewExecutor(ff.Factory(), fakeProber{}, fakeRoutes{}, notes)
 	// The production proxiedAppsPath lives under root-owned /Library — swap in
@@ -165,12 +163,12 @@ func TestExecutor_Apply_NotifiesUIWithRunMode(t *testing.T) {
 	var sawStatus, sawNet bool
 	for len(notes) > 0 {
 		switch mm := (<-notes).(type) {
-		case ui.StatusMsg:
+		case notify.StatusMsg:
 			sawStatus = true
-			if mm.Mode != ui.RunOff {
+			if mm.Mode != notify.RunOff {
 				t.Errorf("status mode = %v, want OFF (suspended)", mm.Mode)
 			}
-		case ui.NetStateMsg:
+		case notify.NetStateMsg:
 			sawNet = true
 			if !mm.Cisco {
 				t.Error("net state should report Cisco active")
@@ -223,7 +221,7 @@ func TestExecutor_Apply_CiscoBypass_BindsPhysical_AndUnbinds(t *testing.T) {
 	// The bind/unbind transitions must have surfaced a status note to the UI.
 	var sawStatus bool
 	for len(notes) > 0 {
-		if _, ok := (<-notes).(ui.StatusMsg); ok {
+		if _, ok := (<-notes).(notify.StatusMsg); ok {
 			sawStatus = true
 		}
 	}

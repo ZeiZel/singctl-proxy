@@ -17,10 +17,10 @@ func stopSystemDaemon() (bool, string) {
 		return false, "" // not installed
 	}
 	if os.Geteuid() != 0 {
-		return true, "системный демон установлен — остановите его под sudo: sudo singctl --stop"
+		return true, "system daemon is installed — stop it under sudo: sudo singctl --stop"
 	}
 	// bootout returns non-zero if it was already unloaded; that's fine.
 	_ = exec.Command("launchctl", "bootout", "system", launchDaemonPlist).Run()
-	return true, "singctl: системный демон остановлен (launchctl bootout). " +
-		"Чтобы вернуть его: make install (или перезагрузка)."
+	return true, "singctl: system daemon stopped (launchctl bootout). " +
+		"To bring it back: make install (or reboot)."
 }

@@ -18,13 +18,13 @@ type Decision struct {
 
 // Messages are centralized here so the CLI and GUI show identical text.
 const (
-	msgFirstActivationOffline = "Для первой активации лицензии нужен доступ к серверу. " +
-		"Подключитесь к интернету и запустите снова."
-	msgNotFoundOnServer = "лицензия не найдена на сервере"
-	msgRevoked          = "лицензия отозвана — обратитесь к поставщику"
-	msgExpiredOnServer  = "срок лицензии истёк"
-	msgUnknownAfterOnce = "не удалось подтвердить статус лицензии на сервере (ответ неизвестен) — продолжаем работу"
-	msgSuperseded       = "Ключ активирован на другом устройстве. Активируйте его заново здесь."
+	msgFirstActivationOffline = "First-time license activation needs access to the server. " +
+		"Connect to the internet and run again."
+	msgNotFoundOnServer = "license not found on server"
+	msgRevoked          = "license revoked — contact your provider"
+	msgExpiredOnServer  = "license has expired"
+	msgUnknownAfterOnce = "could not confirm license status with the server (unknown response) — continuing"
+	msgSuperseded       = "The key was activated on another device. Activate it again here."
 )
 
 // DecideEnforcement is the pure state machine behind the license activation

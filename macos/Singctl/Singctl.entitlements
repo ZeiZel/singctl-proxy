@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Singctl.app entitlements. Needs the Network Extensions capability to
+     install/activate the ProxyExtension system extension and to manage
+     NETransparentProxyManager, plus the App Group for the shared
+     config.json written by the singctl CLI. App Sandbox is only required
+     for the Mac App Store SKU; for Developer ID (non-App-Store)
+     system-extension distribution it is not required and can interfere
+     with OSSystemExtensionManager activation, so it is intentionally
+     omitted here (mirrors packaging/macos/netextension/ContainerApp). -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Required to install/activate the ProxyExtension system extension via
+         OSSystemExtensionManager. Without it activationRequest fails with
+         OSSystemExtensionErrorDomain error 1. -->
+    <key>com.apple.developer.system-extension.install</key>
+    <true/>
+    <key>com.apple.developer.networking.networkextension</key>
+    <array>
+        <string>app-proxy-provider-systemextension</string>
+    </array>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.singctl.proxy</string>
+    </array>
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>

@@ -1,0 +1,81 @@
+# XcodeGen spec for Singctl — the native macOS SwiftUI app that ALSO hosts
+# the transparent-proxy system extension (folding in what used to be the
+# separate packaging/macos/netextension ContainerApp). `xcodegen generate`
+# (brew install xcodegen) turns this into Singctl.xcodeproj so the scaffold
+# builds without hand-assembling targets in Xcode. You still need a Team ID,
+# the Network Extensions capability, and notarization — see
+# packaging/macos/netextension/README.md for the underlying setup this
+# mirrors.
+name: Singctl
+options:
+  bundleIdPrefix: com.singctl
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    # Set DEVELOPMENT_TEAM via the build invocation (build.sh) or here.
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+    SWIFT_VERSION: "5.0"
+
+targets:
+  # The SwiftUI app: a regular windowed app with a menu-bar item that also
+  # activates and configures the embedded ProxyExtension system extension
+  # (via NETransparentProxyManager / OSSystemExtensionManager, wired up in
+  # App/Core — not part of this scaffold). Embeds the extension.
+  Singctl:
+    type: application
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - App
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.singctl.proxy
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Singctl.entitlements
+        # Manual Developer ID signing: the auto-generated development profile
+        # lacks the *-systemextension NE entitlement, so distribution requires an
+        # explicit Developer ID provisioning profile (created in the portal).
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Developer ID Application"
+        DEVELOPMENT_TEAM: S3UCF4USYC
+        PROVISIONING_PROFILE_SPECIFIER: "singctl proxy DevID"
+        ENABLE_HARDENED_RUNTIME: YES
+    dependencies:
+      - target: ProxyExtension
+        embed: true
+
+  # The system extension: the NETransparentProxyProvider that captures flows.
+  # Sources are copied verbatim from packaging/macos/netextension/ProxyExtension
+  # (same bundle id, com.singctl.proxy.netext). Tests/ is excluded here — it is
+  # an XCTest bundle for Socks5.swift's pure framing helpers, not extension
+  # code, and must not be compiled into the system-extension binary.
+  ProxyExtension:
+    type: system-extension
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: ProxyExtension
+        excludes:
+          - "Tests/**"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.singctl.proxy.netext
+        INFOPLIST_FILE: ProxyExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ProxyExtension.entitlements
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Developer ID Application"
+        DEVELOPMENT_TEAM: S3UCF4USYC
+        PROVISIONING_PROFILE_SPECIFIER: "singctl netext DevID"
+        ENABLE_HARDENED_RUNTIME: YES
+
+schemes:
+  Singctl:
+    build:
+      targets:
+        Singctl: all
+    run:
+      config: Debug

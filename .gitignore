@@ -18,5 +18,10 @@ deploy/compose/.env
 # macOS netextension build artifacts (xcodegen output + Xcode DerivedData)
 /packaging/macos/netextension/build/
 /packaging/macos/netextension/SingctlProxy.xcodeproj/
+
+# macOS Singctl app build artifacts (xcodegen output + Xcode DerivedData)
+/macos/Singctl/build/
+/macos/Singctl/build_check/
+/macos/Singctl/Singctl.xcodeproj/
 /singctl
 /server

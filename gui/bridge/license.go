@@ -103,11 +103,11 @@ func licenseInfoIn(dir string, now time.Time) LicenseInfo {
 	}
 	switch license.Status(readLicenseState(dir).LastStatus) {
 	case license.StatusRevoked:
-		info.Valid, info.Reason = false, "лицензия отозвана — обратитесь к поставщику"
+		info.Valid, info.Reason = false, "license revoked — contact the vendor"
 	case license.StatusExpired:
-		info.Valid, info.Reason = false, "срок лицензии истёк"
+		info.Valid, info.Reason = false, "license expired"
 	case license.StatusSuperseded:
-		info.Valid, info.Reason = false, "Ключ активирован на другом устройстве. Активируйте его заново здесь."
+		info.Valid, info.Reason = false, "the key was activated on another device. Re-activate it here."
 	}
 	return info
 }

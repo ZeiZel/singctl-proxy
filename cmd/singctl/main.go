@@ -1,7 +1,10 @@
-// Command singctl is a terminal UI that runs a VLESS proxy on an embedded
-// sing-box core and toggles a system VPN (TUN) mode, while passively coexisting
-// with Cisco Secure Client (observe-only). Build the shipping binary with
-// `-tags singbox`; the default build links a stub core for the hermetic tests.
+// Command singctl runs a VLESS proxy on an embedded sing-box core and toggles
+// a system VPN (TUN) mode, while passively coexisting with Cisco Secure
+// Client (observe-only). It is driven entirely by flags: --headless/--daemon
+// run the proxy (foreground or detached); --status/--attach/--stop manage a
+// running instance; a bare invocation with nothing running prints status/help.
+// Build the shipping binary with `-tags singbox`; the default build links a
+// stub core for the hermetic tests.
 package main
 
 import (
@@ -20,13 +23,11 @@ import (
 	"os/user"
 	"path/filepath"
 	goruntime "runtime"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/joho/godotenv"
 
@@ -38,6 +39,7 @@ import (
 	"singctl/internal/monitor"
 	"singctl/internal/netext"
 	"singctl/internal/netstate"
+	"singctl/internal/notify"
 	"singctl/internal/platform"
 	"singctl/internal/proclist"
 	"singctl/internal/procproxy"
@@ -46,7 +48,6 @@ import (
 	"singctl/internal/runtime"
 	"singctl/internal/singbox"
 	"singctl/internal/types"
-	"singctl/internal/ui"
 )
 
 const pollInterval = 2 * time.Second
@@ -119,8 +120,8 @@ func confirm(title, desc string, skip bool) bool {
 	err := huh.NewConfirm().
 		Title(title).
 		Description(desc).
-		Affirmative("Да").
-		Negative("Отмена").
+		Affirmative("Yes").
+		Negative("Cancel").
 		Value(&ok).
 		Run()
 	if err != nil {
@@ -162,67 +163,18 @@ type startupAction int
 
 const (
 	actLocal          startupAction = iota // start our own cores (needs root)
-	actRemoteTUI                           // attach: TUI driving the running instance
 	actRemoteHeadless                      // attach: apply mode/settings via socket, exit
 )
 
 // decideStartup is pure (unit-tested). The just-spawned daemon child and an
 // explicit --daemon always run locally; with no live peer we start cores;
-// otherwise we attach (headless → one-shot, else TUI).
-func decideStartup(alive, headless, daemonFlag, isChild bool) startupAction {
+// otherwise we attach to it (apply mode/settings via the control socket, print
+// status, exit — there is no interactive UI to fall back to).
+func decideStartup(alive, daemonFlag, isChild bool) startupAction {
 	if daemonFlag || isChild || !alive {
 		return actLocal
 	}
-	if headless {
-		return actRemoteHeadless
-	}
-	return actRemoteTUI
-}
-
-// runProgram runs a Bubble Tea program with a panic guard so an unexpected panic
-// in the reducer/render loop never crashes singctl with a raw stack dump over a
-// corrupted terminal. Bubble Tea already restores the terminal on panic; this
-// turns the panic into a clean error + a diagnostic on stderr. recover() is
-// permitted here (the composition root) — never in Update/View.
-func runProgram(p *tea.Program) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Fprintln(os.Stderr, "singctl: восстановление после паники:", r)
-			os.Stderr.Write(debug.Stack())
-			err = fmt.Errorf("внутренняя ошибка: %v", r)
-		}
-	}()
-	_, err = p.Run()
-	return err
-}
-
-// runRemoteTUI attaches the TUI to a running instance over its control socket.
-func runRemoteTUI(inst control.Instance, c *cli) int {
-	notes := make(chan tea.Msg, 256) // large buffer absorbs chatty Electron console output; pushNonBlocking drops on backpressure
-	rb := remote.New(inst, c.proxy.port, notes)
-	rb.SetLaunchUser(resolveLaunchUser()) // if the attach client runs under sudo, drop launches to the real user
-	defer rb.Close()
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	model := ui.New(rb, notes).WithLogPath(inst.LogPath).WithAttached(inst.PID).WithLoadedProfile()
-	if seed, err := rb.Settings(); err == nil {
-		model = model.WithSettings(seed)
-	}
-	if st, err := rb.Status(); err == nil {
-		model = model.WithDisplayMode(modeFromLabel(st.Mode))
-	}
-	model = model.WithCurrentLinks(rb.CurrentLinks())
-	model = model.WithIntro(false) // short component loader when attaching
-
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
-	go func() { <-ctx.Done(); program.Quit() }()
-	if err := runProgram(program); err != nil {
-		fmt.Fprintln(os.Stderr, "ui error:", err)
-		return 1
-	}
-	return 0
+	return actRemoteHeadless
 }
 
 // runRemoteHeadless applies the requested mode to a running instance and exits.
@@ -243,20 +195,21 @@ func runRemoteHeadless(inst control.Instance, c *cli) int {
 		}
 	}
 	if st, err := rb.Status(); err == nil {
-		fmt.Printf("singctl: инстанс PID %d, режим %s\n", st.PID, st.Mode)
+		fmt.Printf("singctl: instance PID %d, mode %s\n", st.PID, st.Mode)
 	}
 	return 0
 }
 
-func modeFromLabel(s string) ui.RunMode {
-	switch s {
-	case "vpn":
-		return ui.RunVPN
-	case "proxy", "suspended":
-		return ui.RunProxy
-	default:
-		return ui.RunOff
-	}
+// printBareStatus is what a bare `singctl` (no flags, no running instance)
+// prints: there is no interactive UI to fall back to, so it reports that
+// nothing is running and shows how to start it, followed by --help.
+func printBareStatus(c *cli) {
+	fmt.Println("singctl: no running instance.")
+	fmt.Println("Start it with --headless (foreground) or --daemon (background), e.g.:")
+	fmt.Println("  sudo singctl --headless --key <vless://...>")
+	fmt.Println("  sudo singctl --daemon --key <vless://...>")
+	fmt.Println()
+	c.reg.Help(os.Stdout)
 }
 
 // launchDaemonPlist is where `make install` puts the macOS system daemon.
@@ -338,12 +291,12 @@ func runControlCommand(c *cli) int {
 			sc, foreign := portHolders(ports)
 			for _, pid := range sc {
 				if err := syscall.Kill(pid, syscall.SIGTERM); err == nil {
-					fmt.Printf("singctl: остановлен процесс PID %d (занимал порт)\n", pid)
+					fmt.Printf("singctl: stopped process PID %d (was holding the port)\n", pid)
 					freed = true
 				}
 			}
 			for _, a := range foreign {
-				fmt.Fprintf(os.Stderr, "note: порт занят посторонним процессом %q (PID %d) — это не singctl\n", a.Name, a.PID)
+				fmt.Fprintf(os.Stderr, "note: port is held by a foreign process %q (PID %d) — not singctl\n", a.Name, a.PID)
 			}
 			if freed {
 				return 0
@@ -351,16 +304,16 @@ func runControlCommand(c *cli) int {
 		}
 		fmt.Fprintln(os.Stderr, "error: no running singctl instance found.")
 		if goruntime.GOOS == "darwin" {
-			fmt.Fprintln(os.Stderr, "  Если порт занят системным демоном — переустановите (make install),")
-			fmt.Fprintln(os.Stderr, "  либо остановите его: sudo launchctl bootout system "+launchDaemonPlist)
+			fmt.Fprintln(os.Stderr, "  If the port is held by the system daemon — reinstall it (make install),")
+			fmt.Fprintln(os.Stderr, "  or stop it: sudo launchctl bootout system "+launchDaemonPlist)
 		}
 		return 1
 	}
 	switch {
 	case c.ctl.stop:
-		if !confirm(fmt.Sprintf("Остановить singctl (PID %d)?", inst.PID),
-			"Прокси перестанет работать.", c.root.yes) {
-			fmt.Println("отменено")
+		if !confirm(fmt.Sprintf("Stop singctl (PID %d)?", inst.PID),
+			"The proxy will stop working.", c.root.yes) {
+			fmt.Println("cancelled")
 			return 0
 		}
 		if err := control.Stop(inst.ControlSocket); err != nil {
@@ -378,9 +331,9 @@ func runControlCommand(c *cli) int {
 		fmt.Printf("singctl: PID %d, mode %s, started %s\n", st.PID, st.Mode, st.StartedAt)
 		if st.CiscoActive {
 			if st.ProxyBypass {
-				fmt.Printf("  Cisco: активен — proxy в обход Cisco (egress через %s)\n", st.PhysIface)
+				fmt.Printf("  Cisco: active — proxy is bypassing Cisco (egress via %s)\n", st.PhysIface)
 			} else {
-				fmt.Println("  Cisco: активен — proxy идёт через Cisco (fallback: физический интерфейс не привязан)")
+				fmt.Println("  Cisco: active — proxy is riding Cisco (fallback: no physical interface bound)")
 			}
 		}
 		return 0
@@ -463,7 +416,7 @@ func registerControl(srv *control.Server, executor *app.Executor, stop func(), s
 		return string(data), nil
 	})
 	srv.Handle("SETTINGS-SET", func(arg string) (string, error) {
-		var s ui.Settings
+		var s notify.Settings
 		if err := json.Unmarshal([]byte(arg), &s); err != nil {
 			return "", fmt.Errorf("bad settings json: %w", err)
 		}
@@ -685,12 +638,16 @@ func main() {
 		os.Exit(runControlCommand(c))
 	}
 
-	// License actions (install / status) work without root and exit immediately.
+	// License actions (install / status / remove) work without root and exit
+	// immediately.
 	if c.lic.install != "" {
 		os.Exit(runLicenseInstall(c.lic.install, c.lic.email))
 	}
 	if c.lic.status {
-		os.Exit(runLicenseStatus())
+		os.Exit(runLicenseStatus(c.lic.json))
+	}
+	if c.lic.remove {
+		os.Exit(runLicenseRemove())
 	}
 
 	// .env (explicit path, or ./.env if present) feeds SINGCTL_KEY/SINGCTL_PORT;
@@ -717,13 +674,18 @@ func main() {
 			inst, alive = i, true
 		}
 	}
-	switch decideStartup(alive, c.proxy.headless, c.proxy.daemon, daemon.IsChild()) {
-	case actRemoteTUI:
-		os.Exit(runRemoteTUI(inst, c))
-	case actRemoteHeadless:
+	if decideStartup(alive, c.proxy.daemon, daemon.IsChild()) == actRemoteHeadless {
 		os.Exit(runRemoteHeadless(inst, c))
 	}
-	// actLocal: start our own cores (needs root).
+	// actLocal: start our own cores (needs root) — but only if asked to actually
+	// run one (--headless or --daemon; the daemon child always sets --headless,
+	// see internal/daemon.BuildArgs). A bare invocation with nothing running and
+	// no run flag has no interactive UI to fall back to, so it just prints
+	// status-style output/help instead of starting anything.
+	if !c.proxy.headless && !c.proxy.daemon {
+		printBareStatus(c)
+		return
+	}
 
 	if err := requireRoot(goruntime.GOOS, os.Geteuid()); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -751,7 +713,7 @@ func main() {
 	prober := runtime.NewNetProber(detector)
 	routes := runtime.NewOSRouteController()
 
-	notes := make(chan tea.Msg, 256) // large buffer absorbs chatty Electron console output; pushNonBlocking drops on backpressure
+	notes := make(chan any, 256) // large buffer absorbs chatty Electron console output; pushNonBlocking drops on backpressure
 	executor := app.NewExecutor(core.NewFactory(), prober, routes, notes)
 	executor.SetSocksPort(c.proxy.port)
 	executor.SetLaunchUser(resolveLaunchUser()) // drop proxied app launches to the real user (sudo)
@@ -774,7 +736,7 @@ func main() {
 	// itself was already loaded in NewExecutor). Best-effort: an unapproved or
 	// missing extension just means capture doesn't take yet, not a fatal error.
 	if err := executor.RecomputeAppTargets(); err != nil {
-		fmt.Fprintln(os.Stderr, "warning: не удалось восстановить список проксируемых приложений:", err)
+		fmt.Fprintln(os.Stderr, "warning: could not restore the proxied-apps list:", err)
 	}
 
 	// Persist the profile + log file under the real user's home (chowned back),
@@ -861,7 +823,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "error: daemon did not come up — check the log:", logPath)
 			os.Exit(1)
 		}
-		fmt.Println("singctl: daemon запущен в фоне — управление через --status / --attach / --stop")
+		fmt.Println("singctl: daemon started in the background — manage it with --status / --attach / --stop")
 		return
 	}
 
@@ -922,68 +884,20 @@ func main() {
 		}
 	}
 
-	if c.proxy.headless {
-		if err := runHeadless(ctx, executor, notes, initialLink, c); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
-		}
-		return
+	// Reaching here always means --headless is set: the daemon child always
+	// passes it (internal/daemon.BuildArgs), and the bare/no-flag case already
+	// returned above via printBareStatus.
+	if err := runHeadless(ctx, executor, notes, initialLink, c); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
 	}
-
-	model := ui.New(executor, notes).WithLogPath(logPath).WithSettings(ui.Settings{
-		SocksPort:        c.proxy.port,
-		ClashEnabled:     clashAddr != "",
-		ClashAddr:        c.obs.clashAPI,
-		URLTestURL:       c.obs.urltestURL,
-		URLTestInterval:  c.obs.urltestInterval,
-		URLTestTolerance: c.obs.urltestTolerance,
-		SaveProfile:      !c.keys.noSave,
-	})
-	if initialLink != "" {
-		// Remember the link: load it (no mode started — user picks PROXY/VPN) and
-		// skip the input screen.
-		if err := executor.LoadLink(ctx, initialLink); err == nil {
-			model = model.WithLoadedProfile().WithCurrentLink(initialLink).
-				WithCurrentLinks(executor.CurrentLinks())
-			switch {
-			case c.proxy.proxy:
-				model = model.WithAutoMode(ui.RunProxy)
-			case c.proxy.vpn:
-				model = model.WithAutoMode(ui.RunVPN)
-			}
-			if c.proxy.logs {
-				model = model.WithLogsOpen()
-			}
-		}
-	}
-	// Entry animation: a full reveal on the first run (then a marker is written),
-	// a short component loader on later runs. Applied last so it captures the
-	// resolved screen as its post-intro target.
-	firstRun := store == nil || !store.HasSeenIntro()
-	model = model.WithIntro(firstRun)
-
-	// WithAltScreen clears the terminal (alternate buffer) so earlier commands
-	// aren't visible above the UI.
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
-	go func() {
-		<-ctx.Done()
-		program.Quit()
-	}()
-
-	if err := runProgram(program); err != nil {
-		fmt.Fprintln(os.Stderr, "ui error:", err)
-	}
-
-	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = executor.Shutdown(shutCtx)
 }
 
 // runHeadless drives the executor without a TUI: load the link, enable the
 // requested mode (proxy unless --vpn), print status notes to stdout and run
 // until SIGINT/SIGTERM. The notes channel must be drained here — the executor
 // blocks pushing into it otherwise.
-func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan tea.Msg, link string, c *cli) error {
+func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan any, link string, c *cli) error {
 	if link == "" {
 		return fmt.Errorf("headless mode needs a key: pass --key, set %s (or .env), or save a profile first", envKey)
 	}
@@ -998,7 +912,7 @@ func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan tea.M
 	}
 	if err := enable(ctx); err != nil {
 		if strings.Contains(err.Error(), "address already in use") {
-			return fmt.Errorf("enable %s: %w — другой инстанс уже запущен; используйте --attach/--status/--stop", strings.ToLower(mode), err)
+			return fmt.Errorf("enable %s: %w — another instance is already running; use --attach/--status/--stop", strings.ToLower(mode), err)
 		}
 		return fmt.Errorf("enable %s: %w", strings.ToLower(mode), err)
 	}
@@ -1021,9 +935,9 @@ func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan tea.M
 	}
 	restartPIDs, _ := c.proc.restartPIDs()
 	for _, pid := range restartPIDs {
-		if !confirm(fmt.Sprintf("Перезапустить PID %d в proxy-режиме?", pid),
-			"Процесс будет завершён и запущен заново с прокси-окружением.", c.root.yes) {
-			fmt.Printf("restart-pid %d: отменено\n", pid)
+		if !confirm(fmt.Sprintf("Restart PID %d in proxy mode?", pid),
+			"The process will be terminated and relaunched with the proxy environment.", c.root.yes) {
+			fmt.Printf("restart-pid %d: cancelled\n", pid)
 			continue
 		}
 		if newPID, err := executor.RestartProxied(ctx, pid); err != nil {
@@ -1049,7 +963,7 @@ func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan tea.M
 			defer cancel()
 			return executor.Shutdown(shutCtx)
 		case msg := <-notes:
-			if st, ok := msg.(ui.StatusMsg); ok && st.Note != "" {
+			if st, ok := msg.(notify.StatusMsg); ok && st.Note != "" {
 				fmt.Printf("singctl: [%s] %s\n", st.Mode, st.Note)
 			}
 		}

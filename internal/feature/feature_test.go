@@ -22,19 +22,19 @@ func (m *fakeMod) Bind(fs *flag.FlagSet) {
 
 func sampleRegistry() *Registry {
 	keys := &fakeMod{d: Descriptor{
-		Name: "keys", Title: "Ключи", Summary: "VLESS-сервер(ы)",
+		Name: "keys", Title: "Keys", Summary: "VLESS server(s)",
 		Flags: []FlagSpec{
-			{Names: []string{"k", "key"}, Placeholder: "<vless://...>", Usage: "ключ для подключения", Env: []string{"SINGCTL_KEY", "SINGCTL_KEYS"}, Repeatable: true},
-			{Names: []string{"no-save"}, Usage: "не сохранять ключ"},
+			{Names: []string{"k", "key"}, Placeholder: "<vless://...>", Usage: "key to connect with", Env: []string{"SINGCTL_KEY", "SINGCTL_KEYS"}, Repeatable: true},
+			{Names: []string{"no-save"}, Usage: "do not save the key"},
 		},
 	}}
 	clash := &fakeMod{d: Descriptor{
-		Name: "obs", Title: "Наблюдаемость", Summary: "Clash API",
+		Name: "obs", Title: "Observability", Summary: "Clash API",
 		Flags: []FlagSpec{
-			{Names: []string{"clash-api"}, Placeholder: "<host:port>", Usage: "адрес Clash API", Default: "127.0.0.1:9090", Env: []string{"SINGCTL_CLASH_API"}},
+			{Names: []string{"clash-api"}, Placeholder: "<host:port>", Usage: "Clash API address", Default: "127.0.0.1:9090", Env: []string{"SINGCTL_CLASH_API"}},
 		},
 	}}
-	return New("singctl", "VLESS прокси", "sudo singctl [flags]").Add(keys).Add(clash)
+	return New("singctl", "VLESS proxy", "sudo singctl [flags]").Add(keys).Add(clash)
 }
 
 func TestHelp_RendersFlagsEnvAndSynopsis(t *testing.T) {
@@ -44,10 +44,10 @@ func TestHelp_RendersFlagsEnvAndSynopsis(t *testing.T) {
 	for _, want := range []string{
 		"sudo singctl [flags]",
 		"-k, --key <vless://...>",
-		"ключ для подключения",
-		"(повторяемый)",
+		"key to connect with",
+		"(repeatable)",
 		"--clash-api <host:port>",
-		"(по умолчанию: 127.0.0.1:9090)",
+		"(default: 127.0.0.1:9090)",
 		"Environment:",
 		"SINGCTL_KEY, SINGCTL_KEYS",
 		"SINGCTL_CLASH_API",

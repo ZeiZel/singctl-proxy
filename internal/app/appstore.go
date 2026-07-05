@@ -67,7 +67,7 @@ func (s *appStore) Load() error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("appstore: чтение %s: %w", s.path, err)
+		return fmt.Errorf("appstore: read %s: %w", s.path, err)
 	}
 	var list []ProxiedApp
 	if err := json.Unmarshal(data, &list); err != nil {
@@ -123,7 +123,7 @@ func (s *appStore) EnabledBundleIDs() []string {
 func (s *appStore) Upsert(bundleID, name string, enabled bool) error {
 	bundleID = strings.TrimSpace(bundleID)
 	if bundleID == "" {
-		return fmt.Errorf("appstore: пустой bundle id")
+		return fmt.Errorf("appstore: empty bundle id")
 	}
 	s.mu.Lock()
 	e := s.entries[bundleID]
@@ -145,7 +145,7 @@ func (s *appStore) SetEnabled(bundleID string, enabled bool) error {
 	e, ok := s.entries[bundleID]
 	if !ok {
 		s.mu.Unlock()
-		return fmt.Errorf("appstore: приложение %s не найдено", bundleID)
+		return fmt.Errorf("appstore: app %s not found", bundleID)
 	}
 	e.Enabled = enabled
 	s.entries[bundleID] = e
@@ -180,11 +180,11 @@ func (s *appStore) save() error {
 	}
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("appstore: создать каталог %s: %w", dir, err)
+		return fmt.Errorf("appstore: create directory %s: %w", dir, err)
 	}
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return fmt.Errorf("appstore: записать %s: %w", tmp, err)
+		return fmt.Errorf("appstore: write %s: %w", tmp, err)
 	}
 	if err := os.Rename(tmp, s.path); err != nil {
 		return fmt.Errorf("appstore: rename %s -> %s: %w", tmp, s.path, err)

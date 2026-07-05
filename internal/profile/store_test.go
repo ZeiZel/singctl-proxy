@@ -35,6 +35,13 @@ func (f *fakeFS) Chown(n string, uid, gid int) error {
 	f.chowns = append(f.chowns, chownCall{n, uid, gid})
 	return nil
 }
+func (f *fakeFS) Remove(n string) error {
+	if _, ok := f.files[n]; !ok {
+		return os.ErrNotExist
+	}
+	delete(f.files, n)
+	return nil
+}
 
 func TestStore_Save_WritesUnderRealUserHome_AndChowns(t *testing.T) {
 	fs := newFakeFS()
@@ -113,6 +120,30 @@ func TestLicenseState_RoundTrip_AndMissing(t *testing.T) {
 	}
 	if !fileChowned {
 		t.Error("license state file was not chowned back to the real user")
+	}
+}
+
+func TestRemoveLicense_DeletesBothFiles_AndIsIdempotent(t *testing.T) {
+	fs := newFakeFS()
+	s := NewStore(fs, "/home/u", 1000, 1000)
+	if err := s.SaveLicense("token-123"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveLicenseState(LicenseState{ActivatedOnce: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveLicense(); err != nil {
+		t.Fatalf("RemoveLicense: %v", err)
+	}
+	if tok, err := s.LoadLicense(); err != nil || tok != "" {
+		t.Errorf("license token after remove = (%q,%v), want (\"\",nil)", tok, err)
+	}
+	if got, err := s.LoadLicenseState(); err != nil || got != (LicenseState{}) {
+		t.Errorf("license state after remove = (%+v,%v), want zero value", got, err)
+	}
+	// Removing again (nothing left to delete) must not error.
+	if err := s.RemoveLicense(); err != nil {
+		t.Errorf("RemoveLicense on already-removed license: %v", err)
 	}
 }
 

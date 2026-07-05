@@ -45,7 +45,7 @@ func ServerURL() string {
 // EmbeddedPublicKey decodes the build-time public key, or errors if unset.
 func EmbeddedPublicKey() (ed25519.PublicKey, error) {
 	if PublicKeyB64 == "" {
-		return nil, errors.New("license: бинарь собран без вшитого публичного ключа лицензии (release-сборка должна задать -ldflags PublicKeyB64)")
+		return nil, errors.New("license: binary was built without an embedded license public key (a release build must set -ldflags PublicKeyB64)")
 	}
 	return DecodePublic(PublicKeyB64)
 }

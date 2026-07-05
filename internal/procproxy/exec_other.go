@@ -100,9 +100,9 @@ func scanStream(r io.Reader, sink OutputSink, pid int, app, stream string) {
 // exitText formats the synthetic "process finished" line emitted after Wait.
 func exitText(err error) string {
 	if err == nil {
-		return "[процесс завершён]"
+		return "[process exited]"
 	}
-	return fmt.Sprintf("[процесс завершён: %v]", err)
+	return fmt.Sprintf("[process exited: %v]", err)
 }
 
 // resolveExecutable turns a command token into an executable path: an explicit
@@ -119,7 +119,7 @@ func resolveExecutable(name string) (string, error) {
 		if p := findMacAppExe(name); p != "" {
 			return p, nil
 		}
-		return "", fmt.Errorf("%q не найдено в $PATH и среди приложений (укажите полный путь или выберите запущенный процесс)", name)
+		return "", fmt.Errorf("%q not found in $PATH or among applications (specify a full path or pick a running process)", name)
 	}
 	return "", fmt.Errorf("%q: executable file not found in $PATH", name)
 }

@@ -6,15 +6,15 @@ import "singctl/internal/feature"
 func FeatureDescriptor() feature.Descriptor {
 	return feature.Descriptor{
 		Name:    "control",
-		Title:   "Управление инстансом",
+		Title:   "Instance control",
 		Summary: "attach / stop / status",
-		Doc: "Запущенный инстанс публикует instance.json и слушает Unix-сокет. " +
-			"Эти команды работают без root: подключиться к логам уже запущенного " +
-			"в другой вкладке инстанса, узнать статус или остановить его.",
+		Doc: "A running instance publishes instance.json and listens on a Unix socket. " +
+			"These commands work without root: attach to the logs of an instance " +
+			"already running in another tab, check its status, or stop it.",
 		Flags: []feature.FlagSpec{
-			{Names: []string{"attach"}, Usage: "подключиться к логам запущенного инстанса (ctrl+c — отсоединиться)"},
-			{Names: []string{"stop"}, Usage: "остановить запущенный инстанс"},
-			{Names: []string{"status"}, Usage: "показать статус запущенного инстанса"},
+			{Names: []string{"attach"}, Usage: "attach to the running instance's logs (ctrl+c to detach)"},
+			{Names: []string{"stop"}, Usage: "stop the running instance"},
+			{Names: []string{"status"}, Usage: "show the running instance's status"},
 		},
 	}
 }

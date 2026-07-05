@@ -1,10 +1,10 @@
-// Package remote implements ui.Backend by driving an already-running singctl
-// instance over its control socket, instead of starting local sing-box cores.
-// It is used when a second invocation detects a live instance: mode switches,
-// settings and keys go to the daemon via the socket; per-process routing and the
-// process list run locally (same machine, pointed at the daemon's socks port);
-// connections + latency come from the daemon's Clash API; logs are tailed from
-// the daemon's log file (handled by the UI via WithLogPath).
+// Package remote drives an already-running singctl instance over its control
+// socket, instead of starting local sing-box cores. It is used when a second
+// invocation detects a live instance: mode switches, settings and keys go to
+// the daemon via the socket; per-process routing and the process list run
+// locally (same machine, pointed at the daemon's socks port); connections +
+// latency come from the daemon's Clash API; logs are tailed from the daemon's
+// log file.
 package remote
 
 import (
@@ -17,25 +17,23 @@ import (
 	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-
-	"singctl/internal/clashapi"
+"singctl/internal/clashapi"
 	"singctl/internal/clashui"
 	"singctl/internal/control"
+	"singctl/internal/notify"
 	"singctl/internal/proclist"
 	"singctl/internal/procproxy"
-	"singctl/internal/ui"
 )
 
 const pollInterval = 2 * time.Second
 
-// Backend drives a remote instance. It satisfies ui.Backend.
+// Backend drives a remote instance.
 type Backend struct {
 	sock        string
 	clashAddr   string
 	clashSecret string
 	socksPort   int
-	notes       chan<- tea.Msg
+	notes       chan<- any
 
 	routerOnce sync.Once
 	router     procproxy.Router
@@ -52,7 +50,7 @@ type Backend struct {
 // New builds a remote backend for an advertised instance. socksPort is where the
 // daemon's SOCKS listener is (for local per-process routing); notes is the UI's
 // channel. It starts polling the daemon's Clash API immediately.
-func New(inst control.Instance, socksPort int, notes chan<- tea.Msg) *Backend {
+func New(inst control.Instance, socksPort int, notes chan<- any) *Backend {
 	if socksPort == 0 {
 		socksPort = 1080
 	}
@@ -105,14 +103,14 @@ func (b *Backend) startConsolePoller() {
 					if e.ID > last {
 						last = e.ID
 					}
-					b.push(ui.ConsoleMsg{PID: e.PID, App: e.App, Stream: e.Stream, Text: e.Text})
+					b.push(notify.ConsoleMsg{PID: e.PID, App: e.App, Stream: e.Stream, Text: e.Text})
 				}
 			}
 		}
 	}()
 }
 
-// --- ui.Backend: mode / keys / settings over the control socket ---
+// --- mode / keys / settings over the control socket ---
 
 func (b *Backend) EnableProxy(context.Context) error { return b.mode("proxy") }
 func (b *Backend) EnableVPN(context.Context) error   { return b.mode("vpn") }
@@ -145,8 +143,8 @@ func (b *Backend) RenameLink(_ context.Context, index int, name string) error {
 // the running daemon is an older binary than this client) into actionable advice.
 func staleDaemon(err error) error {
 	if err != nil && strings.Contains(err.Error(), "unknown command") {
-		return errors.New("запущенный демон устарел и не знает эту команду — обновите его: " +
-			"`make install` (переустановит и перезапустит демон) или `sudo singctl --stop` и запустите заново")
+		return errors.New("the running daemon is older than this client and doesn't know this command — update it: " +
+			"`make install` (reinstalls and restarts the daemon) or `sudo singctl --stop` and start it again")
 	}
 	return err
 }
@@ -165,7 +163,7 @@ func (b *Backend) CurrentLinks() []string {
 	return out
 }
 
-func (b *Backend) ApplySettings(_ context.Context, s ui.Settings) error {
+func (b *Backend) ApplySettings(_ context.Context, s notify.Settings) error {
 	data, err := json.Marshal(s)
 	if err != nil {
 		return err
@@ -181,14 +179,14 @@ func (b *Backend) ApplySettings(_ context.Context, s ui.Settings) error {
 }
 
 // Settings fetches the daemon's current settings (for seeding the UI form).
-func (b *Backend) Settings() (ui.Settings, error) {
+func (b *Backend) Settings() (notify.Settings, error) {
 	reply, err := control.Request(b.sock, "SETTINGS-GET", "")
 	if err != nil {
-		return ui.Settings{}, err
+		return notify.Settings{}, err
 	}
-	var s ui.Settings
+	var s notify.Settings
 	if err := json.Unmarshal([]byte(reply), &s); err != nil {
-		return ui.Settings{}, err
+		return notify.Settings{}, err
 	}
 	return s, nil
 }
@@ -197,7 +195,7 @@ func (b *Backend) Settings() (ui.Settings, error) {
 func (b *Backend) Status() (control.Status, error) { return control.QueryStatus(b.sock) }
 
 func (b *Backend) Daemonize(context.Context) error {
-	return errors.New("уже запущено в фоне — это подключение к работающему инстансу")
+	return errors.New("already running in the background — this is a connection to a running instance")
 }
 
 func (b *Backend) StopDaemon(context.Context) error { return control.Stop(b.sock) }
@@ -208,7 +206,7 @@ func (b *Backend) StopDaemon(context.Context) error { return control.Stop(b.sock
 // lazily, once).
 func (b *Backend) SetLaunchUser(u *procproxy.LaunchUser) { b.launchUser = u }
 
-// --- ui.Backend: per-process routing runs LOCALLY toward the daemon's port ---
+// --- per-process routing runs LOCALLY toward the daemon's port ---
 
 func (b *Backend) procRouter() procproxy.Router {
 	b.routerOnce.Do(func() {
@@ -217,7 +215,7 @@ func (b *Backend) procRouter() procproxy.Router {
 			HTTPAddr:   fmt.Sprintf("127.0.0.1:%d", b.socksPort+1),
 			LaunchUser: b.launchUser,
 			Output: procproxy.SinkFunc(func(l procproxy.OutputLine) {
-				b.push(ui.ConsoleMsg{PID: l.PID, App: l.App, Stream: l.Stream, Text: l.Text})
+				b.push(notify.ConsoleMsg{PID: l.PID, App: l.App, Stream: l.Stream, Text: l.Text})
 			}),
 		})
 	})
@@ -258,15 +256,15 @@ func (b *Backend) StopProxied(ctx context.Context, pid int) error {
 // local concern; the daemon owns no terminal).
 func (b *Backend) MarkIntroSeen() error { return nil }
 
-func (b *Backend) ListProcesses(ctx context.Context) ([]ui.ProcInfo, error) {
+func (b *Backend) ListProcesses(ctx context.Context) ([]notify.ProcInfo, error) {
 	b.listerOnce.Do(func() { b.lister = proclist.NewLister() })
 	procs, err := b.lister.List(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rows := make([]ui.ProcInfo, 0, len(procs))
+	rows := make([]notify.ProcInfo, 0, len(procs))
 	for _, p := range procs {
-		rows = append(rows, ui.ProcInfo{PID: p.PID, Name: p.Name, Ports: p.PortsString(), Children: p.Children})
+		rows = append(rows, notify.ProcInfo{PID: p.PID, Name: p.Name, Ports: p.PortsString(), Children: p.Children})
 	}
 	return rows, nil
 }
@@ -290,7 +288,7 @@ func (b *Backend) startPoller() {
 		Resolve:  clashapi.NewProcessResolver(),
 		Sink: clashapi.Sink{
 			// No LogLine: the daemon already writes the log file the UI tails.
-			Connections: func(c []clashapi.Connection) { b.push(ui.ConnectionsMsg{Rows: clashui.ConnRows(c)}) },
+			Connections: func(c []clashapi.Connection) { b.push(notify.ConnectionsMsg{Rows: clashui.ConnRows(c)}) },
 			Proxies: func(m map[string]clashapi.ProxyState) {
 				if msg, ok := clashui.LatencyMsg(m); ok {
 					b.push(msg)
@@ -301,7 +299,7 @@ func (b *Backend) startPoller() {
 	go p.Run(ctx)
 }
 
-func (b *Backend) push(msg tea.Msg) {
+func (b *Backend) push(msg any) {
 	if b.notes == nil {
 		return
 	}

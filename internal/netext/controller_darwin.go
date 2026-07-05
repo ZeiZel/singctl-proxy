@@ -126,7 +126,7 @@ func (c *darwinController) Targets() []string {
 // so the shared container isn't writable — see LICENSATION.md).
 func (c *darwinController) flushLocked() error {
 	if c.cfgPath == "" {
-		return errors.New("netext: не удалось определить путь App Group config.json (HOME не задан?)")
+		return errors.New("netext: could not determine App Group config.json path (HOME not set?)")
 	}
 	data, err := Config{Targets: c.set.list(), SocksHost: c.socks, SocksPort: c.port}.Marshal()
 	if err != nil {
@@ -134,10 +134,10 @@ func (c *darwinController) flushLocked() error {
 	}
 	dir := filepath.Dir(c.cfgPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("netext: создать каталог конфигурации %s: %w", dir, err)
+		return fmt.Errorf("netext: create config directory %s: %w", dir, err)
 	}
 	if err := os.WriteFile(c.cfgPath, data, 0o644); err != nil {
-		return fmt.Errorf("netext: записать %s: %w (CLI подписан с App Group entitlement? см. LICENSATION.md)", c.cfgPath, err)
+		return fmt.Errorf("netext: write %s: %w (is the CLI signed with the App Group entitlement? see LICENSATION.md)", c.cfgPath, err)
 	}
 	return nil
 }

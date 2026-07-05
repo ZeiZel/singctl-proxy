@@ -6,16 +6,16 @@ import "singctl/internal/feature"
 func FeatureDescriptor() feature.Descriptor {
 	return feature.Descriptor{
 		Name:    "keys",
-		Title:   "Ключи (VLESS)",
-		Summary: "сервер(ы) подключения",
-		Doc: "Один или несколько vless:// ключей. При нескольких ключах sing-box " +
-			"собирает группу urltest и сам выбирает самый быстрый доступный сервер " +
-			"(приоритет — порядок ввода).",
+		Title:   "Keys (VLESS)",
+		Summary: "connection server(s)",
+		Doc: "One or more vless:// keys. With multiple keys, sing-box " +
+			"builds a urltest group and automatically picks the fastest available server " +
+			"(input order sets priority).",
 		Flags: []feature.FlagSpec{
 			{Names: []string{"k", "key"}, Placeholder: "<vless://...>",
-				Usage: "vless-ключ; повторяйте для нескольких серверов (failover)",
+				Usage: "vless key; repeat for multiple servers (failover)",
 				Env:   []string{"SINGCTL_KEY", "SINGCTL_KEYS"}, Repeatable: true},
-			{Names: []string{"no-save"}, Usage: "не сохранять ключ в ~/.config/singctl"},
+			{Names: []string{"no-save"}, Usage: "do not save the key to ~/.config/singctl"},
 		},
 	}
 }

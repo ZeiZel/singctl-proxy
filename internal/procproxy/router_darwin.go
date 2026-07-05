@@ -18,9 +18,9 @@ import (
 // macOS but the transparent-proxy system extension isn't installed/approved.
 // Surfaced verbatim in the TUI (procErr/errText).
 var errExtensionUnavailable = errors.New(
-	"системное расширение не установлено или не одобрено — соберите и одобрите его " +
-		"(make build-netext DEVELOPMENT_TEAM=…, затем System Settings → Login Items & " +
-		"Extensions; подробнее в LICENSATION.md)")
+	"system extension is not installed or not approved — build and approve it " +
+		"(make build-netext DEVELOPMENT_TEAM=…, then System Settings → Login Items & " +
+		"Extensions; see LICENSATION.md for details)")
 
 // darwinRouter is the macOS per-app backend. Unlike the Linux cgroup router or
 // the Windows env fallback, it does NO env injection or process restart: it
@@ -85,7 +85,7 @@ func (r *darwinRouter) AddPID(_ context.Context, pid int) error {
 	}
 	id := netext.BundleIDForPID(pid)
 	if id == "" {
-		return fmt.Errorf("не удалось определить bundle ID приложения для PID %d (не .app-бандл?)", pid)
+		return fmt.Errorf("could not determine the app's bundle ID for PID %d (not an .app bundle?)", pid)
 	}
 	r.register(pid, id)
 	return nil
@@ -110,7 +110,7 @@ func (r *darwinRouter) Launch(ctx context.Context, argv []string) (int, error) {
 		id = netext.BundleIDForPID(pid)
 	}
 	if id == "" {
-		return pid, fmt.Errorf("приложение запущено (PID %d), но bundle ID не определён — захват расширением не активирован", pid)
+		return pid, fmt.Errorf("app launched (PID %d) but bundle ID could not be determined — extension capture not enabled", pid)
 	}
 	r.register(pid, id)
 	return pid, nil

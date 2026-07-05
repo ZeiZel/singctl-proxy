@@ -13,10 +13,10 @@ import (
 
 // ErrNoLicense means no license token is installed. Defined here (no build tag)
 // so it exists in both licensed and unlicensed builds for messaging.
-var ErrNoLicense = errors.New("license: лицензия не установлена — активируйте: singctl --license <токен>")
+var ErrNoLicense = errors.New("license: no license installed — activate with: singctl --license <token>")
 
 // ErrRevoked means the license server reported this license id as revoked.
-var ErrRevoked = errors.New("license: лицензия отозвана")
+var ErrRevoked = errors.New("license: license revoked")
 
 // statusResponse mirrors the server's GET /v1/status and POST /v1/activate
 // payloads: both respond with just {"status": "..."}.

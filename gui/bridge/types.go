@@ -50,7 +50,7 @@ type Settings struct {
 // to the frontend; only the #fragment label and a masked preview).
 type Key struct {
 	Index  int    `json:"index"`
-	Name   string `json:"name"`   // #fragment label, or "Ключ N"
+	Name   string `json:"name"`   // #fragment label, or "Key N"
 	Masked string `json:"masked"` // e.g. "vless://••••@host:443"
 }
 

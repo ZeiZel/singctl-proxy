@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"singctl/internal/control"
+	"singctl/internal/notify"
 	"singctl/internal/procproxy"
-	"singctl/internal/ui"
 )
 
 // recordingServer starts a control.Server that records the last (cmd,arg) and
@@ -86,11 +86,11 @@ func TestRemote_KeysAndSettings(t *testing.T) {
 	if len(links) != 2 || links[0] != "vless://a@h:1" {
 		t.Errorf("CurrentLinks = %v", links)
 	}
-	want := ui.Settings{SocksPort: 1090, ClashEnabled: true, ClashAddr: "127.0.0.1:9091"}
+	want := notify.Settings{SocksPort: 1090, ClashEnabled: true, ClashAddr: "127.0.0.1:9091"}
 	if err := b.ApplySettings(context.Background(), want); err != nil {
 		t.Fatal(err)
 	}
-	var got ui.Settings
+	var got notify.Settings
 	if err := json.Unmarshal([]byte(rec.get("SETTINGS-SET")), &got); err != nil {
 		t.Fatalf("settings json: %v", err)
 	}

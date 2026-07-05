@@ -192,7 +192,7 @@ func TestStartProcess_CapturesOutput(t *testing.T) {
 			if l.Stream == "out" && strings.Contains(l.Text, "hello-proxy") {
 				sawOut = true
 			}
-			if l.Stream == "err" && strings.HasPrefix(l.Text, "[процесс завершён") {
+			if l.Stream == "err" && strings.HasPrefix(l.Text, "[process exited") {
 				sawExit = true
 			}
 		}
@@ -207,10 +207,10 @@ func TestStartProcess_CapturesOutput(t *testing.T) {
 }
 
 func TestExitText(t *testing.T) {
-	if got := exitText(nil); got != "[процесс завершён]" {
+	if got := exitText(nil); got != "[process exited]" {
 		t.Errorf("exitText(nil) = %q", got)
 	}
-	if got := exitText(context.Canceled); !strings.HasPrefix(got, "[процесс завершён: ") {
+	if got := exitText(context.Canceled); !strings.HasPrefix(got, "[process exited: ") {
 		t.Errorf("exitText(err) = %q", got)
 	}
 }
