@@ -1,7 +1,9 @@
 // StatusDot.swift
 //
 // The small colored dot used next to "singctl" in the sidebar header and in
-// the menu-bar popover to show whether the daemon is reachable.
+// the menu-bar popover to show whether the daemon is reachable. Rendered as
+// a native SF Symbol (`circle.fill`) in a semantic tone so it adapts to
+// Light/Dark like the rest of the system chrome.
 
 import SwiftUI
 
@@ -22,9 +24,10 @@ struct StatusDot: View {
     }
 
     var body: some View {
-        Circle()
-            .fill(on ? Color.sOk : Color.sTextFaint)
+        Image(systemName: "circle.fill")
+            .resizable()
             .frame(width: size, height: size)
+            .foregroundStyle(on ? Color.sOk : Color.sTextFaint)
             .shadow(color: on ? Color.sOk.opacity(0.7) : .clear, radius: size * 0.6)
     }
 }

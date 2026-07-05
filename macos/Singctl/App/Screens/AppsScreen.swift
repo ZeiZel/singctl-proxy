@@ -6,6 +6,13 @@
 // previously-proxied applications. Follows DashboardScreen's environment
 // wiring — `LiveStore` for shared live state, `ControlClient` (actor) for
 // verb calls.
+//
+// Native migration: every list is a SwiftUI `Table` (resizable/sortable
+// columns, fills available space) rather than the custom `DataTable`. The
+// installed-apps filter is a `.searchable` field; empty states use
+// `ContentUnavailableView` (via `EmptyState`); the two management tables lay
+// out side-by-side when wide and stacked when narrow (`ViewThatFits`), with no
+// fixed heights.
 
 import SwiftUI
 
@@ -23,6 +30,7 @@ struct AppsScreen: View {
 
     @State private var installedApps: [InstalledApp] = []
     @State private var installedSearch = ""
+    @State private var installedSort = [KeyPathComparator(\InstalledApp.name)]
     @State private var isLoadingInstalled = false
     @State private var installedError: String?
     @State private var launchingBundleID: String?
@@ -32,28 +40,27 @@ struct AppsScreen: View {
     @State private var runningApps: [Application] = []
     @State private var routedBundleIDs: Set<String> = []
     @State private var proxiedApps: [ProxiedApp] = []
+    @State private var appsSort = [KeyPathComparator(\Application.name)]
+    @State private var proxiedSort = [KeyPathComparator(\ProxiedApp.name)]
     @State private var listsError: String?
     @State private var mutatingBundleIDs: Set<String> = []
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.md) {
-                SectionHeader(title: "Apps", subtitle: "Route individual applications or commands through the proxy")
+        VStack(alignment: .leading, spacing: Spacing.md) {
+            SectionHeader(title: "Apps", subtitle: "Route individual applications or commands through the proxy")
 
-                launchCommandCard
-                installedAppsCard
+            launchCommandCard
+            installedAppsCard
 
-                if let listsError {
-                    Text(listsError).font(.caption).foregroundStyle(Color.sDanger)
-                }
-
-                HStack(alignment: .top, spacing: Spacing.md) {
-                    applicationsCard
-                    proxiedCard
-                }
+            if let listsError {
+                Text(listsError).font(.caption).foregroundStyle(Color.sDanger)
             }
-            .padding(Spacing.lg)
+
+            managementTables
         }
+        .padding(Spacing.lg)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .searchable(text: $installedSearch, prompt: "Filter installed apps")
         .task { await loadInstalledApps() }
         .task { await refreshLoop() }
     }
@@ -68,11 +75,7 @@ struct AppsScreen: View {
                     .foregroundStyle(Color.sTextDim)
                 HStack(spacing: Spacing.sm) {
                     TextField("Command and arguments…", text: $launchCommand)
-                        .textFieldStyle(.plain)
-                        .padding(.horizontal, Spacing.sm)
-                        .padding(.vertical, 8)
-                        .background(Color.sBgSoft)
-                        .clipShape(RoundedRectangle(cornerRadius: Radius.sm, style: .continuous))
+                        .textFieldStyle(.roundedBorder)
                         .disabled(isLaunchingCommand)
                         .onSubmit { submitLaunchCommand() }
                     AppButton(
@@ -112,12 +115,15 @@ struct AppsScreen: View {
 
     // MARK: - Launch an app in proxy (installed apps)
 
+    /// Search-filtered (via `.searchable`) then sorted by the active column.
     private var filteredInstalledApps: [InstalledApp] {
-        guard !installedSearch.isEmpty else { return installedApps }
-        return installedApps.filter {
-            $0.name.localizedCaseInsensitiveContains(installedSearch)
-                || $0.bundleID.localizedCaseInsensitiveContains(installedSearch)
-        }
+        let base = installedSearch.isEmpty
+            ? installedApps
+            : installedApps.filter {
+                $0.name.localizedCaseInsensitiveContains(installedSearch)
+                    || $0.bundleID.localizedCaseInsensitiveContains(installedSearch)
+            }
+        return base.sorted(using: installedSort)
     }
 
     private var installedAppsCard: some View {
@@ -130,27 +136,36 @@ struct AppsScreen: View {
                 if let installedError {
                     Text(installedError).font(.caption).foregroundStyle(Color.sDanger)
                 }
-                DataTable(
-                    columns: ["App", "Bundle ID", ""],
-                    rows: filteredInstalledApps,
-                    searchText: $installedSearch,
-                    searchPlaceholder: "Filter installed apps…"
-                ) { app in
-                    HStack {
-                        Text(app.name).frame(width: 220, alignment: .leading)
-                        Text(app.bundleID)
-                            .foregroundStyle(Color.sTextDim)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        AppButton(
-                            "Launch in proxy", icon: "bolt.fill",
-                            isLoading: launchingBundleID == app.bundleID,
-                            disabled: launchingBundleID != nil
-                        ) {
-                            launchInstalled(app)
+                if filteredInstalledApps.isEmpty {
+                    EmptyState(
+                        text: installedSearch.isEmpty ? "No installed applications found." : "No apps match your search.",
+                        symbol: "app.dashed"
+                    )
+                } else {
+                    Table(filteredInstalledApps, sortOrder: $installedSort) {
+                        TableColumn("App", value: \.name) { app in
+                            Text(app.name).foregroundStyle(Color.sText)
                         }
+                        .width(min: 160, ideal: 220)
+
+                        TableColumn("Bundle ID", value: \.bundleID) { app in
+                            Text(app.bundleID).foregroundStyle(Color.sTextDim)
+                        }
+                        .width(min: 180, ideal: 280)
+
+                        TableColumn("") { app in
+                            AppButton(
+                                "Launch in proxy", icon: "bolt.fill",
+                                isLoading: launchingBundleID == app.bundleID,
+                                disabled: launchingBundleID != nil
+                            ) {
+                                launchInstalled(app)
+                            }
+                        }
+                        .width(min: 130, ideal: 150, max: 170)
                     }
+                    .tableStyle(.inset)
                 }
-                .frame(height: 280)
             }
         }
     }
@@ -177,47 +192,74 @@ struct AppsScreen: View {
         }
     }
 
+    // MARK: - Applications + Currently proxied (adaptive layout)
+
+    private var managementTables: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: Spacing.md) {
+                applicationsCard.frame(minWidth: 360)
+                proxiedCard.frame(minWidth: 360)
+            }
+            VStack(spacing: Spacing.md) {
+                applicationsCard
+                proxiedCard
+            }
+        }
+    }
+
     // MARK: - Applications (running, routable)
+
+    private var sortedRunningApps: [Application] { runningApps.sorted(using: appsSort) }
 
     private var applicationsCard: some View {
         Card(title: "Applications") {
-            DataTable(
-                columns: ["App", "Bundle ID", "PIDs", ""],
-                rows: runningApps,
-                searchText: nil
-            ) { app in
-                let isMutating = mutatingBundleIDs.contains(app.bundleID)
-                let isRouted = routedBundleIDs.contains(app.bundleID)
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(app.name)
-                        Badge(text: app.running ? "Running" : "Not running", tone: app.running ? .ok : .dim)
-                    }
-                    .frame(width: 170, alignment: .leading)
-                    Text(app.bundleID)
-                        .foregroundStyle(Color.sTextDim)
-                        .frame(width: 200, alignment: .leading)
-                    Text(app.pids.map(String.init).joined(separator: ", "))
-                        .foregroundStyle(Color.sTextDim)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if isRouted {
-                        AppButton(
-                            "Unroute", kind: .danger, icon: "minus.circle",
-                            isLoading: isMutating, disabled: isMutating
-                        ) {
-                            unroute(app.bundleID)
-                        }
-                    } else {
-                        AppButton(
-                            "Route", icon: "arrow.triangle.branch",
-                            isLoading: isMutating, disabled: isMutating
-                        ) {
-                            route(app.bundleID)
+            Badge(text: "\(runningApps.count)", tone: .accent)
+        } content: {
+            if runningApps.isEmpty {
+                EmptyState(text: "No running applications.", symbol: "app.badge")
+            } else {
+                Table(sortedRunningApps, sortOrder: $appsSort) {
+                    TableColumn("App", value: \.name) { app in
+                        HStack(spacing: Spacing.sm) {
+                            Text(app.name).foregroundStyle(Color.sText)
+                            Badge(text: app.running ? "Running" : "Not running", tone: app.running ? .ok : .dim)
                         }
                     }
+                    .width(min: 160, ideal: 200)
+
+                    TableColumn("Bundle ID", value: \.bundleID) { app in
+                        Text(app.bundleID).foregroundStyle(Color.sTextDim)
+                    }
+                    .width(min: 140, ideal: 220)
+
+                    TableColumn("PIDs") { app in
+                        Text(app.pids.map(String.init).joined(separator: ", "))
+                            .foregroundStyle(Color.sTextDim)
+                    }
+                    .width(min: 60, ideal: 90)
+
+                    TableColumn("") { app in
+                        let isMutating = mutatingBundleIDs.contains(app.bundleID)
+                        if routedBundleIDs.contains(app.bundleID) {
+                            AppButton(
+                                "Unroute", kind: .danger, icon: "minus.circle",
+                                isLoading: isMutating, disabled: isMutating
+                            ) {
+                                unroute(app.bundleID)
+                            }
+                        } else {
+                            AppButton(
+                                "Route", icon: "arrow.triangle.branch",
+                                isLoading: isMutating, disabled: isMutating
+                            ) {
+                                route(app.bundleID)
+                            }
+                        }
+                    }
+                    .width(min: 110, ideal: 130, max: 150)
                 }
+                .tableStyle(.inset)
             }
-            .frame(height: 320)
         }
         .frame(maxWidth: .infinity)
     }
@@ -254,37 +296,50 @@ struct AppsScreen: View {
 
     // MARK: - Currently proxied (persistent store)
 
+    private var sortedProxiedApps: [ProxiedApp] { proxiedApps.sorted(using: proxiedSort) }
+
     private var proxiedCard: some View {
         Card(title: "Currently proxied") {
             Badge(text: "\(proxiedApps.count)", tone: .accent)
         } content: {
-            DataTable(
-                columns: ["App", "Bundle ID", ""],
-                rows: proxiedApps,
-                searchText: nil
-            ) { app in
-                let isMutating = mutatingBundleIDs.contains(app.bundleID)
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(app.name)
-                        Badge(text: app.running ? "Running" : "Not running", tone: app.running ? .ok : .dim)
+            if proxiedApps.isEmpty {
+                EmptyState(text: "No proxied apps yet.", symbol: "app.dashed")
+            } else {
+                Table(sortedProxiedApps, sortOrder: $proxiedSort) {
+                    TableColumn("App", value: \.name) { app in
+                        HStack(spacing: Spacing.sm) {
+                            Text(app.name).foregroundStyle(Color.sText)
+                            Badge(text: app.running ? "Running" : "Not running", tone: app.running ? .ok : .dim)
+                        }
                     }
-                    .frame(width: 170, alignment: .leading)
-                    Text(app.bundleID)
-                        .foregroundStyle(Color.sTextDim)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    PillToggle("Enabled", isOn: enabledBinding(for: app))
-                        .disabled(isMutating)
-                        .frame(width: 130)
-                    AppButton(
-                        "Remove", kind: .danger, icon: "trash",
-                        isLoading: isMutating, disabled: isMutating
-                    ) {
-                        removeProxied(app.bundleID)
+                    .width(min: 160, ideal: 200)
+
+                    TableColumn("Bundle ID", value: \.bundleID) { app in
+                        Text(app.bundleID).foregroundStyle(Color.sTextDim)
                     }
+                    .width(min: 140, ideal: 220)
+
+                    TableColumn("Enabled") { app in
+                        Toggle("", isOn: enabledBinding(for: app))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .disabled(mutatingBundleIDs.contains(app.bundleID))
+                    }
+                    .width(min: 70, ideal: 80, max: 90)
+
+                    TableColumn("") { app in
+                        let isMutating = mutatingBundleIDs.contains(app.bundleID)
+                        AppButton(
+                            "Remove", kind: .danger, icon: "trash",
+                            isLoading: isMutating, disabled: isMutating
+                        ) {
+                            removeProxied(app.bundleID)
+                        }
+                    }
+                    .width(min: 110, ideal: 120, max: 140)
                 }
+                .tableStyle(.inset)
             }
-            .frame(height: 320)
         }
         .frame(maxWidth: .infinity)
     }

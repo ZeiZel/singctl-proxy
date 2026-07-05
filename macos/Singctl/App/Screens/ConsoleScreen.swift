@@ -33,10 +33,12 @@ struct ConsoleScreen: View {
                         text: "No console output yet. Launch an app through the proxy to see its stdout/stderr here.",
                         symbol: "terminal"
                     )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     terminal
                 }
             }
+            .frame(maxHeight: .infinity)
         }
         .padding(Spacing.lg)
     }
@@ -68,9 +70,9 @@ struct ConsoleScreen: View {
                 .padding(Spacing.sm)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(Color(hex: "#0c0e13"))
+            .background(Color(nsColor: .textBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
-            .frame(minHeight: 420)
+            .frame(maxHeight: .infinity)
             .onAppear { scrollToBottom(proxy) }
             .onChange(of: filteredLines.last?.id) { _, _ in scrollToBottom(proxy) }
             .onChange(of: selectedApp) { _, _ in scrollToBottom(proxy) }

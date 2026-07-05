@@ -2,7 +2,8 @@
 //
 // A screen/section title row: big title, optional dim subtitle, optional
 // trailing accessory (e.g. a refresh button or badge). Use once per screen,
-// at the top, outside any `Card`.
+// at the top, outside any `Card`. Uses native title typography and semantic
+// label colors (`.primary`/`.secondary`).
 
 import SwiftUI
 
@@ -33,11 +34,11 @@ struct SectionHeader<Accessory: View>: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.title2.weight(.bold))
-                    .foregroundStyle(Color.sText)
+                    .foregroundStyle(.primary)
                 if let subtitle {
                     Text(subtitle)
                         .font(.subheadline)
-                        .foregroundStyle(Color.sTextDim)
+                        .foregroundStyle(.secondary)
                 }
             }
             Spacer()

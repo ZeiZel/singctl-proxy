@@ -29,105 +29,22 @@ struct SettingsScreen: View {
     @State private var stopError: String?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.md) {
-                SectionHeader(title: "Settings")
-
-                if let loadError {
-                    Card {
-                        Text(loadError).foregroundStyle(Color.sDanger)
-                    }
-                }
-
-                if isLoading {
-                    Card {
-                        HStack(spacing: Spacing.sm) {
-                            ProgressView().controlSize(.small)
-                            Text("Loading settings…").font(.subheadline).foregroundStyle(Color.sTextDim)
-                        }
-                    }
-                } else {
-                    proxyCard
-                    clashCard
-                    urlTestCard
-                    profileCard
-                    applyRow
-                    dangerCard
-                }
+        Form {
+            errorSection
+            if isLoading {
+                loadingSection
+            } else {
+                proxySection
+                clashSection
+                urlTestSection
+                profileSection
+                applySection
+                dangerSection
             }
-            .padding(Spacing.lg)
         }
+        .formStyle(.grouped)
+        .navigationTitle("Settings")
         .task { await load() }
-    }
-
-    // MARK: - Cards
-
-    private var proxyCard: some View {
-        Card(title: "Proxy") {
-            labeledField("SOCKS port", text: $socksPortText, placeholder: "1080")
-        }
-    }
-
-    private var clashCard: some View {
-        Card(title: "Clash API") {
-            VStack(alignment: .leading, spacing: Spacing.md) {
-                PillToggle("Clash API", isOn: $clashEnabled, sub: "Exposes a local metrics/connections API")
-                labeledField("Clash API address", text: $clashAddr, placeholder: "127.0.0.1:9090")
-                    .disabled(!clashEnabled)
-                    .opacity(clashEnabled ? 1 : 0.5)
-            }
-        }
-    }
-
-    private var urlTestCard: some View {
-        Card(title: "URL Test") {
-            VStack(alignment: .leading, spacing: Spacing.md) {
-                labeledField("URLTest URL", text: $urlTestURL, placeholder: "https://www.gstatic.com/generate_204")
-                labeledField("URLTest interval", text: $urlTestInterval, placeholder: "3m")
-                labeledField("URLTest tolerance (ms)", text: $urlTestToleranceText, placeholder: "50")
-            }
-        }
-    }
-
-    private var profileCard: some View {
-        Card(title: "Profile") {
-            PillToggle("Save profile to disk", isOn: $saveProfile)
-        }
-    }
-
-    private var applyRow: some View {
-        Card {
-            VStack(alignment: .leading, spacing: Spacing.sm) {
-                if let applyMessage {
-                    Text(applyMessage)
-                        .font(.caption)
-                        .foregroundStyle(applyIsError ? Color.sDanger : Color.sOk)
-                }
-                HStack {
-                    AppButton("Apply", icon: "checkmark", isLoading: isApplying, disabled: isApplying, action: apply)
-                    Spacer()
-                }
-            }
-        }
-    }
-
-    private var dangerCard: some View {
-        Card(title: "Danger zone") {
-            VStack(alignment: .leading, spacing: Spacing.sm) {
-                if let stopError {
-                    Text(stopError).font(.caption).foregroundStyle(Color.sDanger)
-                }
-                HStack {
-                    AppButton(
-                        "Stop daemon", kind: .danger, icon: "stop.circle",
-                        isLoading: isStopping, disabled: isStopping
-                    ) {
-                        showStopConfirm = true
-                    }
-                    Spacer()
-                }
-            }
-        }
         .confirmationDialog(
             "Stop the singctl daemon?", isPresented: $showStopConfirm, titleVisibility: .visible
         ) {
@@ -138,11 +55,102 @@ struct SettingsScreen: View {
         }
     }
 
-    private func labeledField(_ label: String, text: Binding<String>, placeholder: String = "") -> some View {
-        VStack(alignment: .leading, spacing: Spacing.xs) {
-            Text(label.uppercased()).font(.caption2).foregroundStyle(Color.sTextDim)
-            TextField(placeholder, text: text)
-                .textFieldStyle(.roundedBorder)
+    // MARK: - Sections
+
+    @ViewBuilder
+    private var errorSection: some View {
+        if let loadError {
+            SwiftUI.Section {
+                Text(loadError).foregroundStyle(Color.sDanger)
+            }
+        }
+    }
+
+    private var loadingSection: some View {
+        SwiftUI.Section {
+            HStack(spacing: Spacing.sm) {
+                ProgressView().controlSize(.small)
+                Text("Loading settings…").foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var proxySection: some View {
+        SwiftUI.Section("Proxy") {
+            LabeledContent("SOCKS port") {
+                TextField("1080", text: $socksPortText)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 120)
+            }
+        }
+    }
+
+    private var clashSection: some View {
+        SwiftUI.Section("Clash API") {
+            Toggle("Clash API", isOn: $clashEnabled)
+            LabeledContent("Clash API address") {
+                TextField("127.0.0.1:9090", text: $clashAddr)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 200)
+            }
+            .disabled(!clashEnabled)
+        }
+    }
+
+    private var urlTestSection: some View {
+        SwiftUI.Section("URL Test") {
+            LabeledContent("URLTest URL") {
+                TextField("https://www.gstatic.com/generate_204", text: $urlTestURL)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 260)
+            }
+            LabeledContent("URLTest interval") {
+                TextField("3m", text: $urlTestInterval)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 120)
+            }
+            LabeledContent("URLTest tolerance (ms)") {
+                TextField("50", text: $urlTestToleranceText)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 120)
+            }
+        }
+    }
+
+    private var profileSection: some View {
+        SwiftUI.Section("Profile") {
+            Toggle("Save profile to disk", isOn: $saveProfile)
+        }
+    }
+
+    private var applySection: some View {
+        SwiftUI.Section {
+            HStack {
+                Button("Apply", action: apply)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isApplying)
+                if isApplying {
+                    ProgressView().controlSize(.small)
+                }
+                if let applyMessage {
+                    Text(applyMessage)
+                        .font(.caption)
+                        .foregroundStyle(applyIsError ? Color.sDanger : Color.sOk)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var dangerSection: some View {
+        SwiftUI.Section {
+            if let stopError {
+                Text(stopError).font(.caption).foregroundStyle(Color.sDanger)
+            }
+            Button("Stop daemon", role: .destructive) {
+                showStopConfirm = true
+            }
+            .disabled(isStopping)
         }
     }
 

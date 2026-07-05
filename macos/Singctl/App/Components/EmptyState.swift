@@ -1,7 +1,9 @@
 // EmptyState.swift
 //
 // Centered placeholder for a table/list/chart with nothing to show yet
-// (e.g. "Clash API disabled", "No connections", "No apps added").
+// (e.g. "Clash API disabled", "No connections", "No apps added"). Built on
+// the native `ContentUnavailableView` so it matches the system's standard
+// empty-state presentation.
 
 import SwiftUI
 
@@ -22,16 +24,14 @@ struct EmptyState: View {
     }
 
     var body: some View {
-        VStack(spacing: Spacing.sm) {
+        Group {
             if let symbol {
-                Image(systemName: symbol)
-                    .font(.system(size: 28))
-                    .foregroundStyle(Color.sTextFaint)
+                ContentUnavailableView(text, systemImage: symbol)
+            } else {
+                ContentUnavailableView {
+                    Text(text)
+                }
             }
-            Text(text)
-                .font(.subheadline)
-                .foregroundStyle(Color.sTextDim)
-                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, minHeight: 80)
         .padding(Spacing.md)

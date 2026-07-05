@@ -1,7 +1,9 @@
 // AppButton.swift
 //
 // The three button styles used across the app: primary (accent-filled),
-// danger (red-filled, destructive actions), and ghost (bordered, low-emphasis).
+// danger (destructive actions), and ghost (bordered, low-emphasis). Wraps
+// native macOS button styles (`.borderedProminent` / `.bordered`) rather than
+// hand-drawn fills/borders.
 
 import SwiftUI
 
@@ -42,47 +44,37 @@ struct AppButton: View {
     private var isDisabled: Bool { disabled || isLoading }
 
     var body: some View {
-        Button(action: action) {
+        Group {
+            switch kind {
+            case .primary:
+                button.buttonStyle(.borderedProminent)
+            case .ghost:
+                button.buttonStyle(.bordered)
+            case .danger:
+                button.buttonStyle(.bordered).tint(.red)
+            }
+        }
+        .controlSize(.regular)
+        .disabled(isDisabled)
+    }
+
+    private var button: some View {
+        Button(role: kind == .danger ? .destructive : nil, action: action) {
+            labelContent
+        }
+    }
+
+    @ViewBuilder
+    private var labelContent: some View {
+        if isLoading {
             HStack(spacing: Spacing.xs) {
-                if isLoading {
-                    ProgressView().controlSize(.small).tint(foreground)
-                } else if let icon {
-                    Image(systemName: icon)
-                }
+                ProgressView().controlSize(.small)
                 Text(title)
             }
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(foreground)
-            .padding(.horizontal, Spacing.md)
-            .padding(.vertical, 8)
-            .background(background)
-            .clipShape(RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: Radius.md, style: .continuous)
-                    .strokeBorder(border, lineWidth: kind == .ghost ? 1 : 0)
-            )
+        } else if let icon {
+            Label(title, systemImage: icon)
+        } else {
+            Text(title)
         }
-        .buttonStyle(.plain)
-        .opacity(isDisabled ? 0.5 : 1)
-        .allowsHitTesting(!isDisabled)
-    }
-
-    private var foreground: Color {
-        switch kind {
-        case .primary, .danger: return .white
-        case .ghost: return .sText
-        }
-    }
-
-    private var background: Color {
-        switch kind {
-        case .primary: return .sAccent
-        case .danger: return .sDanger
-        case .ghost: return .sPanelRaised
-        }
-    }
-
-    private var border: Color {
-        kind == .ghost ? .sBorder : .clear
     }
 }

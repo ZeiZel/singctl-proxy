@@ -6,8 +6,9 @@
 //   @EnvironmentObject private var store: LiveStore
 //   @Environment(\.controlClient) private var control
 //
-// Layout: mode switch -> 4-up stat grid -> traffic chart, with warning cards
-// up top when the daemon is offline or the license is invalid.
+// Layout: warning banners (daemon offline / invalid license) -> mode switch
+// -> stat grid -> traffic chart. Status badges live in the toolbar next to
+// the native navigation title.
 
 import SwiftUI
 import Charts
@@ -28,37 +29,35 @@ struct DashboardScreen: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.md) {
-                header
-
+            VStack(alignment: .leading, spacing: Spacing.lg) {
                 if !store.daemonRunning {
-                    Card {
-                        Text("The singctl daemon is not running. Start it, then this dashboard connects automatically.")
-                            .foregroundStyle(Color.sWarn)
+                    GroupBox {
+                        Label(
+                            "The singctl daemon is not running. Start it, then this dashboard connects automatically.",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .foregroundStyle(Color.sWarn)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
 
                 if let license, !license.valid {
-                    Card {
-                        Text(licenseMessage(license))
+                    GroupBox {
+                        Label(licenseMessage(license), systemImage: "exclamationmark.octagon.fill")
                             .foregroundStyle(Color.sDanger)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
 
-                modeCard
+                modeSection
                 statGrid
-                trafficCard
+                trafficSection
             }
             .padding(Spacing.lg)
         }
-        .task { license = try? await LicenseService.status() }
-    }
-
-    // MARK: - Header
-
-    private var header: some View {
-        SectionHeader(title: "Dashboard") {
-            HStack(spacing: Spacing.sm) {
+        .navigationTitle("Dashboard")
+        .toolbar {
+            ToolbarItemGroup {
                 if store.status.ciscoActive {
                     Badge(text: "Cisco active", tone: .warn)
                 }
@@ -68,28 +67,24 @@ struct DashboardScreen: View {
                 )
             }
         }
+        .task { license = try? await LicenseService.status() }
     }
 
     // MARK: - Mode switch
 
-    private var modeCard: some View {
-        Card {
-            HStack {
-                VStack(alignment: .leading, spacing: Spacing.xs) {
-                    Text("MODE").font(.caption2).foregroundStyle(Color.sTextDim)
-                    SegmentedControl(options: modeOptions, selection: modeBinding, disabled: isApplyingMode)
-                    if let modeError {
-                        Text(modeError).font(.caption).foregroundStyle(Color.sDanger)
-                    }
+    private var modeSection: some View {
+        GroupBox("Mode") {
+            VStack(alignment: .leading, spacing: Spacing.sm) {
+                SegmentedControl(options: modeOptions, selection: modeBinding, disabled: isApplyingMode)
+
+                if let modeError {
+                    Text(modeError).font(.caption).foregroundStyle(Color.sDanger)
                 }
-                Spacer()
-                VStack(alignment: .trailing, spacing: Spacing.xs) {
-                    Text("SELECTED NODE").font(.caption2).foregroundStyle(Color.sTextDim)
-                    Text(selectedNodeLabel)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.sText)
-                }
+
+                LabeledContent("Selected node", value: selectedNodeLabel)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, Spacing.xs)
         }
     }
 
@@ -125,26 +120,37 @@ struct DashboardScreen: View {
     private var lastSample: (up: Double, down: Double)? { store.trafficSamples.last }
 
     private var statGrid: some View {
-        let columns = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
-        return LazyVGrid(columns: columns, spacing: Spacing.md) {
-            Card { StatTile(label: "Upload rate", value: ByteFormat.rate(lastSample?.up ?? 0), tone: .accent) }
-            Card { StatTile(label: "Download rate", value: ByteFormat.rate(lastSample?.down ?? 0), tone: .ok) }
-            Card { StatTile(label: "Total up", value: ByteFormat.bytes(store.totalUp)) }
-            Card { StatTile(label: "Total down", value: ByteFormat.bytes(store.totalDown)) }
+        GroupBox("Traffic Stats") {
+            Grid(alignment: .leading, horizontalSpacing: Spacing.xl, verticalSpacing: Spacing.sm) {
+                GridRow {
+                    LabeledContent("Upload rate", value: ByteFormat.rate(lastSample?.up ?? 0))
+                    LabeledContent("Download rate", value: ByteFormat.rate(lastSample?.down ?? 0))
+                }
+                GridRow {
+                    LabeledContent("Total up", value: ByteFormat.bytes(store.totalUp))
+                    LabeledContent("Total down", value: ByteFormat.bytes(store.totalDown))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, Spacing.xs)
         }
     }
 
     // MARK: - Traffic chart
 
-    private var trafficCard: some View {
-        Card(title: "Traffic") {
-            Badge(text: "\(store.connections.count) active connections", tone: .accent)
-        } content: {
-            if store.trafficSamples.isEmpty {
-                EmptyState(text: "No traffic yet. Enable the Clash API in Settings to see live traffic here.")
-            } else {
-                TrafficChart(samples: store.trafficSamples)
+    private var trafficSection: some View {
+        GroupBox("Traffic") {
+            VStack(alignment: .leading, spacing: Spacing.sm) {
+                Badge(text: "\(store.connections.count) active connections", tone: .accent)
+
+                if store.trafficSamples.isEmpty {
+                    EmptyState(text: "No traffic yet. Enable the Clash API in Settings to see live traffic here.")
+                } else {
+                    TrafficChart(samples: store.trafficSamples)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, Spacing.xs)
         }
     }
 

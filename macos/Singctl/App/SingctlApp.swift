@@ -52,7 +52,7 @@ private struct RootView: View {
         } detail: {
             DetailView(section: selection ?? .dashboard)
         }
-        .background(Color.sBg)
+        .containerBackground(.regularMaterial, for: .window)
     }
 }
 
@@ -80,6 +80,7 @@ private struct SidebarView: View {
                 .textCase(nil)
             }
         }
+        .listStyle(.sidebar)
         .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
         .safeAreaInset(edge: .bottom) {
             Text(store.daemonRunning ? "daemon connected" : "daemon offline")
@@ -110,7 +111,6 @@ private struct DetailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.sBg)
     }
 }
 
@@ -168,7 +168,7 @@ private struct MenuBarContentView: View {
         }
         .padding(Spacing.md)
         .frame(width: 240)
-        .background(Color.sPanel)
+        .background(.regularMaterial)
     }
 
     private func applyMode(_ mode: String) {

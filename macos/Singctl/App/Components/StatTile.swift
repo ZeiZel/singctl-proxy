@@ -2,7 +2,9 @@
 //
 // A small "label / big value / optional sub-line" tile, used in dashboard-
 // style stat grids. Not itself a `Card` — wrap in one if you want the frosted
-// background (Dashboard puts each tile in its own `Card`).
+// background (Dashboard puts each tile in its own `Card`). Built on native
+// typography (`.secondary`/`.tertiary` label colors, system rounded digits)
+// rather than hand-picked hex colors.
 
 import SwiftUI
 
@@ -33,7 +35,7 @@ struct StatTile: View {
             Text(label.uppercased())
                 .font(.caption2)
                 .tracking(0.6)
-                .foregroundStyle(Color.sTextDim)
+                .foregroundStyle(.secondary)
             Text(value)
                 .font(.system(.title2, design: .rounded).weight(.bold))
                 .foregroundStyle(tone.color)
@@ -41,7 +43,7 @@ struct StatTile: View {
             if let sub {
                 Text(sub)
                     .font(.caption)
-                    .foregroundStyle(Color.sTextFaint)
+                    .foregroundStyle(.tertiary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

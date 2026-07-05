@@ -1,8 +1,8 @@
 // Card.swift
 //
-// The frosted panel every screen builds on. Background is `.ultraThinMaterial`
-// tinted with the app's panel color (dark palette per Theme.swift), a hairline
-// border, and `Radius.card` corners.
+// The frosted panel every screen builds on. Background is native
+// `.regularMaterial` (adapts to Light/Dark and lets window vibrancy show
+// through), with a hairline separator border and `Radius.card` corners.
 
 import SwiftUI
 
@@ -55,8 +55,7 @@ struct Card<Content: View, Accessory: View>: View {
             content
         }
         .padding(Spacing.md)
-        .background(.ultraThinMaterial)
-        .background(Color.sPanel.opacity(0.55))
+        .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Radius.card, style: .continuous)

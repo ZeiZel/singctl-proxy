@@ -1,7 +1,9 @@
 // Badge.swift
 //
 // Small rounded-pill label for statuses/counts (e.g. "3 active connections",
-// "Cisco AnyConnect", "off/proxy/vpn").
+// "Cisco AnyConnect", "off/proxy/vpn"). Colored via `Tone`, which now resolves
+// to semantic system colors (`.secondary`, `.green`, `.red`, …) rather than
+// fixed hex values, so it adapts to Light/Dark automatically.
 
 import SwiftUI
 
@@ -28,8 +30,7 @@ struct Badge: View {
             .foregroundStyle(tone.color)
             .padding(.horizontal, Spacing.sm)
             .padding(.vertical, 4)
-            .background(tone.color.opacity(0.15))
-            .clipShape(Capsule())
+            .background(tone.color.opacity(0.15), in: Capsule())
             .overlay(Capsule().strokeBorder(tone.color.opacity(0.3), lineWidth: 1))
     }
 }

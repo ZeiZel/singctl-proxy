@@ -1,7 +1,9 @@
 // SegmentedControl.swift
 //
-// A generic pill-style segmented picker (used by the Dashboard's off/proxy/vpn
-// mode switch, but works for any `Hashable` value).
+// A generic segmented picker (used by the Dashboard's off/proxy/vpn mode
+// switch, but works for any `Hashable` value). Wraps a native
+// `Picker(...).pickerStyle(.segmented)` so it renders as a standard macOS
+// segmented control.
 
 import SwiftUI
 
@@ -40,27 +42,13 @@ struct SegmentedControl<T: Hashable>: View {
     }
 
     var body: some View {
-        HStack(spacing: 2) {
+        Picker("", selection: $selection) {
             ForEach(options) { option in
-                let active = option.value == selection
-                Text(option.label)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(active ? Color.sText : Color.sTextDim)
-                    .padding(.horizontal, Spacing.md)
-                    .padding(.vertical, 6)
-                    .background(active ? Color.sAccent.opacity(0.22) : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: Radius.sm, style: .continuous))
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        guard !disabled else { return }
-                        selection = option.value
-                    }
+                Text(option.label).tag(option.value)
             }
         }
-        .padding(2)
-        .background(Color.sBgSoft)
-        .clipShape(RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
-        .opacity(disabled ? 0.6 : 1)
-        .allowsHitTesting(!disabled)
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .disabled(disabled)
     }
 }

@@ -1,7 +1,7 @@
 // PillToggle.swift
 //
 // A labeled switch row for settings-style screens: label (+ optional
-// sub-caption) on the left, a `Toggle` on the right.
+// sub-caption) on the left, a native `Toggle` (`.switch` style) on the right.
 
 import SwiftUI
 
@@ -27,13 +27,12 @@ struct PillToggle: View {
     var body: some View {
         Toggle(isOn: $isOn) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(label).foregroundStyle(Color.sText)
+                Text(label).foregroundStyle(.primary)
                 if let sub {
-                    Text(sub).font(.caption).foregroundStyle(Color.sTextDim)
+                    Text(sub).font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
         .toggleStyle(.switch)
-        .tint(.sAccent)
     }
 }

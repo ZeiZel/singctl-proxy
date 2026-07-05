@@ -33,21 +33,19 @@ struct KeysScreen: View {
     @State private var deleteTarget: KeyRow?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.md) {
-                SectionHeader(title: "Keys")
+        VStack(alignment: .leading, spacing: Spacing.md) {
+            SectionHeader(title: "Keys")
 
-                if let errorMessage {
-                    Text(errorMessage)
-                        .font(.subheadline)
-                        .foregroundStyle(Color.sDanger)
-                }
-
-                addCard
-                loadedCard
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.sDanger)
             }
-            .padding(Spacing.lg)
+
+            addCard
+            loadedCard
         }
+        .padding(Spacing.lg)
         .task { await load() }
         .alert("Rename key", isPresented: renameBinding) {
             TextField("Name", text: $renameText)
@@ -73,11 +71,7 @@ struct KeysScreen: View {
             VStack(alignment: .leading, spacing: Spacing.sm) {
                 HStack(spacing: Spacing.sm) {
                     TextField("vless://…", text: $newLink)
-                        .textFieldStyle(.plain)
-                        .padding(.horizontal, Spacing.sm)
-                        .padding(.vertical, 6)
-                        .background(Color.sBgSoft)
-                        .clipShape(RoundedRectangle(cornerRadius: Radius.sm, style: .continuous))
+                        .textFieldStyle(.roundedBorder)
                         .disabled(isMutating)
                         .onSubmit { addKey() }
                     AppButton(
@@ -101,24 +95,30 @@ struct KeysScreen: View {
             Badge(text: "\(keys.count)", tone: .accent)
         } content: {
             if keys.isEmpty {
-                EmptyState(text: isLoading ? "Loading keys…" : "No keys loaded.")
+                EmptyState(text: isLoading ? "Loading keys…" : "No keys loaded.", symbol: "key")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                DataTable(
-                    columns: ["#", "Name", "Key", ""],
-                    rows: keys,
-                    searchText: nil
-                ) { row in
-                    HStack(alignment: .center, spacing: Spacing.md) {
+                Table(keys) {
+                    TableColumn("#") { row in
                         Text("\(row.index + 1)")
                             .foregroundStyle(Color.sTextDim)
-                            .frame(width: 28, alignment: .leading)
+                    }
+                    .width(28)
+
+                    TableColumn("Name") { row in
                         Text(row.name)
                             .font(.subheadline)
                             .foregroundStyle(Color.sText)
-                            .frame(width: 160, alignment: .leading)
+                    }
+                    .width(min: 100, ideal: 160)
+
+                    TableColumn("Key") { row in
                         Text(row.masked)
+                            .font(.system(.body, design: .monospaced))
                             .foregroundStyle(Color.sTextDim)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    TableColumn("") { row in
                         HStack(spacing: Spacing.xs) {
                             AppButton("Rename", kind: .ghost, disabled: isMutating) {
                                 renameTarget = row
@@ -129,10 +129,11 @@ struct KeysScreen: View {
                             }
                         }
                     }
+                    .width(min: 160, ideal: 180)
                 }
-                .frame(minHeight: 240)
             }
         }
+        .frame(maxHeight: .infinity)
     }
 
     // MARK: - Presentation bindings

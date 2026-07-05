@@ -1,9 +1,12 @@
 // Theme.swift
 //
 // The design system's tokens: palette, spacing/radius scale, and small
-// formatting helpers shared by every screen. Mirrors gui/frontend's Tailwind
-// theme (gui/frontend/tailwind.config.js) exactly so the native app reads as
-// the same product as the web GUI. Dark-only — see `.appTheme()` below.
+// formatting helpers shared by every screen. Originally mirrored gui/
+// frontend's Tailwind theme with a hardcoded dark palette; the `s*` names
+// are now backed by semantic/adaptive system colors so the app follows the
+// OS's Light/Dark appearance and window vibrancy instead of forcing dark.
+// Call sites (`Color.sText`, `Tone.ok`, …) are unchanged — only what they
+// resolve to changed.
 
 import SwiftUI
 
@@ -12,7 +15,8 @@ import SwiftUI
 extension Color {
 
     /// Parses a "#RRGGBB" or "#RRGGBBAA" hex string. Unrecognized input
-    /// falls back to opaque black rather than crashing.
+    /// falls back to opaque black rather than crashing. Still used by chart
+    /// code that wants a fixed color regardless of appearance.
     init(hex: String) {
         var s = hex.trimmingCharacters(in: .whitespacesAndNewlines)
         s.removeAll { $0 == "#" }
@@ -32,24 +36,28 @@ extension Color {
         )
     }
 
-    // Base surfaces
-    static let sBg = Color(hex: "#111318")
-    static let sBgSoft = Color(hex: "#171a21")
-    static let sPanel = Color(hex: "#1c2029")
-    static let sPanelRaised = Color(hex: "#222734")
-    static let sBorder = Color(hex: "#2a3040")
+    // Base surfaces — adaptive/translucent rather than opaque dark fills, so
+    // window vibrancy shows through. `sBg` is fully transparent (the window's
+    // own material provides the background); the others are subtle system
+    // surfaces used where a screen still wants a faint recessed/raised panel.
+    static let sBg = Color.clear
+    static let sBgSoft = Color(nsColor: .controlBackgroundColor)
+    static let sPanel = Color(nsColor: .controlBackgroundColor)
+    static let sPanelRaised = Color.primary.opacity(0.05)
+    static let sBorder = Color(nsColor: .separatorColor)
 
-    // Accents / semantic tones
-    static let sAccent = Color(hex: "#5b8cff")
-    static let sAccentSoft = Color(hex: "#7c5bff")
-    static let sOk = Color(hex: "#3ecf8e")
-    static let sDanger = Color(hex: "#ff5d6c")
-    static let sWarn = Color(hex: "#ffb454")
+    // Accents / semantic tones — system accent + standard semantic colors,
+    // all of which adapt automatically between Light and Dark.
+    static let sAccent = Color.accentColor
+    static let sAccentSoft = Color.accentColor
+    static let sOk = Color.green
+    static let sDanger = Color.red
+    static let sWarn = Color.orange
 
-    // Text
-    static let sText = Color(hex: "#e6e9ef")
-    static let sTextDim = Color(hex: "#9aa3b2")
-    static let sTextFaint = Color(hex: "#6b7280")
+    // Text — system label colors.
+    static let sText = Color.primary
+    static let sTextDim = Color.secondary
+    static let sTextFaint = Color(nsColor: .tertiaryLabelColor)
 }
 
 // MARK: - Tone
@@ -61,12 +69,12 @@ enum Tone {
 
     var color: Color {
         switch self {
-        case .default: return .sText
-        case .dim: return .sTextDim
-        case .accent: return .sAccent
-        case .ok: return .sOk
-        case .warn: return .sWarn
-        case .danger: return .sDanger
+        case .default: return .primary
+        case .dim: return .secondary
+        case .accent: return .accentColor
+        case .ok: return .green
+        case .warn: return .orange
+        case .danger: return .red
         }
     }
 }
@@ -92,18 +100,19 @@ enum Radius {
 
 // MARK: - Scene modifier
 
-/// Applies the app-wide dark appearance. Call once at the root scene/view.
+/// Root-level hook for app-wide appearance. The app now follows the system's
+/// Light/Dark appearance and native window vibrancy rather than forcing a
+/// palette, so this is intentionally a near-noop — kept as a call site so
+/// `SingctlApp.swift` doesn't need to change if a future global tweak (e.g.
+/// a non-default accent) is needed.
 struct AppTheme: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .preferredColorScheme(.dark)
-            .tint(.sAccent)
-            .foregroundStyle(Color.sText)
     }
 }
 
 extension View {
-    /// Enforces the dark palette + accent tint used throughout the app.
+    /// Applies the app's root-level appearance hook. See `AppTheme`.
     func appTheme() -> some View { modifier(AppTheme()) }
 }
 

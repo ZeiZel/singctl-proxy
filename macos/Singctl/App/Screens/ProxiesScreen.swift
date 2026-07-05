@@ -1,9 +1,10 @@
 // ProxiesScreen.swift
 //
 // Mirrors gui/frontend's Proxies page (LatencyList/LatencyBar): the failover
-// group's per-server urltest latency, rendered as one bar per server with the
-// currently-selected server highlighted. Read-only — data comes straight from
-// `LiveStore.latency`, which is refreshed by the 2s poll loop.
+// group's per-server urltest latency, rendered as one native `Gauge` per
+// server with the currently-selected server highlighted. Read-only — data
+// comes straight from `LiveStore.latency`, which is refreshed by the 2s poll
+// loop.
 
 import SwiftUI
 
@@ -13,13 +14,11 @@ struct ProxiesScreen: View {
     private static let minScaleMs = 300
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.md) {
-                SectionHeader(title: "Proxies")
-                latencyCard
-            }
-            .padding(Spacing.lg)
+        VStack(alignment: .leading, spacing: Spacing.md) {
+            SectionHeader(title: "Proxies")
+            latencyCard
         }
+        .padding(Spacing.lg)
     }
 
     private var latencyCard: some View {
@@ -27,18 +26,18 @@ struct ProxiesScreen: View {
             Badge(text: "selected: \(store.latency.selected.isEmpty ? "—" : store.latency.selected)", tone: .accent)
         } content: {
             if store.latency.rows.isEmpty {
-                EmptyState(text: "No latency data yet. Enable Proxy/VPN mode with the Clash API on.")
+                EmptyState(text: "No latency data yet. Enable Proxy/VPN mode with the Clash API on.", symbol: "gauge")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                VStack(spacing: 0) {
-                    ForEach(store.latency.rows) { row in
-                        LatencyBarRow(row: row, max: maxDelay)
-                        if row.id != store.latency.rows.last?.id {
-                            Divider().overlay(Color.sBorder.opacity(0.5))
-                        }
-                    }
+                List(store.latency.rows) { row in
+                    LatencyGaugeRow(row: row, maxDelay: maxDelay)
+                        .listRowBackground(Color.clear)
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
         }
+        .frame(maxHeight: .infinity)
     }
 
     private var maxDelay: Int {
@@ -46,11 +45,12 @@ struct ProxiesScreen: View {
     }
 }
 
-/// One server's latency as a labelled bar. Color follows the same thresholds
-/// as gui/frontend/src/entities/proxy/ui/LatencyBar.tsx's delayColorClass.
-private struct LatencyBarRow: View {
+/// One server's latency as a native `Gauge`. Thresholds follow the same
+/// bands as gui/frontend/src/entities/proxy/ui/LatencyBar.tsx's
+/// delayColorClass.
+private struct LatencyGaugeRow: View {
     let row: LatencyRow
-    let max: Int
+    let maxDelay: Int
 
     var body: some View {
         HStack(alignment: .center, spacing: Spacing.md) {
@@ -60,37 +60,36 @@ private struct LatencyBarRow: View {
                 }
                 Text(row.tag)
                     .foregroundStyle(Color.sText)
-            }
-            .frame(width: 160, alignment: .leading)
-
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: Radius.sm, style: .continuous)
-                        .fill(Color.sBgSoft)
-                    RoundedRectangle(cornerRadius: Radius.sm, style: .continuous)
-                        .fill(barColor)
-                        .frame(width: geo.size.width * widthFraction)
+                if row.selected {
+                    Badge(text: "selected", tone: .ok)
                 }
             }
-            .frame(height: 6)
+            .frame(minWidth: 160, alignment: .leading)
 
-            Text(delayLabel)
-                .foregroundStyle(Color.sTextDim)
-                .frame(width: 70, alignment: .trailing)
+            Gauge(value: gaugeValue, in: 0...Double(max(Self.minScaleMs, maxDelay))) {
+                EmptyView()
+            } currentValueLabel: {
+                Text(delayLabel)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(Color.sTextDim)
+            }
+            .gaugeStyle(.accessoryLinearCapacity)
+            .tint(tint)
         }
         .padding(.vertical, Spacing.xs)
     }
 
-    private var widthFraction: CGFloat {
-        guard row.delay > 0, max > 0 else { return 1 }
-        return Swift.min(1, CGFloat(row.delay) / CGFloat(max))
+    private static let minScaleMs = 300
+
+    private var gaugeValue: Double {
+        Double(Swift.max(0, row.delay))
     }
 
     private var delayLabel: String {
         row.delay > 0 ? "\(row.delay) ms" : "timeout"
     }
 
-    private var barColor: Color {
+    private var tint: Color {
         if row.delay <= 0 { return .sDanger }
         if row.delay < 150 { return .sOk }
         if row.delay < 350 { return .sWarn }
