@@ -53,6 +53,7 @@ struct KeysScreen: View {
     }
 
     @State private var keys: [KeyRow] = []
+    @State private var keySearch = ""
     @State private var isLoading = false
     @State private var isMutating = false
     @State private var errorMessage: String?
@@ -93,6 +94,7 @@ struct KeysScreen: View {
             loadedCard
         }
         .padding(Spacing.lg)
+        .searchable(text: $keySearch, prompt: "Search keys")
         .task { await load() }
         .alert("Rename key", isPresented: renameBinding) {
             TextField("Name", text: $renameText)
@@ -295,14 +297,23 @@ struct KeysScreen: View {
 
     private var loadedCard: some View {
         Card(title: "Loaded keys") {
-            Badge(text: "\(keys.count)", tone: .accent)
+            HStack(spacing: Spacing.sm) {
+                Badge(text: "\(filteredKeys.count)", tone: .accent)
+                AppButton("Refresh", kind: .ghost, icon: "arrow.clockwise", isLoading: isLoading, disabled: isMutating) {
+                    Task { await load() }
+                }
+                .keyboardShortcut("r", modifiers: .command)
+            }
         } content: {
-            if keys.isEmpty {
-                EmptyState(text: isLoading ? "Loading keys…" : "No keys loaded.", symbol: "key")
+            if filteredKeys.isEmpty {
+                EmptyState(
+                    text: isLoading ? "Loading keys…" : (keySearch.isEmpty ? "No keys loaded." : "No keys match your search."),
+                    symbol: keySearch.isEmpty ? "key" : "magnifyingglass"
+                )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    ForEach(keys) { row in
+                    ForEach(filteredKeys) { row in
                         HStack(spacing: Spacing.md) {
                             Text("\(row.index + 1)")
                                 .font(.appSecondary)
@@ -360,6 +371,16 @@ struct KeysScreen: View {
             }
         }
         .frame(maxHeight: .infinity)
+    }
+
+    private var filteredKeys: [KeyRow] {
+        let query = keySearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return keys }
+        return keys.filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+                || $0.protocolLabel.localizedCaseInsensitiveContains(query)
+                || $0.masked.localizedCaseInsensitiveContains(query)
+        }
     }
 
     // MARK: - Presentation bindings

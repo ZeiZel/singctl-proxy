@@ -101,3 +101,30 @@ Reference patterns:
 3. **Conveniences and consistency:** apply the hierarchy across screens, add Keys/Apps search, normalize refresh/copy/state presentation, and perform accessibility labels/help cleanup.
 4. **Fixture and presentation:** add the deterministic demo backend/harness, capture and compose the hero PNG, add reproducibility notes, and insert the image in `README.md`.
 5. **Verification:** run project generation/build checks, exercise fixture states and appearances, visually inspect the PNG, and resolve regressions before closing `singctl-proxy-nys`.
+
+## Implementation and verification record
+
+Implemented:
+
+- Settings now uses native `Form`/`Section` structure. Daemon-backed fields have Apply/Revert dirty-state handling and normalized optional-value validation through `SettingsDraft`; the App Store build omits the read-only system-proxy summary.
+- Shared surfaces and semantic fonts were refined, and the root window no longer uses the heavy dark overlay.
+- Keys gained local search. Apps retains the search it already had before this work; it was not newly introduced here.
+- `⌘R` refresh is wired for Keys, Proxies, Connections, Apps, and System proxy. Existing copy affordances were retained; this pass did not add a new copy feature.
+- A standalone `SingctlPreview` target renders the real `RootView` with an in-memory backend and isolated defaults. The shipping main entry point is excluded from that target. Capture uses `/usr/sbin/screencapture -x -l` against only the preview window because offscreen caching does not render SwiftUI reliably. It neither contacts an installed service nor changes network state. The surrounding hero background is implemented in SwiftUI, and the resulting image is linked from the root README.
+
+Completed verification:
+
+- Both unsigned Debug schemes built successfully with Xcode 26.6 / Swift 6.3.3; the App Store build reused the available local `Libbox.xcframework` artifact.
+- The final fixture renders were visually inspected for the Dashboard README hero, Settings in a wide Light window, and Settings in a narrow Dark window. This inspection confirmed the corrected TextField labels, semantic scene background, and Dark appearance header contrast in those captured states.
+- Settings draft checks passed with:
+
+  ```sh
+  swiftc macos/Singctl/App/Core/Models.swift \
+    macos/Singctl/App/Core/SettingsDraft.swift \
+    macos/Singctl/Scripts/SettingsDraftChecks.swift \
+    -o /tmp/settings-draft-checks && /tmp/settings-draft-checks
+  ```
+
+- Independent code review found no remaining implementation blockers.
+
+The implementation is complete and the final code builds passed after the latest UI fixes. Visual QA covers only the captured states listed above; it does not claim interaction coverage. No live-daemon integration tests, code signing/notarization, full automated UI interaction suite, or comprehensive VoiceOver audit are claimed by this record.

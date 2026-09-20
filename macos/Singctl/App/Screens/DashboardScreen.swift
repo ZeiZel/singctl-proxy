@@ -44,6 +44,7 @@ struct DashboardScreen: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.xl) {
+                SectionHeader(title: "Dashboard", subtitle: "Live routing status and traffic")
                 if !store.daemonRunning {
                     Card {
                         Label(
@@ -63,7 +64,6 @@ struct DashboardScreen: View {
             .padding(Spacing.lg)
         }
         .task { await connectionsStatePollLoop() }
-        .navigationTitle("Dashboard")
         .toolbar {
             // `sharedBackgroundVisibility(.hidden)` drops the system glass
             // capsule the toolbar would otherwise draw behind each item, so

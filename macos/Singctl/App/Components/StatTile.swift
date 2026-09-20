@@ -33,7 +33,7 @@ struct StatTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
             Text(label)
-                .font(.appSecondary)
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
             Text(value)
                 .font(.appValue)

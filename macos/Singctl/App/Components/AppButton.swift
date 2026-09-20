@@ -55,6 +55,7 @@ struct AppButton: View {
             }
         }
         .controlSize(.regular)
+        .help(title)
         .disabled(isDisabled)
     }
 

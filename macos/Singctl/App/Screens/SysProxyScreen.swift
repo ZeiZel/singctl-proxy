@@ -94,6 +94,7 @@ struct SysProxyScreen: View {
             AppButton("Refresh", kind: .ghost, icon: "arrow.clockwise", isLoading: isLoadingStatus) {
                 Task { await loadStatus() }
             }
+            .keyboardShortcut("r", modifiers: .command)
         } content: {
             VStack(alignment: .leading, spacing: Spacing.sm) {
                 if let statusError {

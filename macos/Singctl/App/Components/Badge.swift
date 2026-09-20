@@ -33,14 +33,14 @@ struct Badge: View {
                 Circle()
                     .fill(tone.color)
                     .frame(width: 7, height: 7)
-                    .shadow(color: tone.color.opacity(0.6), radius: 3)
+                    .accessibilityHidden(true)
             }
             Text(text)
                 .font(.appCaption.weight(.medium))
         }
         .foregroundStyle(tone.color)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
+        .padding(.horizontal, Spacing.sm)
+        .padding(.vertical, 4)
         .background(tone.color.opacity(0.14), in: Capsule())
         .overlay(Capsule().strokeBorder(tone.color.opacity(0.35), lineWidth: 1))
     }

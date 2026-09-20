@@ -27,6 +27,7 @@ import AppKit
 import Combine
 import os.log
 
+#if !SCREENSHOT_HARNESS
 @main
 struct SingctlApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -84,6 +85,7 @@ struct SingctlApp: App {
         .windowStyle(.hiddenTitleBar)
     }
 }
+#endif
 
 // MARK: - Menu-bar status item
 
@@ -242,9 +244,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 /// The window's root: sidebar (all `Section`s for this build) + detail pane
 /// for the selected one.
-private struct RootView: View {
+struct RootView: View {
     @EnvironmentObject private var store: LiveStore
-    @StateObject private var navigation = NavigationModel()
+    @StateObject private var navigation: NavigationModel
+
+    init(initialSection: Section = .dashboard) {
+        _navigation = StateObject(wrappedValue: NavigationModel(selection: initialSection))
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -253,7 +259,7 @@ private struct RootView: View {
             DetailView(section: navigation.selection ?? .dashboard)
         }
         .containerBackground(for: .window) {
-            Rectangle().fill(.regularMaterial).overlay(Color.black.opacity(0.22))
+            Color.sBg
         }
         .environmentObject(navigation)
     }
@@ -278,9 +284,8 @@ private struct SidebarView: View {
         List(selection: $selection) {
             SwiftUI.Section {
                 ForEach(Section.allCases) { section in
-                    // Explicit HStack instead of `Label` so the sidebar list
-                    // style can't substitute its own (larger) row typography;
-                    // text is pinned to the 16px `appBody` token.
+                    // Explicit HStack keeps the symbol and title alignment
+                    // consistent while still using the app's semantic font.
                     HStack(spacing: Spacing.sm) {
                         Image(systemName: section.symbol)
                             .font(.system(size: 15, weight: .medium))
@@ -303,9 +308,6 @@ private struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        // Ignore the system "Sidebar icon size" setting (Large would blow the
-        // rows up past the 16px type scale).
-        .environment(\.sidebarRowSize, .medium)
         .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
         .safeAreaInset(edge: .bottom) {
             VStack(alignment: .leading, spacing: Spacing.xs) {

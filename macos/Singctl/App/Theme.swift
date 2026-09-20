@@ -61,14 +61,13 @@ extension Color {
         })
     }
 
-    // Base surfaces — a calm, mostly-opaque soft-indigo pastel palette.
-    // Every token is adaptive (light/dark) via `dyn(light:dark:)`, and none
-    // ever bottoms out at pure black/white.
-    static let sBg = Color.dyn(light: 0xECEDF1, dark: 0x1E2027)
-    static let sBgSoft = Color.dyn(light: 0xF3F4F7, dark: 0x24262E)
-    static let sPanel = Color.dyn(light: 0xE3E5EB, dark: 0x171921)
-    static let sPanelRaised = Color.dyn(light: 0xF3F4F7, dark: 0x2E323D)
-    static let sBorder = Color.dyn(light: 0xDDDFE6, dark: 0x383C48)
+    // Base surfaces use AppKit's semantic colors so the hierarchy follows
+    // the user's appearance, contrast, and accessibility settings.
+    static let sBg = Color(nsColor: .windowBackgroundColor)
+    static let sBgSoft = Color(nsColor: .underPageBackgroundColor)
+    static let sPanel = Color(nsColor: .controlBackgroundColor)
+    static let sPanelRaised = Color(nsColor: .textBackgroundColor)
+    static let sBorder = Color(nsColor: .separatorColor)
 
     // Accents / semantic tones — a single soft-indigo accent plus muted
     // (not vivid) semantic colors, all adaptive between Light and Dark.
@@ -127,21 +126,16 @@ enum Radius {
 
 // MARK: - Typography
 
-/// Shared font tokens. `.controlSize(.large)` doesn't enlarge `Text`, so
-/// components apply these explicitly to get a visibly larger, more
-/// legible scale than the system defaults. Screens/tables (later wave)
-/// reuse these same tokens.
+/// Shared font tokens. Components use semantic macOS styles so hierarchy and
+/// accessibility scaling remain consistent across screens.
 extension Font {
-    // Type scale — the single source of truth. TWO sizes only: 20 for
-    // headers/titles, 16 for everything else; extra hierarchy comes from
-    // WEIGHT. Reuse these tokens across every component/screen; never use
-    // raw SwiftUI semantic fonts (they're <16 on macOS) or ad-hoc sizes.
-    static let appTitle = Font.system(size: 20, weight: .semibold)     // page / section titles
-    static let appHeadline = Font.system(size: 20, weight: .semibold)  // card / block headers
-    static let appValue = Font.system(size: 16, weight: .medium)       // numeric / stat values
-    static let appBody = Font.system(size: 16)                         // primary text, nav items
-    static let appSecondary = Font.system(size: 16)                    // secondary / dim labels (pair with .secondary color)
-    static let appCaption = Font.system(size: 16)                      // hints / axis (smallest allowed)
+    // Semantic macOS styles preserve hierarchy and Dynamic Type/accessibility scaling.
+    static let appTitle = Font.title2.weight(.semibold)
+    static let appHeadline = Font.headline
+    static let appValue = Font.body.monospacedDigit()
+    static let appBody = Font.body
+    static let appSecondary = Font.callout
+    static let appCaption = Font.caption
 }
 
 // MARK: - Scene modifier
@@ -210,6 +204,12 @@ extension Bundle {
     /// shown in the sidebar footer and Settings → About. Falls back to "—" when
     /// the key is somehow absent.
     var appVersion: String {
+        #if SCREENSHOT_HARNESS
+        // Keep the source-controlled fixture legible even though a command
+        // line target has no shipping app bundle. This matches App/Info.plist.
+        return "2.0.0"
+        #else
         infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        #endif
     }
 }

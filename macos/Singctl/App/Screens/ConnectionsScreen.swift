@@ -45,6 +45,7 @@ struct ConnectionsScreen: View {
     @State private var sortOrder = [KeyPathComparator(\ConnDisplayRow.app)]
     @State private var closingIDs: Set<String> = []
     @State private var connectionsError: String?
+    @State private var isRefreshing = false
 
     // MARK: - Firewall
 
@@ -61,7 +62,12 @@ struct ConnectionsScreen: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.lg) {
-                SectionHeader(title: "Connections", subtitle: subtitle)
+                SectionHeader(title: "Connections", subtitle: subtitle) {
+                    AppButton("Refresh", kind: .ghost, icon: "arrow.clockwise", isLoading: isRefreshing) {
+                        refreshNow()
+                    }
+                    .keyboardShortcut("r", modifiers: .command)
+                }
                 connectionsSection
                 summarySection
                 firewallSection
@@ -526,6 +532,15 @@ struct ConnectionsScreen: View {
         let (conns, fwRules) = await (connectionsResult, rulesResult)
         if let conns { payload = conns }
         if let fwRules { rules = fwRules }
+    }
+
+    private func refreshNow() {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        Task {
+            defer { isRefreshing = false }
+            await refreshAll()
+        }
     }
 
     private func refreshConnections() async {
