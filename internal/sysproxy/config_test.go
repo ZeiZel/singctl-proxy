@@ -262,8 +262,7 @@ func TestDefaultConfig_MatchesOriginalHardcodedRules(t *testing.T) {
 	cfg.Host, cfg.Port = "127.0.0.1", 2080
 
 	directHosts := []string{
-		"printer", "yandex.ru", "ru", "почта.xn--p1ai", "scm.example.invalid",
-		"portal.example.invalid", "myhost.local",
+		"printer", "yandex.ru", "ru", "почта.xn--p1ai", "myhost.local",
 		"10.1.2.3", "172.16.5.5", "192.168.1.1", "100.64.0.5", "169.254.1.1", "127.0.0.1",
 	}
 	for _, h := range directHosts {
@@ -271,7 +270,7 @@ func TestDefaultConfig_MatchesOriginalHardcodedRules(t *testing.T) {
 			t.Errorf("MatchesExcludeDirect(DefaultConfig, %q) = false, want true (unchanged default behaviour)", h)
 		}
 	}
-	proxiedHosts := []string{"openai.com", "example.com", "8.8.8.8", "example.invalid"}
+	proxiedHosts := []string{"openai.com", "example.com", "8.8.8.8", "public.example"}
 	for _, h := range proxiedHosts {
 		if MatchesExcludeDirect(cfg, h) {
 			t.Errorf("MatchesExcludeDirect(DefaultConfig, %q) = true, want false (unchanged default behaviour)", h)

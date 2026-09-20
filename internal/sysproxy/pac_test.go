@@ -57,17 +57,15 @@ func TestGeneratePAC_DefaultConfig_Include(t *testing.T) {
 
 // TestGeneratePAC_DefaultConfig_Exclude is the exclude-mode counterpart:
 // DefaultConfig() (which now seeds Direct with DefaultDirectRules — the
-// RFC1918/CGNAT/link-local/loopback CIDRs and the *.ExampleOrganization.*/*.ru/*.xn--p1ai/
-// *.local wildcards that used to be hardcoded in GenerateExcludePAC) plus the
+// RFC1918/CGNAT/link-local/loopback CIDRs and the *.ru/*.xn--p1ai/*.local
+// wildcards that used to be hardcoded in GenerateExcludePAC) plus the
 // golden RU-domains fixture appended, must equal testdata/exclude.pac.
 //
 // NOTE on the one intentional golden diff: sections 3 and 4's comments
-// changed from the old company-specific wording ("Corporate ExampleOrganization on any TLD,
-// and Russian TLDs...", "Russian services on non-.ru TLDs...") to generic
-// wording ("Wildcard [direct] rules...", "Domain [direct] rules..."), because
+// uses generic wording ("Wildcard [direct] rules...", "Domain [direct] rules...") because
 // those rules are now user-configurable DATA (Config.Direct), not hardcoded
-// ExampleOrganization/ru literals — the old wording would be actively misleading for a custom
-// [direct] list that has nothing to do with ExampleOrganization or Russia. Sections 1 and 2
+// regional literals — the old wording would be actively misleading for a custom
+// [direct] list. Sections 1 and 2
 // (bare-hostname rule, CIDR block incl. its exact column alignment) are
 // untouched. See TestMatchesExcludeDirect_DomainRuleSemantics /
 // TestMatchesExcludeDirect_DefaultRules_MatchOriginalHardcoding below for the
@@ -226,14 +224,6 @@ func TestMatchesExcludeDirect_DomainRuleSemantics(t *testing.T) {
 		{"dotted .ru host", "yandex.ru", true},
 		{"bare ru TLD", "ru", true},
 		{"dotted .xn--p1ai (рф) host", "почта.xn--p1ai", true},
-		{"corporate ExampleOrganization host", "scm.example.invalid", true},
-		{"corporate ExampleOrganization host, non-ru TLD", "portal.example.invalid", true},
-		// shExpMatch(host, "*.ExampleOrganization.*") requires a literal ".ExampleOrganization." substring, so a
-		// bare "ExampleOrganization.<tld>" (no subdomain, hence no leading dot before "ExampleOrganization")
-		// does NOT match rule 3 — a faithful quirk of the original PAC this
-		// port preserves rather than "fixes". Use a non-.ru TLD so rule 3's
-		// .ru wildcard doesn't independently make it DIRECT anyway.
-		{"ExampleOrganization bare second-level, no leading dot before ExampleOrganization — NOT matched by *.ExampleOrganization.*", "example.invalid", false},
 		{".local host", "myhost.local", true},
 		{"RFC1918 10/8 literal", "10.1.2.3", true},
 		{"RFC1918 172.16/12 literal", "172.16.5.5", true},
@@ -281,13 +271,13 @@ func TestMatchesIncludeProxy_DomainRuleSemantics(t *testing.T) {
 // CIDR) the whole rule-matching/PAC-rendering machinery is built on.
 func TestClassifyRules(t *testing.T) {
 	domains, globs, cidrs, nets := classifyRules([]string{
-		"OpenAI.com", " anthropic.com ", "*.githubusercontent.com", "*.ExampleOrganization.*",
+		"OpenAI.com", " anthropic.com ", "*.githubusercontent.com", "*.example.internal",
 		"10.0.0.0/8", "not-a-cidr/oops", "::1/128", "", "openai.com", // dup, case-folded
 	})
 	if want := []string{"openai.com", "anthropic.com"}; !equalStrings(domains, want) {
 		t.Errorf("domains = %v, want %v", domains, want)
 	}
-	if want := []string{"*.githubusercontent.com", "*.ExampleOrganization.*"}; !equalStrings(globs, want) {
+	if want := []string{"*.githubusercontent.com", "*.example.internal"}; !equalStrings(globs, want) {
 		t.Errorf("globs = %v, want %v", globs, want)
 	}
 	if len(cidrs) != 1 || cidrs[0] != "10.0.0.0/8" || len(nets) != 1 {

@@ -51,9 +51,9 @@ launchctl unload -w "$DAEMON_PLIST" >/dev/null 2>&1 || true
 # `make pac-server` (see Makefile PAC_AGENT_PLIST) at
 # ~/Library/LaunchAgents/com.singctl.pacserver.plist, serving PAC files out of
 # ~/.config/singctl via `python3 -m http.server` (see
-# packaging/macos/com.singctl.pacserver.plist.in). The user also runs their
-# OWN unrelated proxy toggle from ~/projects/ExampleOrganization/mac-proxy — that one does not
-# use this LaunchAgent label/plist, so it is never touched here. We verify
+# packaging/macos/com.singctl.pacserver.plist.in). A user may also run an
+# unrelated proxy toggle; it does not use this LaunchAgent label/plist, so it
+# is never touched here. We verify
 # the on-disk plist actually looks like ours (serves via http.server out of a
 # .config/singctl directory) before booting it out, rather than trusting the
 # label alone.

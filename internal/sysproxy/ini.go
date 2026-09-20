@@ -29,9 +29,7 @@ import (
 //	*.githubusercontent.com
 //
 //	[direct]                ; never proxy
-//	*.ExampleOrganization.*
 //	*.local
-//	*.ru
 //	10.0.0.0/8
 //	100.64.0.0/10
 //
@@ -45,8 +43,8 @@ import (
 // A [proxy]/[direct] entry is one of:
 //   - a bare domain ("openai.com") — matches the domain itself and every
 //     subdomain;
-//   - a "*." (or any) wildcard containing "*" ("*.githubusercontent.com",
-//     "*.ExampleOrganization.*") — a shell-glob pattern, matched the same way the PAC's own
+//   - a "*." (or any) wildcard containing "*" ("*.githubusercontent.com") —
+//     a shell-glob pattern, matched the same way the PAC's own
 //     shExpMatch would;
 //   - a CIDR ("10.0.0.0/8") — matched only against a literal IPv4 host,
 //     never triggers a DNS lookup. IPv6 CIDRs are rejected (unsupported).

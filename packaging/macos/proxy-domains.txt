@@ -6,7 +6,7 @@
 #
 # `#` starts a comment; blank lines are ignored. Edit this file, then re-run
 # `make proxy-pac` to regenerate and re-apply. Everything NOT listed here goes
-# DIRECT (corporate/.ru traffic never touches the tunnel).
+# DIRECT. Organization-specific routing belongs in a user-owned rules file.
 
 # --- Google ---
 google.com

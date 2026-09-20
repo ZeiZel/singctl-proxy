@@ -30,3 +30,7 @@ licenses/
 
 # Local env with secrets — never commit
 .env
+
+# Personal system-proxy rules; use packaging/macos/singctl-proxy-rules.example.ini
+# as the checked-in template.
+packaging/macos/singctl-proxy-rules.ini

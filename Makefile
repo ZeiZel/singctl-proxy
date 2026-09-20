@@ -245,7 +245,7 @@ clean:
 # Two mutually-exclusive modes, both driven by a generated PAC (Automatic Proxy
 # Configuration) so they switch cleanly and can express rules the manual proxy
 # fields cannot — exclude simple hostnames, large domain lists, IP ranges:
-#   proxy-on  = EXCLUDE mode: proxy everything EXCEPT corporate + Russian +
+#   proxy-on  = EXCLUDE mode: proxy everything EXCEPT private/Russian +
 #               simple hostnames. See gen-exclude-pac.sh for the full rule set.
 #   proxy-pac = INCLUDE mode: proxy ONLY the allowlist (proxy-domains.txt).
 #   proxy-off = disable both manual proxy and PAC.
@@ -281,9 +281,9 @@ define ensure_pac_server
 	  || $(MAKE) --no-print-directory pac-server
 endef
 
-# EXCLUDE-mode (proxy-on) keeps Russian + corporate + simple-hostname traffic off
-# the proxy. Corporate coverage (*.ExampleOrganization.*, RFC1918 + CGNAT 100.64/10, link-local)
-# and .ru/.xn--p1ai(=.рф) are baked into the PAC directly. The broader set of
+# EXCLUDE-mode (proxy-on) keeps Russian + simple-hostname traffic off the
+# proxy. Private ranges (RFC1918 + CGNAT 100.64/10, link-local) and
+# .ru/.xn--p1ai(=.рф) are baked into the PAC directly. The broader set of
 # Russian services on non-.ru TLDs comes from a domain list fetched from v2fly
 # `category-ru`: RU_CACHE is the live copy, RU_BASELINE the committed offline
 # fallback. proxy-on builds the PAC instantly from whichever exists (cache wins)

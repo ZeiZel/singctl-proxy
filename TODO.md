@@ -26,29 +26,17 @@ context at the top of each section.
 
 ## Blocked — with evidence (not code bugs)
 
-### Per-app Proxy (system extension) on the work Mac — MDM allowlist
-- Activating `com.singctl.proxy.netext` fails with `OSSystemExtensionErrorDomain
-  code 4` ("Extension not found in App bundle"). Misleading name; the real cause
-  is the MDM.
-- **This Mac is enrolled in ExampleOrganization MDM**: `MDM server: https://awds.example.invalid/DeviceServices/AppleMDM/Processor.aspx`.
-  Its SystemExtensions payload has an `AllowedSystemExtensions` allowlist keyed by
-  TeamID. Allowed teams: `DE8Y96K9QP` (Cisco), `TZ3UEPFYKD` (Check Point),
-  `S2ZMFGQM93` (VMware Workspace ONE). **Our team `S3UCF4USYC` is NOT in it** →
-  macOS filters the extension out before it can load.
-- Ruled out as causes: duplicate LaunchServices registrations (purged), notarization
-  (done), translocation (no), entitlements (`system-extension.install` present),
-  bundle integrity (`codesign --verify --deep --strict` passes). The bundle is
-  provably correct.
-- **The only durable fix is server-side:** ExampleOrganization IT adds our team to the awds allowlist —
-  `AllowedSystemExtensions = { "S3UCF4USYC" = ( "com.singctl.proxy.netext" ); }`
-  (type `com.apple.networkextension.app-proxy` / `NETransparentProxyProvider`).
-  Local circumvention is out of scope: the MDM re-pushes policy on check-in, the
-  Cisco/Check Point EDR flags tampering, and profiles are signed (can't be forged
-  via interception).
+### Per-app Proxy (system extension) on a managed Mac — MDM allowlist
+- Activating `com.singctl.proxy.netext` can fail with
+  `OSSystemExtensionErrorDomain` when the device's MDM allowlist does not include
+  the app's team and extension identifier.
+- Check the bundle, entitlements, notarization, and registration before escalating
+  to the device administrator. Local policy circumvention is out of scope; the
+  signed MDM profile is the source of truth.
 
 ### App Store submission — Individual account
 - Build uploads fine, but **submitting for review is blocked by Guideline 5.4**:
-  VPN apps require an **Organization** account. Team `S3UCF4USYC` is Individual.
+  VPN apps require an **Organization** account. The current account is Individual.
   Needs a D-U-N-S number + Apple's org verification (days–weeks) before submission.
 - App Store Connect API access for automation is "reviewed" (not instant) for
   Individual accounts — used an app-specific password for the upload instead.
@@ -85,17 +73,13 @@ the corporate policy simply doesn't apply inside the guest OS.
   3. Build a Linux `singctl`, run it in VPN/TUN mode in the guest with a real VLESS key.
   4. Verify a guest app's external IP is the VLESS exit, not the corporate egress.
 - **Policy caveat (non-technical):** the VM is separate, but its traffic still
-  physically leaves via the corporate network inside your tunnel, i.e. off the
-  corporate inspection path. Fine for testing your app; routing real work traffic
-  around corporate controls is a question for ExampleOrganization's acceptable-use/IB policy, not a
-  technical one.
+  physically leaves via the managed network inside your tunnel, i.e. outside the
+  normal inspection path. Follow the applicable acceptable-use policy for any
+  work traffic.
 
-### 2. Get the TeamID allowlisted in awds (the sanctioned fix for the work Mac)
-- If you have MDM console access: add `S3UCF4USYC` to the SystemExtensions payload
-  server-side (see the evidence block above). Then per-app Proxy activates natively.
-- If not: file an ExampleOrganization IT/IB request. Have ready: TeamID `S3UCF4USYC`, extension id
-  `com.singctl.proxy.netext`, type `NETransparentProxyProvider`
-  (`com.apple.networkextension.app-proxy`), and the justification.
+### 2. Request the extension allowlist entry from the device administrator
+- Provide the app's signing Team ID, extension identifier, provider type, and
+  justification through the approved administrator workflow.
 
 ### 3. Personal / unmanaged Mac
 - No MDM policy there → the per-app system extension activates normally. Fastest way

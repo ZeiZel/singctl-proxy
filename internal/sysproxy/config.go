@@ -48,22 +48,16 @@ const (
 // port back (which still risks the exact conflict this default now avoids).
 const LegacyPACPort = 21080
 
-// DefaultDirectRules are the RFC1918/CGNAT/link-local/loopback ranges and the
-// corporate/Russian wildcard rules that used to be hardcoded directly into
-// GenerateExcludePAC (packaging/macos/gen-exclude-pac.sh before it). They are
-// now data — DefaultConfig seeds Direct with exactly these values, in this
-// order, so behaviour is byte-for-byte unchanged until something is
-// imported; importing a rules file REPLACES this list (see ParseINI's doc
-// comment), so at that point these defaults no longer apply unless the
-// imported file repeats them.
+// DefaultDirectRules are generic private/link-local/loopback ranges and local
+// hostnames. Organization-specific bypass rules belong in each user's local
+// configuration and are never part of the shipped defaults.
 var DefaultDirectRules = []string{
 	"10.0.0.0/8",
 	"172.16.0.0/12",
 	"192.168.0.0/16",
-	"100.64.0.0/10",  // CGNAT (corp)
+	"100.64.0.0/10",  // CGNAT
 	"169.254.0.0/16", // link-local
 	"127.0.0.0/8",
-	"*.ExampleOrganization.*",
 	"*.ru",
 	"*.xn--p1ai",
 	"*.local",
@@ -106,8 +100,8 @@ type Config struct {
 	// a host matching Proxy is proxied even if it also matches Direct or the
 	// bare-hostname rule — see GenerateExcludePAC. Each entry is a bare
 	// domain (matches itself and its subdomains), a shell-glob pattern
-	// (anything containing "*", e.g. "*.githubusercontent.com" or the
-	// corporate "*.ExampleOrganization.*"), or a CIDR (matched only against literal IPv4
+	// (anything containing "*", e.g. "*.githubusercontent.com"), or a CIDR
+	// (matched only against literal IPv4
 	// hosts). Ignored in ModeOff.
 	Proxy []string `yaml:"proxy,omitempty" json:"proxy,omitempty"`
 	// Direct is the "never proxy" rule list — the INI [direct] section. Only
@@ -123,8 +117,8 @@ type Config struct {
 // docs/v2-spec.md: a fixed default port is what let singctl's in-process PAC
 // server collide with the standalone mac-proxy utility's LaunchAgent, which
 // hardcodes the same port under the same LaunchAgent label), and
-// Direct/BypassPlainHostnames seeded to today's hardcoded rule set, ready to
-// be overridden.
+// Direct/BypassPlainHostnames seeded with generic private-network defaults,
+// ready to be overridden by a user-owned configuration.
 func DefaultConfig() Config {
 	return Config{
 		Mode:                 ModeOff,

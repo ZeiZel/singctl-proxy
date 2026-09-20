@@ -231,8 +231,9 @@ app-macos` (нужны Xcode + XcodeGen); подробнее — в [docs/macos.
 - **`off`** — системный прокси выключен (это не влияет на локальный
   PROXY/TUN-датапат самого singctl, если он используется напрямую).
 - **`exclude`** — проксировать **всё**, кроме того, что явно исключено
-  ([direct]-список + встроенные правила для корпоратива и приватных сетей).
-  Дефолтный режим «включил и забыл». Соответствует `make proxy-on`.
+  ([direct]-список + встроенные правила для приватных сетей).
+  Дефолтный режим «включил и забыл». Организационные исключения добавляются
+  в локальный пользовательский файл. Соответствует `make proxy-on`.
 - **`include`** — проксировать **только** то, что явно перечислено
   ([proxy]-список); всё остальное идёт напрямую. Для короткого осознанного
   allowlist вместо тоннелирования всей машины. Соответствует `make proxy-pac`.
@@ -242,7 +243,7 @@ app-macos` (нужны Xcode + XcodeGen); подробнее — в [docs/macos.
 Оба режима настраиваются одним `.ini`-файлом — вкладка **System proxy** его
 импортирует (Import → вставить текст или выбрать файл) либо принимает то же
 самое через управляющий сокет (`SYSPROXY-IMPORT`). Готовый, полностью
-прокомментированный пример — [`packaging/macos/singctl-proxy-rules.ini`](packaging/macos/singctl-proxy-rules.ini):
+шаблон для локальной настройки — [`packaging/macos/singctl-proxy-rules.example.ini`](packaging/macos/singctl-proxy-rules.example.ini):
 
 ```ini
 [settings]
@@ -257,8 +258,8 @@ openai.com
 *.githubusercontent.com
 
 [direct]                ; never proxy
-*.ExampleOrganization.*
 10.0.0.0/8
+192.168.0.0/16
 ```
 
 - `[settings]` — параметры самого переключателя: режим, локальный
@@ -276,18 +277,17 @@ openai.com
 строку, перегруппировал) и переимпортируешь — отдельного шага
 сборки/регенерации нет.
 
-Готовый пример уже включает список российских ресурсов и приватные/CGNAT-сети
-в `[direct]` (см. ниже) и allowlist AI/dev/медиа-сервисов в `[proxy]`,
-сгруппированный по назначению с комментариями. Для своих доменов, которые
-всегда должны идти напрямую (например, ещё один российский сервис), достаточно
-дописать строку в `[direct]` — не обязательно трогать
-`packaging/macos/ru-extra.txt`.
+Шаблон содержит только безопасные generic-примеры и приватные сети. Локальные
+организационные домены и другие пользовательские исключения добавляются в
+свою копию файла; пакет устанавливает шаблон под именем
+`singctl-proxy-rules.example.ini`, а персональный `singctl-proxy-rules.ini` не
+хранится в Git и не перезаписывается при обновлении.
 
 ### `make`-цели (эквивалент для CLI/разработки)
 
 ```sh
 make pac-server   # один раз: поставить localhost-сервер PAC (LaunchAgent, без sudo)
-make proxy-on     # EXCLUDE: проксировать всё, КРОМЕ корпоратива + России + простых имён
+make proxy-on     # EXCLUDE: проксировать всё, кроме private/Russian + простых имён
 make proxy-pac    # INCLUDE: проксировать ТОЛЬКО домены из packaging/macos/proxy-domains.txt
 make proxy-off    # выключить (и manual, и PAC)
 make proxy-status # показать текущее состояние
@@ -301,8 +301,7 @@ CFNetwork-приложения (Safari/Chrome/GUI); CLI (`curl`/`git`) — не�
 `HTTP(S)_PROXY`.
 
 **EXCLUDE-режим** (`proxy-on`) держит вне прокси: простые hostname без точек
-(«exclude simple hostnames»), приватные/CGNAT-диапазоны и `*.ExampleOrganization.*` (корпоратив
-через full-tunnel Cisco), `.ru`/`.рф`, а также список российских сервисов на
+(«exclude simple hostnames»), приватные/CGNAT-диапазоны, `.ru`/`.рф`, а также список российских сервисов на
 не-`.ru` доменах. Последний тянется из v2fly `category-ru`
 (`packaging/macos/fetch-ru-domains.sh`) в кэш `~/.config/singctl/ru-domains.txt`
 с закоммиченным fallback'ом `packaging/macos/ru-extra.txt`; `proxy-on`

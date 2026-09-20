@@ -10,18 +10,17 @@ function FindProxyForURL(url, host) {
     // 1) Bare/simple hostnames (no dots) — e.g. intranet shortcuts.
     if (isPlainHostName(host)) return DIRECT;
 
-    // 2) Literal private/corporate IPs (guarded so we never trigger a DNS lookup).
+    // 2) Literal private IPs (guarded so we never trigger a DNS lookup).
     if (/^\d+(\.\d+){3}$/.test(host)) {
         if (isInNet(host, "10.0.0.0",    "255.0.0.0"))   return DIRECT;
         if (isInNet(host, "172.16.0.0",  "255.240.0.0")) return DIRECT;
         if (isInNet(host, "192.168.0.0", "255.255.0.0")) return DIRECT;
-        if (isInNet(host, "100.64.0.0",  "255.192.0.0")) return DIRECT; // CGNAT (corp)
+        if (isInNet(host, "100.64.0.0",  "255.192.0.0")) return DIRECT; // CGNAT
         if (isInNet(host, "169.254.0.0", "255.255.0.0")) return DIRECT; // link-local
         if (isInNet(host, "127.0.0.0",   "255.0.0.0"))   return DIRECT;
     }
 
     // 3) Wildcard [direct] rules (shell-glob patterns).
-    if (shExpMatch(host, "*.ExampleOrganization.*")) return DIRECT;
     if (shExpMatch(host, "*.ru") || host === "ru") return DIRECT;
     if (shExpMatch(host, "*.xn--p1ai")) return DIRECT;
     if (shExpMatch(host, "*.local")) return DIRECT;

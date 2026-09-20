@@ -1,10 +1,28 @@
 package sysproxy
 
 import (
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestParseINI_ExampleTemplate(t *testing.T) {
+	data, err := os.ReadFile("../../packaging/macos/singctl-proxy-rules.example.ini")
+	if err != nil {
+		t.Fatalf("read example template: %v", err)
+	}
+	cfg, err := ParseINI(data)
+	if err != nil {
+		t.Fatalf("ParseINI(example template): %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("example template validation: %v", err)
+	}
+	if cfg.Mode != ModeOff || len(cfg.Proxy) != 0 {
+		t.Fatalf("example template must be inert with an empty proxy list: %+v", cfg)
+	}
+}
 
 const sampleINI = `[settings]
 mode = exclude          ; off | exclude | include
@@ -18,7 +36,6 @@ openai.com
 *.githubusercontent.com
 
 [direct]                ; never proxy
-*.ExampleOrganization.*
 *.local
 *.ru
 10.0.0.0/8
@@ -34,7 +51,7 @@ func TestParseINI_Sample(t *testing.T) {
 		Mode: ModeExclude, Host: "127.0.0.1", Port: 2080, Service: "Wi-Fi", PACPort: 21080,
 		BypassPlainHostnames: true, // omitted -> defaults true
 		Proxy:                []string{"openai.com", "*.githubusercontent.com"},
-		Direct:               []string{"*.ExampleOrganization.*", "*.local", "*.ru", "10.0.0.0/8", "100.64.0.0/10"},
+		Direct:               []string{"*.local", "*.ru", "10.0.0.0/8", "100.64.0.0/10"},
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("ParseINI(sample) = %+v, want %+v", cfg, want)
@@ -46,7 +63,7 @@ func TestParseINI_RoundTrip(t *testing.T) {
 		Mode: ModeExclude, Host: "127.0.0.1", Port: 2080, Service: "Wi-Fi", PACPort: 21080,
 		BypassPlainHostnames: false,
 		Proxy:                []string{"openai.com", "*.githubusercontent.com"},
-		Direct:               []string{"*.ExampleOrganization.*", "10.0.0.0/8"},
+		Direct:               []string{"*.local", "10.0.0.0/8"},
 	}
 	data := cfg.INI()
 	got, err := ParseINI(data)

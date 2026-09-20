@@ -93,7 +93,7 @@ func GenerateExcludePAC(proxyRules, directRules []string, proxyDirective string,
 
 	if len(dNets) > 0 {
 		b.WriteString("\n")
-		b.WriteString("    // 2) Literal private/corporate IPs (guarded so we never trigger a DNS lookup).\n")
+		b.WriteString("    // 2) Literal private IPs (guarded so we never trigger a DNS lookup).\n")
 		b.WriteString("    if (/^\\d+(\\.\\d+){3}$/.test(host)) {\n")
 		writeCIDRChecks(&b, dCidrs, dNets, "DIRECT")
 		b.WriteString("    }\n")
@@ -123,7 +123,7 @@ func GenerateExcludePAC(proxyRules, directRules []string, proxyDirective string,
 //   - domains: a bare entry (no "*", no "/") — matched against the host
 //     itself and every subdomain (see writeDomainBlock / matchesDomainSuffix).
 //   - globs: any entry containing "*" (e.g. "*.githubusercontent.com", the
-//     corporate "*.ExampleOrganization.*") — matched via shell-glob semantics (see globMatch).
+//     organization-specific wildcards) — matched via shell-glob semantics (see globMatch).
 //   - cidrs/nets: an entry containing "/" that parses as an IPv4 CIDR —
 //     matched only against a literal IPv4 host, never a DNS lookup. A
 //     malformed or non-IPv4 CIDR is dropped here (Config.Validate/ParseINI
@@ -200,7 +200,7 @@ func writeGlobChecks(b *strings.Builder, globs []string, ret string) {
 // purely cosmetic, applied whenever these exact literals appear in a rule
 // list (default or user-supplied alike). Any other CIDR gets no comment.
 var cidrAnnotations = map[string]string{
-	"100.64.0.0/10":  "CGNAT (corp)",
+	"100.64.0.0/10":  "CGNAT",
 	"169.254.0.0/16": "link-local",
 }
 

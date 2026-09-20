@@ -136,7 +136,7 @@ sudo launchctl bootout system /Library/LaunchDaemons/com.singctl.proxy.plist
 2. выгружает пользовательский `com.singctl.pacserver` (LaunchAgent из `make
    pac-server`) — но только если на диске лежит именно singctl-овский агент
    (проверяется, что он реально раздаёт `~/.config/singctl` через
-   `http.server`); свою собственную установку `~/projects/ExampleOrganization/mac-proxy` он не
+   `http.server`); стороннюю установку отдельного proxy-toggle он не
    трогает вообще — это другой проект;
 3. останавливает оставшиеся процессы `singctl`, но матчит их строго по
    реальному пути бинаря (`/usr/local/bin/singctl`), никогда голым

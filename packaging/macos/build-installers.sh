@@ -57,11 +57,12 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/Applications" "$STAGE/usr/local/bin" "$STAGE/usr/local/share/singctl"
 cp -R "$APP_PATH" "$STAGE/Applications/"
 install -m 0755 "$CLI_BIN" "$STAGE/usr/local/bin/singctl"
-# The shipped system-proxy rules. It has to travel INSIDE the package: it is the
-# file a user imports on a fresh machine and hands to colleagues, and keeping it
-# only in the repository means it is unreachable exactly where it is needed.
-install -m 0644 "$REPO_ROOT/packaging/macos/singctl-proxy-rules.ini" \
-	"$STAGE/usr/local/share/singctl/singctl-proxy-rules.ini"
+# Ship only the generic rules template. Personal rules are user-owned and are
+# never read from or copied into a release package. Install the example under
+# its example basename so an upgrade cannot overwrite a user's local copy.
+RULES_TEMPLATE="$REPO_ROOT/packaging/macos/singctl-proxy-rules.example.ini"
+install -m 0644 "$RULES_TEMPLATE" \
+	"$STAGE/usr/local/share/singctl/singctl-proxy-rules.example.ini"
 
 # 2b) Sign the staged CLI with the App Group entitlement so it can read/write
 #     the shared Group Container used by the Network Extension (see

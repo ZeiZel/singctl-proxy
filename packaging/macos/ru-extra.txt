@@ -836,14 +836,6 @@ wildberries.tm
 wildberries.uz
 wink.am
 worldcuprussia.com
-example.invalid
-example.invalid
-example.invalid
-example.invalid
-example.invalid
-example.invalid
-example.invalid
-example.invalid
 xapi.ozon.by
 xapi.ozon.com
 xapi.ozon.com.by
