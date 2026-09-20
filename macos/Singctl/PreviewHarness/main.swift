@@ -102,7 +102,9 @@ private struct CaptureOptions {
         case "settings": section = .settings
         default: section = .dashboard
         }
-        colorScheme = value(after: "--appearance") == "dark" ? .dark : .light
+        // Dark is the representative README appearance. Light remains an
+        // explicit opt-in for alternate visual QA captures.
+        colorScheme = value(after: "--appearance") == "light" ? .light : .dark
         let narrow = value(after: "--width") == "narrow"
         canvasSize = narrow ? CGSize(width: 980, height: 860) : CGSize(width: 1400, height: 920)
         output = URL(fileURLWithPath: value(after: "--output") ?? "docs/images/singctl-swiftui-dashboard.png")
@@ -113,6 +115,7 @@ private struct CaptureOptions {
 /// product controls or claims; its gradients and shapes are rendered by
 /// SwiftUI as part of the PNG rather than edited into a captured bitmap.
 private struct PreviewPresentation<Content: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
     private let content: Content
 
     init(@ViewBuilder content: () -> Content) { self.content = content() }
@@ -121,16 +124,18 @@ private struct PreviewPresentation<Content: View>: View {
         GeometryReader { proxy in
             ZStack {
                 LinearGradient(
-                    colors: [Color(red: 0.92, green: 0.94, blue: 1.0), Color(red: 0.82, green: 0.87, blue: 0.98)],
+                    colors: colorScheme == .dark
+                        ? [Color(red: 0.07, green: 0.09, blue: 0.15), Color(red: 0.12, green: 0.16, blue: 0.27)]
+                        : [Color(red: 0.92, green: 0.94, blue: 1.0), Color(red: 0.82, green: 0.87, blue: 0.98)],
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 )
                 Circle()
-                    .fill(Color.white.opacity(0.46))
+                    .fill((colorScheme == .dark ? Color.sAccent : Color.white).opacity(0.24))
                     .frame(width: proxy.size.width * 0.62)
                     .blur(radius: 46)
                     .offset(x: -proxy.size.width * 0.28, y: -proxy.size.height * 0.32)
                 Circle()
-                    .fill(Color.sAccent.opacity(0.19))
+                    .fill(Color.sAccent.opacity(colorScheme == .dark ? 0.26 : 0.19))
                     .frame(width: proxy.size.width * 0.56)
                     .blur(radius: 54)
                     .offset(x: proxy.size.width * 0.30, y: proxy.size.height * 0.34)
@@ -145,7 +150,10 @@ private struct PreviewPresentation<Content: View>: View {
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.55), lineWidth: 1)
+                            .strokeBorder(
+                                Color.white.opacity(colorScheme == .dark ? 0.18 : 0.55),
+                                lineWidth: 1
+                            )
                     }
                     .shadow(color: Color.black.opacity(0.18), radius: 28, y: 14)
             }

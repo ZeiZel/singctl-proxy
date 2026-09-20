@@ -111,6 +111,7 @@ Implemented:
 - Keys gained local search. Apps retains the search it already had before this work; it was not newly introduced here.
 - `⌘R` refresh is wired for Keys, Proxies, Connections, Apps, and System proxy. Existing copy affordances were retained; this pass did not add a new copy feature.
 - A standalone `SingctlPreview` target renders the real `RootView` with an in-memory backend and isolated defaults. The shipping main entry point is excluded from that target. Capture uses `/usr/sbin/screencapture -x -l` against only the preview window because offscreen caching does not render SwiftUI reliably. It neither contacts an installed service nor changes network state. The surrounding hero background is implemented in SwiftUI, and the resulting image is linked from the root README.
+- The preview harness defaults to the dark appearance for the README hero; pass `--appearance light` explicitly for Light visual QA captures.
 
 Completed verification:
 

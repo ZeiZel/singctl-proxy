@@ -10,11 +10,12 @@ From `macos/Singctl` on macOS:
 
 ```sh
 xcodegen generate
-xcodebuild -project Singctl.xcodeproj -scheme SingctlPreview -configuration Debug -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
-./build/Build/Products/Debug/SingctlPreview --screen dashboard --appearance light --output ../../docs/images/singctl-swiftui-dashboard.png
+xcodebuild -project Singctl.xcodeproj -scheme SingctlPreview -configuration Debug -derivedDataPath /tmp/singctl-dark-preview-build CODE_SIGNING_ALLOWED=NO build
+/tmp/singctl-dark-preview-build/Build/Products/Debug/SingctlPreview --screen dashboard --output ../../docs/images/singctl-swiftui-dashboard.png
 ```
 
-For visual QA, choose `--screen settings`, `--appearance dark`, or
+The default and README hero appearance is dark. Pass `--appearance light`
+explicitly for a Light capture. For visual QA, choose `--screen settings` or
 `--width narrow`; point `--output` at `/tmp/` to keep the checked-in hero
 unchanged. SwiftUI materials are composited by WindowServer on current macOS,
 so the renderer captures its own fixed-size, borderless harness window with
