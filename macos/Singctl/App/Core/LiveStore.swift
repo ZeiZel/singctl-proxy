@@ -129,6 +129,30 @@ final class LiveStore: ObservableObject {
         #endif
     }
 
+    /// Builds an already-populated store for the source-controlled screenshot
+    /// harness. This does not start the polling loop: callers provide every
+    /// displayed value explicitly, so no daemon, socket, or network access is
+    /// involved while a capture is rendered.
+    static func previewSnapshot(
+        backend: Backend,
+        status: DaemonStatus,
+        trafficSamples: [(up: Double, down: Double)],
+        totalUp: Int64,
+        totalDown: Int64,
+        connections: [ConnRow],
+        latency: Latency
+    ) -> LiveStore {
+        let store = LiveStore(backend: backend)
+        store.status = status
+        store.daemonRunning = true
+        store.trafficSamples = trafficSamples
+        store.totalUp = totalUp
+        store.totalDown = totalDown
+        store.connections = connections
+        store.latency = latency
+        return store
+    }
+
     /// Starts the adaptive poll loop (idempotent — calling start() while
     /// already running is a no-op).
     func start() {

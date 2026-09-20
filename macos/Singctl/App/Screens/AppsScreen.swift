@@ -195,6 +195,7 @@ struct AppsScreen: View {
             AppButton("Refresh", kind: .ghost, icon: "arrow.clockwise", isLoading: isLoadingInstalled) {
                 Task { await loadInstalledApps() }
             }
+            .keyboardShortcut("r", modifiers: .command)
         } content: {
             VStack(alignment: .leading, spacing: Spacing.sm) {
                 if let installedError {

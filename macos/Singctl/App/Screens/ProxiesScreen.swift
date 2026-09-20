@@ -19,6 +19,7 @@ struct ProxiesScreen: View {
 
     @State private var group: ProxyGroup = .empty
     @State private var errorMessage: String?
+    @State private var isRefreshing = false
     /// The tag ("auto" or a member tag) currently being applied via
     /// PROXY-SELECT, or nil when no selection is in flight. Only one
     /// selection is allowed at a time — every row disables while this is set,
@@ -32,7 +33,12 @@ struct ProxiesScreen: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
-            SectionHeader(title: "Proxies")
+            SectionHeader(title: "Proxies") {
+                AppButton("Refresh", kind: .ghost, icon: "arrow.clockwise", isLoading: isRefreshing, disabled: pendingTag != nil) {
+                    refreshNow()
+                }
+                .keyboardShortcut("r", modifiers: .command)
+            }
 
             if let errorMessage {
                 Text(errorMessage)
@@ -143,6 +149,15 @@ struct ProxiesScreen: View {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func refreshNow() {
+        guard !isRefreshing, pendingTag == nil else { return }
+        isRefreshing = true
+        Task {
+            defer { isRefreshing = false }
+            await load()
         }
     }
 

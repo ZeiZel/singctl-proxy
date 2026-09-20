@@ -108,6 +108,25 @@ targets:
       - target: PacketTunnel
         embed: true
 
+  # A command-line-only renderer for source-controlled UI fixtures. It builds
+  # the real SwiftUI source tree with the shipping @main excluded, so it never
+  # creates AppDelegate, CrashReporter, a tray item, or DaemonBackend.
+  SingctlPreview:
+    type: tool
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - App
+      - PreviewHarness
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.singctl.preview
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: SCREENSHOT_HARNESS
+        OTHER_SWIFT_FLAGS: -parse-as-library
+        GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: "2.0.0"
+        INFOPLIST_KEY_CFBundleShortVersionString: $(MARKETING_VERSION)
+
   # NEPacketTunnelProvider appex for the App Store SKU: runs sing-box (Libbox)
   # over the tunnel fd (macos/Singctl/PacketTunnel/PacketTunnelProvider.swift).
   # Links Libbox.xcframework — built by `gomobile bind` from
@@ -157,5 +176,12 @@ schemes:
     build:
       targets:
         SingctlAppStore: all
+    run:
+      config: Debug
+
+  SingctlPreview:
+    build:
+      targets:
+        SingctlPreview: all
     run:
       config: Debug

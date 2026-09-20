@@ -1,10 +1,8 @@
 // Card.swift
 //
-// The panel every screen builds on. Background is `.regularMaterial` (frosted
-// blur) tinted with `Color.sPanel` at 0.65 — dark enough to read as a surface
-// darker than the window background, translucent enough that the blurred
-// wallpaper still shows through. Plus a hairline `Color.sBorder` border and
-// `Radius.card` corners.
+// The panel every screen builds on. It is a quiet semantic control surface;
+// the window provides the material and the card only adds enough separation
+// for grouped content.
 
 import SwiftUI
 
@@ -57,12 +55,11 @@ struct Card<Content: View, Accessory: View>: View {
             content
         }
         .padding(Spacing.cardPad)
-        .background(Color.sPanel.opacity(0.65))
-        .background(.regularMaterial)
+        .background(Color.sPanel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-                .strokeBorder(Color.sBorder, lineWidth: 1)
+                .strokeBorder(Color.sBorder.opacity(0.7), lineWidth: 1)
         )
     }
 }

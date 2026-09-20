@@ -19,7 +19,19 @@ import ServiceManagement
 
 @MainActor
 final class AppPreferences: ObservableObject {
-    static let shared = AppPreferences()
+    static let shared: AppPreferences = {
+        #if SCREENSHOT_HARNESS
+        // The preview renderer must neither read the shipping app's defaults
+        // nor ask ServiceManagement about a real login item. Its suite belongs
+        // only to the command-line fixture process.
+        let suite = "com.singctl.preview.fixture"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        return AppPreferences(defaults: defaults, readsLoginItemStatus: false)
+        #else
+        return AppPreferences()
+        #endif
+    }()
 
     private enum Keys {
         static let launchAtLogin = "pref.launchAtLogin"
@@ -73,9 +85,9 @@ final class AppPreferences: ObservableObject {
         didSet { defaults.set(logRetentionLines, forKey: Keys.logRetentionLines) }
     }
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, readsLoginItemStatus: Bool = true) {
         self.defaults = defaults
-        self.launchAtLogin = SMAppService.mainApp.status == .enabled
+        self.launchAtLogin = readsLoginItemStatus && SMAppService.mainApp.status == .enabled
         self.showMenuBarItem = defaults.object(forKey: Keys.showMenuBarItem) as? Bool ?? true
         self.confirmBeforeVPN = defaults.object(forKey: Keys.confirmBeforeVPN) as? Bool ?? true
         self.defaultLogLevelFilter = defaults.string(forKey: Keys.defaultLogLevelFilter)
@@ -86,6 +98,12 @@ final class AppPreferences: ObservableObject {
     /// value to the OS's actual status on failure, so the toggle can never
     /// show "on" while the registration silently failed.
     func setLaunchAtLogin(_ on: Bool) {
+        #if SCREENSHOT_HARNESS
+        // Captures never register or unregister a real login item, even if a
+        // maintainer happens to click the fixture's disabled-preview control.
+        launchAtLogin = on
+        return
+        #else
         do {
             if on {
                 try SMAppService.mainApp.register()
@@ -96,6 +114,7 @@ final class AppPreferences: ObservableObject {
         } catch {
             launchAtLogin = SMAppService.mainApp.status == .enabled
         }
+        #endif
     }
 
     /// Presents a confirmation alert before switching to VPN mode, unless

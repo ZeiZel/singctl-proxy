@@ -34,7 +34,11 @@ import SwiftUI
 /// `.environmentObject`, same lifetime pattern as `LiveStore`.
 @MainActor
 final class NavigationModel: ObservableObject {
-    @Published var selection: Section? = .dashboard
+    @Published var selection: Section?
+
+    init(selection: Section? = .dashboard) {
+        self.selection = selection
+    }
 }
 
 #if !APPSTORE

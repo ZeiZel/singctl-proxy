@@ -34,11 +34,11 @@ struct SectionHeader<Accessory: View>: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.appTitle)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Color.sText)
                 if let subtitle {
                     Text(subtitle)
                         .font(.appSecondary)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.sTextDim)
                 }
             }
             Spacer()
