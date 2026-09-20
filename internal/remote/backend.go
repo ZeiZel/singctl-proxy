@@ -9,6 +9,7 @@ package remote
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-"singctl/internal/clashapi"
+	"singctl/internal/clashapi"
 	"singctl/internal/clashui"
 	"singctl/internal/control"
 	"singctl/internal/notify"
@@ -124,8 +125,18 @@ func (b *Backend) mode(m string) error {
 func (b *Backend) LoadLink(_ context.Context, link string) error { return b.add(link) }
 func (b *Backend) AddLink(_ context.Context, link string) error  { return b.add(link) }
 
-func (b *Backend) add(link string) error {
-	_, err := control.Request(b.sock, "KEYS-ADD", strings.TrimSpace(link))
+// add sends a key to the daemon. A single-line share link goes through
+// KEYS-ADD unchanged; a multi-line key (a WireGuard config — so far the only
+// config-input protocol) cannot survive KEYS-ADD's one-line-per-request
+// framing (see control.HandlerFunc's doc comment), so it goes through
+// KEYS-ADD-CONFIG instead, base64-encoded.
+func (b *Backend) add(key string) error {
+	if strings.ContainsAny(key, "\n\r") {
+		enc := base64.StdEncoding.EncodeToString([]byte(key))
+		_, err := control.Request(b.sock, "KEYS-ADD-CONFIG", enc)
+		return err
+	}
+	_, err := control.Request(b.sock, "KEYS-ADD", strings.TrimSpace(key))
 	return err
 }
 
@@ -136,6 +147,43 @@ func (b *Backend) DeleteLink(_ context.Context, index int) error {
 
 func (b *Backend) RenameLink(_ context.Context, index int, name string) error {
 	_, err := control.Request(b.sock, "KEYS-RENAME", strconv.Itoa(index)+" "+strings.TrimSpace(name))
+	return staleDaemon(err)
+}
+
+// ProxyGroup mirrors app.ProxyGroup, kept as a local type (like consoleEntry
+// above) so remote stays decoupled from package app.
+type ProxyGroup struct {
+	Available bool          `json:"available"`
+	Auto      bool          `json:"auto"`
+	Selected  string        `json:"selected"`
+	Members   []ProxyMember `json:"members"`
+}
+
+// ProxyMember mirrors app.ProxyMember.
+type ProxyMember struct {
+	Tag   string `json:"tag"`
+	Index int    `json:"index"`
+	Name  string `json:"name"`
+	Delay int    `json:"delay"`
+}
+
+// ProxyGroup fetches the daemon's multi-server failover group (PROXY-GROUP).
+func (b *Backend) ProxyGroup(context.Context) (ProxyGroup, error) {
+	reply, err := control.Request(b.sock, "PROXY-GROUP", "")
+	if err != nil {
+		return ProxyGroup{}, staleDaemon(err)
+	}
+	var g ProxyGroup
+	if err := json.Unmarshal([]byte(reply), &g); err != nil {
+		return ProxyGroup{}, err
+	}
+	return g, nil
+}
+
+// SelectProxy pins the daemon's failover group to tag ("auto" or "proxy-N")
+// via PROXY-SELECT.
+func (b *Backend) SelectProxy(_ context.Context, tag string) error {
+	_, err := control.Request(b.sock, "PROXY-SELECT", strings.TrimSpace(tag))
 	return staleDaemon(err)
 }
 

@@ -11,10 +11,16 @@ import (
 // Config is a sing-box top-level config. Inbounds/Outbounds are []any holding
 // the typed structs below, so each entry marshals to exactly its type's fields.
 type Config struct {
-	Log          *Log          `json:"log,omitempty"`
-	DNS          *DNS          `json:"dns,omitempty"`
-	Inbounds     []any         `json:"inbounds,omitempty"`
-	Outbounds    []any         `json:"outbounds,omitempty"`
+	Log       *Log  `json:"log,omitempty"`
+	DNS       *DNS  `json:"dns,omitempty"`
+	Inbounds  []any `json:"inbounds,omitempty"`
+	Outbounds []any `json:"outbounds,omitempty"`
+	// Endpoints is a sibling array of Outbounds for endpoint-kind protocols
+	// (WireGuard; see docs/protocol-modules.md). adapter.Endpoint embeds
+	// adapter.Outbound in sing-box, so an endpoint's tag is usable anywhere
+	// an outbound tag is — it can join the urltest failover group and be
+	// route.final like any outbound.
+	Endpoints    []any         `json:"endpoints,omitempty"`
 	Route        *Route        `json:"route,omitempty"`
 	Experimental *Experimental `json:"experimental,omitempty"`
 }
@@ -92,10 +98,184 @@ type VLESSOutbound struct {
 	BindInterface  string     `json:"bind_interface,omitempty"`
 }
 
+// Multiplex is sing-box's shared multiplex option block (vmess/trojan/
+// shadowsocks). singctl does not currently derive any of this from a parsed
+// link, so the field is always nil/omitted; the type exists so the outbound
+// structs carry the full upstream contract.
+type Multiplex struct {
+	Enabled        bool   `json:"enabled,omitempty"`
+	Protocol       string `json:"protocol,omitempty"`
+	MaxConnections int    `json:"max_connections,omitempty"`
+}
+
+// VMessOutbound is sing-box's vmess outbound. Flow is deliberately absent —
+// it is a VLESS-only concept.
+type VMessOutbound struct {
+	Type           string     `json:"type"` // "vmess"
+	Tag            string     `json:"tag"`
+	Server         string     `json:"server"`
+	ServerPort     int        `json:"server_port"`
+	UUID           string     `json:"uuid"`
+	Security       string     `json:"security,omitempty"`
+	AlterID        int        `json:"alter_id,omitempty"`
+	Network        string     `json:"network,omitempty"`
+	TLS            *TLS       `json:"tls,omitempty"`
+	Transport      *Transport `json:"transport,omitempty"`
+	Multiplex      *Multiplex `json:"multiplex,omitempty"`
+	PacketEncoding string     `json:"packet_encoding,omitempty"`
+	ConnectTimeout string     `json:"connect_timeout,omitempty"`
+	BindInterface  string     `json:"bind_interface,omitempty"`
+}
+
+// TrojanOutbound is sing-box's trojan outbound.
+type TrojanOutbound struct {
+	Type           string     `json:"type"` // "trojan"
+	Tag            string     `json:"tag"`
+	Server         string     `json:"server"`
+	ServerPort     int        `json:"server_port"`
+	Password       string     `json:"password"`
+	Network        string     `json:"network,omitempty"`
+	TLS            *TLS       `json:"tls,omitempty"`
+	Transport      *Transport `json:"transport,omitempty"`
+	Multiplex      *Multiplex `json:"multiplex,omitempty"`
+	ConnectTimeout string     `json:"connect_timeout,omitempty"`
+	BindInterface  string     `json:"bind_interface,omitempty"`
+}
+
+// ShadowsocksOutbound is sing-box's shadowsocks outbound. It carries no `tls`
+// field at all — shadowsocks encrypts its own stream, there is no separate
+// TLS layer to configure.
+type ShadowsocksOutbound struct {
+	Type           string     `json:"type"` // "shadowsocks"
+	Tag            string     `json:"tag"`
+	Server         string     `json:"server"`
+	ServerPort     int        `json:"server_port"`
+	Method         string     `json:"method"`
+	Password       string     `json:"password"`
+	Plugin         string     `json:"plugin,omitempty"`
+	PluginOpts     string     `json:"plugin_opts,omitempty"`
+	Network        string     `json:"network,omitempty"`
+	UDPOverTCP     any        `json:"udp_over_tcp,omitempty"`
+	Multiplex      *Multiplex `json:"multiplex,omitempty"`
+	ConnectTimeout string     `json:"connect_timeout,omitempty"`
+	BindInterface  string     `json:"bind_interface,omitempty"`
+}
+
+// HysteriaOutbound is sing-box's hysteria (v1) outbound. It is TLS-only by
+// protocol definition, so callers always populate TLS via tlsCfg.
+type HysteriaOutbound struct {
+	Type           string `json:"type"` // "hysteria"
+	Tag            string `json:"tag"`
+	Server         string `json:"server"`
+	ServerPort     int    `json:"server_port"`
+	UpMbps         int    `json:"up_mbps,omitempty"`
+	DownMbps       int    `json:"down_mbps,omitempty"`
+	Obfs           string `json:"obfs,omitempty"`
+	AuthStr        string `json:"auth_str,omitempty"`
+	Network        string `json:"network,omitempty"`
+	TLS            *TLS   `json:"tls,omitempty"`
+	ConnectTimeout string `json:"connect_timeout,omitempty"`
+	BindInterface  string `json:"bind_interface,omitempty"`
+}
+
+// Hysteria2Obfs is hysteria2's nested obfuscation block. Omit the whole
+// pointer (not just its fields) when Hysteria2Params.ObfsType is empty.
+type Hysteria2Obfs struct {
+	Type     string `json:"type"`
+	Password string `json:"password"`
+}
+
+// Hysteria2Outbound is sing-box's hysteria2 outbound. TLS-only by protocol
+// definition.
+type Hysteria2Outbound struct {
+	Type           string         `json:"type"` // "hysteria2"
+	Tag            string         `json:"tag"`
+	Server         string         `json:"server"`
+	ServerPort     int            `json:"server_port"`
+	UpMbps         int            `json:"up_mbps,omitempty"`
+	DownMbps       int            `json:"down_mbps,omitempty"`
+	Obfs           *Hysteria2Obfs `json:"obfs,omitempty"`
+	Password       string         `json:"password,omitempty"`
+	Network        string         `json:"network,omitempty"`
+	TLS            *TLS           `json:"tls,omitempty"`
+	BrutalDebug    bool           `json:"brutal_debug,omitempty"`
+	ConnectTimeout string         `json:"connect_timeout,omitempty"`
+	BindInterface  string         `json:"bind_interface,omitempty"`
+}
+
+// TUICOutbound is sing-box's tuic (v5) outbound. TLS-only by protocol
+// definition.
+type TUICOutbound struct {
+	Type              string `json:"type"` // "tuic"
+	Tag               string `json:"tag"`
+	Server            string `json:"server"`
+	ServerPort        int    `json:"server_port"`
+	UUID              string `json:"uuid"`
+	Password          string `json:"password,omitempty"`
+	CongestionControl string `json:"congestion_control,omitempty"`
+	UDPRelayMode      string `json:"udp_relay_mode,omitempty"`
+	ZeroRTTHandshake  bool   `json:"zero_rtt_handshake,omitempty"`
+	Heartbeat         string `json:"heartbeat,omitempty"`
+	Network           string `json:"network,omitempty"`
+	TLS               *TLS   `json:"tls,omitempty"`
+	ConnectTimeout    string `json:"connect_timeout,omitempty"`
+	BindInterface     string `json:"bind_interface,omitempty"`
+}
+
+// AnyTLSOutbound is sing-box's anytls outbound. TLS-only by protocol
+// definition.
+type AnyTLSOutbound struct {
+	Type                     string `json:"type"` // "anytls"
+	Tag                      string `json:"tag"`
+	Server                   string `json:"server"`
+	ServerPort               int    `json:"server_port"`
+	Password                 string `json:"password"`
+	TLS                      *TLS   `json:"tls,omitempty"`
+	IdleSessionCheckInterval string `json:"idle_session_check_interval,omitempty"`
+	IdleSessionTimeout       string `json:"idle_session_timeout,omitempty"`
+	MinIdleSession           int    `json:"min_idle_session,omitempty"`
+	ConnectTimeout           string `json:"connect_timeout,omitempty"`
+	BindInterface            string `json:"bind_interface,omitempty"`
+}
+
+// XHTTPOutbound is singctl's OWN outbound type, not an upstream sing-box one —
+// sing-box has no XHTTP transport. It is registered under the type name
+// "vless-xhttp" by internal/singboxext into the embedded core's outbound
+// registry; this struct only describes the JSON shape that registration
+// expects.
+type XHTTPOutbound struct {
+	Type           string `json:"type"` // "vless-xhttp"
+	Tag            string `json:"tag"`
+	Server         string `json:"server"`
+	ServerPort     int    `json:"server_port"`
+	UUID           string `json:"uuid"`
+	ConnectTimeout string `json:"connect_timeout,omitempty"`
+	TLS            *TLS   `json:"tls,omitempty"`
+	XHTTP          *XHTTP `json:"xhttp"`
+	BindInterface  string `json:"bind_interface,omitempty"`
+}
+
+// XHTTP holds the XHTTP stream settings, mirroring Xray's `xhttpSettings`.
+type XHTTP struct {
+	Path  string          `json:"path,omitempty"`
+	Host  string          `json:"host,omitempty"`
+	Mode  string          `json:"mode,omitempty"`
+	Extra json.RawMessage `json:"extra,omitempty"`
+}
+
 type DirectOutbound struct {
 	Type          string `json:"type"` // "direct"
 	Tag           string `json:"tag"`
 	BindInterface string `json:"bind_interface,omitempty"`
+}
+
+// BlockOutbound is a sing-box "block" outbound: any connection routed to it is
+// dropped. Emitted only when at least one firewall rule blocks something (see
+// firewallRouteRules) — an empty firewall rule set must never add this to the
+// generated config (docs/v2-spec.md F6's byte-fidelity requirement).
+type BlockOutbound struct {
+	Type string `json:"type"` // "block"
+	Tag  string `json:"tag"`
 }
 
 type SocksOutbound struct {
@@ -176,10 +356,13 @@ type RouteRule struct {
 	Protocol    string   `json:"protocol,omitempty"`
 	IPIsPrivate bool     `json:"ip_is_private,omitempty"`
 	DomainRegex []string `json:"domain_regex,omitempty"`
-	IPCIDR      []string `json:"ip_cidr,omitempty"`
-	ProcessName []string `json:"process_name,omitempty"`
-	ProcessPath []string `json:"process_path,omitempty"`
-	Outbound    string   `json:"outbound,omitempty"`
+	// DomainSuffix matches a destination domain and its subdomains — used by
+	// firewall domain rules (see firewallRouteRules); nothing else generates it.
+	DomainSuffix []string `json:"domain_suffix,omitempty"`
+	IPCIDR       []string `json:"ip_cidr,omitempty"`
+	ProcessName  []string `json:"process_name,omitempty"`
+	ProcessPath  []string `json:"process_path,omitempty"`
+	Outbound     string   `json:"outbound,omitempty"`
 }
 
 // --- Experimental ---

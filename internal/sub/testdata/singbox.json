@@ -1,0 +1,202 @@
+{
+  "log": {
+    "level": "warn"
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "https",
+        "tag": "dns-remote",
+        "server": "1.1.1.1"
+      }
+    ]
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": ["172.19.0.1/30"],
+      "auto_route": true,
+      "stack": "system"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "vless-reality-grpc",
+      "server": "193.188.22.147",
+      "server_port": 443,
+      "uuid": "4ce58870-27d3-489b-87a0-3109db4fb919",
+      "flow": "",
+      "tls": {
+        "enabled": true,
+        "server_name": "cursor.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "MLWbCmCus3crtCxy2QAuO1zp74nbDE1zMvO1azp-F0k",
+          "short_id": "4d04"
+        }
+      },
+      "transport": {
+        "type": "grpc",
+        "service_name": "grpc-svc"
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "vless-ws-tls",
+      "server": "203.0.113.10",
+      "server_port": 8443,
+      "uuid": "4ce58870-27d3-489b-87a0-3109db4fb919",
+      "tls": {
+        "enabled": true,
+        "server_name": "cdn.example.com",
+        "alpn": ["h2", "http/1.1"]
+      },
+      "transport": {
+        "type": "ws",
+        "path": "/wspath",
+        "host": ["cdn.example.com"]
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "vless-xhttp-reality",
+      "server": "198.51.100.20",
+      "server_port": 443,
+      "uuid": "4ce58870-27d3-489b-87a0-3109db4fb919",
+      "tls": {
+        "enabled": true,
+        "server_name": "xhttp.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "MLWbCmCus3crtCxy2QAuO1zp74nbDE1zMvO1azp-F0k",
+          "short_id": "9f1c"
+        }
+      },
+      "transport": {
+        "type": "xhttp",
+        "path": "/xh",
+        "host": ["xhttp.example.com"],
+        "mode": "stream-one",
+        "extra": {"scMaxBufferedPosts": 30}
+      }
+    },
+    {
+      "type": "vmess",
+      "tag": "vmess-ws-tls",
+      "server": "203.0.113.55",
+      "server_port": 2087,
+      "uuid": "4ce58870-27d3-489b-87a0-3109db4fb919",
+      "alter_id": 0,
+      "tls": {
+        "enabled": true,
+        "server_name": "vmess.example.com"
+      },
+      "transport": {
+        "type": "ws",
+        "path": "/vmesspath",
+        "host": ["vmess.example.com"]
+      }
+    },
+    {
+      "type": "trojan",
+      "tag": "trojan-tls",
+      "server": "198.51.100.77",
+      "server_port": 443,
+      "password": "s3cr3t-P@ss",
+      "tls": {
+        "enabled": true,
+        "server_name": "trojan.example.com",
+        "alpn": ["h2", "http/1.1"]
+      }
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "ss-2022",
+      "server": "192.0.2.44",
+      "server_port": 8388,
+      "method": "chacha20-ietf-poly1305",
+      "password": "password1"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hy2-salamander",
+      "server": "192.0.2.99",
+      "server_port": 44333,
+      "up_mbps": 100,
+      "down_mbps": 200,
+      "obfs": {
+        "type": "salamander",
+        "password": "obfspass"
+      },
+      "password": "hy2pass",
+      "tls": {
+        "enabled": true,
+        "server_name": "hy2.example.com",
+        "insecure": false
+      }
+    },
+    {
+      "type": "tuic",
+      "tag": "tuic-server",
+      "server": "198.51.100.123",
+      "server_port": 8443,
+      "uuid": "4ce58870-27d3-489b-87a0-3109db4fb919",
+      "password": "tuicpass",
+      "congestion_control": "bbr",
+      "udp_relay_mode": "native",
+      "zero_rtt_handshake": true,
+      "tls": {
+        "enabled": true,
+        "server_name": "tuic.example.com",
+        "alpn": ["h3"]
+      }
+    },
+    {
+      "type": "wireguard",
+      "tag": "wg-unsupported",
+      "server": "192.0.2.200",
+      "server_port": 51820,
+      "private_key": "uIlt6l0MZjOFCUyGSFHK1uZ8gr0od7CIvS9nXqOSlmg=",
+      "peer_public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    },
+    {
+      "type": "dns",
+      "tag": "dns-out"
+    },
+    {
+      "type": "selector",
+      "tag": "select",
+      "outbounds": ["vless-reality-grpc", "vless-ws-tls", "direct"],
+      "default": "vless-reality-grpc"
+    },
+    {
+      "type": "urltest",
+      "tag": "auto",
+      "outbounds": ["vless-reality-grpc", "vless-ws-tls"],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": "3m"
+    }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "final": "select"
+  }
+}

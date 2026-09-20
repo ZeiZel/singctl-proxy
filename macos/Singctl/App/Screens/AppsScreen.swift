@@ -78,10 +78,13 @@ struct AppsScreen: View {
             statusBadge
         } content: {
             VStack(alignment: .leading, spacing: Spacing.md) {
+                // No .fixedSize(vertical: true) here: the window's min-size
+                // probe proposes ~zero width, and fixedSize would report the
+                // one-word-per-line wrapped height (~3000pt) as a hard
+                // minimum — locking the window tall and un-shrinkable.
                 Text("Per-app routing runs through the ProxyExtension network system extension. Install it once, then approve it in System Settings → General → Login Items & Extensions.")
                     .font(.appSecondary)
                     .foregroundStyle(Color.sTextDim)
-                    .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: Spacing.sm) {
                     AppButton(

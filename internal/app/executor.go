@@ -6,6 +6,7 @@
 package app
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,16 +24,19 @@ import (
 	"singctl/internal/control"
 	"singctl/internal/core"
 	"singctl/internal/daemon"
+	"singctl/internal/firewall"
 	"singctl/internal/monitor"
 	"singctl/internal/netext"
 	"singctl/internal/notify"
 	"singctl/internal/policy"
 	"singctl/internal/proclist"
 	"singctl/internal/procproxy"
+	"singctl/internal/protocol"
 	"singctl/internal/runtime"
 	"singctl/internal/singbox"
+	"singctl/internal/sub"
+	"singctl/internal/sysproxy"
 	"singctl/internal/types"
-	"singctl/internal/vless"
 )
 
 // pollInterval is how often the Clash API is polled for live connections and
@@ -42,31 +47,52 @@ const pollInterval = 2 * time.Second
 // lazily on StartProxy (once the link is known).
 type Executor struct {
 	factory core.Factory
-	prober  runtime.InterfaceProber
-	routes  runtime.RouteController
-	notes   chan any
+	// registry is the protocol registry every key is parsed and rendered
+	// through. Injected at construction (see NewExecutor) — never a
+	// package-level singleton, so the composition root (cmd/singctl/main.go)
+	// is the one place that decides which protocols are supported.
+	registry *protocol.Registry
+	prober   runtime.InterfaceProber
+	routes   runtime.RouteController
+	notes    chan any
 
 	mu    sync.Mutex
 	mgr   *runtime.Manager
-	links []string // raw VLESS links currently loaded (priority order)
+	links []string // EFFECTIVE share links currently loaded (priority order)
+
+	// subMu guards the two inputs the effective link set is computed from:
+	// the keys the user entered by hand, and the subscriptions singctl fetches
+	// on their behalf. It is independent of mu and cfgMu and, like them, is
+	// never held while another of the three is taken — effectiveLinks()
+	// snapshots under subMu and releases before the manager work under mu.
+	subMu    sync.Mutex
+	manual   []string           // keys the user added themselves
+	subs     []sub.Subscription // configured subscriptions + their cached links
+	fetcher  sub.Fetcher        // nil in clients that must not hit the network
+	saveSubs func([]sub.Subscription) error
 
 	// cfgMu guards all the tunables + the per-process router + the log file.
 	// Separate from mu (which guards mgr/links) so the control socket, monitor
 	// and UI can read/write config concurrently without racing or deadlocking
 	// against LoadLink. Never hold cfgMu and mu at the same time.
-	cfgMu       sync.Mutex
-	save        func(string) error
-	introSeen   func() error
-	logPath     string
-	logLevel    string // sing-box log level ("" → builder default "warn")
-	logFile     *os.File
-	ports       singbox.Ports
-	clashAddr   string
-	clashSecret string
-	urltest     singbox.URLTestParams
-	router      procproxy.Router
-	routerBuilt bool
-	launchUser  *procproxy.LaunchUser // real user to drop launched children to (sudo)
+	cfgMu          sync.Mutex
+	save           func(string) error
+	introSeen      func() error
+	autostartMode  string             // "" behaves as "off" — see AutostartMode
+	saveAutostart  func(string) error // persistence hook for SetAutostartMode (F2 item 2)
+	saveSysproxy   func([]byte) error // persistence hook for SysProxySet/-Import (F1b item 1)
+	logPath        string
+	logLevel       string // sing-box log level ("" → builder default "warn")
+	logFile        *os.File
+	logWriter      *bufio.Writer
+	logFlushCancel context.CancelFunc
+	ports          singbox.Ports
+	clashAddr      string
+	clashSecret    string
+	urltest        singbox.URLTestParams
+	router         procproxy.Router
+	routerBuilt    bool
+	launchUser     *procproxy.LaunchUser // real user to drop launched children to (sudo)
 
 	// ctrl is the Executor's OWN netext.Controller, pinned to the proxy's
 	// configured local SOCKS port exactly like the router's (see controller()).
@@ -76,6 +102,15 @@ type Executor struct {
 	// never more than one writer racing to flush config.json.
 	ctrl      netext.Controller
 	ctrlBuilt bool
+
+	// sysProxy is the Executor's own sysproxy.Manager for the macOS
+	// system-proxy (PAC) toggle — see internal/sysproxy. Built lazily (same
+	// pattern as controller()); a freshly built Manager starts in the inert
+	// ModeOff config and touches no system state until SysProxySet/-Import is
+	// called (see internal/sysproxy's package doc SAFETY note — this Executor
+	// never calls those on its own either).
+	sysProxy      *sysproxy.Manager
+	sysProxyBuilt bool
 
 	// store is the persistent, PID-independent record of proxied apps (bundle
 	// ID, display name, enabled) backing the GUI's Apps tab. Loaded once at
@@ -105,6 +140,13 @@ type Executor struct {
 
 	listerOnce sync.Once
 	lister     proclist.Lister
+
+	// fwMu guards the persisted firewall rule set (F6 item 5 in
+	// docs/v2-spec.md). Independent of cfgMu/mu/subMu, like every other
+	// persisted-state mutex here — never held across manager work.
+	fwMu         sync.Mutex
+	fwRules      []firewall.Rule
+	saveFirewall func([]firewall.Rule) error
 
 	// consoleLog is a ring of recent per-app stdout/stderr lines with monotonic
 	// ids, so an attached client can poll the daemon's app output (CONSOLE-POLL).
@@ -176,9 +218,8 @@ func (e *Executor) ListProcesses(ctx context.Context) ([]notify.ProcInfo, error)
 func (e *Executor) SetLogPath(path string) {
 	e.cfgMu.Lock()
 	defer e.cfgMu.Unlock()
-	if path != e.logPath && e.logFile != nil {
-		_ = e.logFile.Close()
-		e.logFile = nil
+	if path != e.logPath {
+		e.closeLogLocked()
 	}
 	e.logPath = path
 }
@@ -231,8 +272,8 @@ func (e *Executor) SetLaunchUser(u *procproxy.LaunchUser) {
 	e.launchUser = u
 }
 
-func NewExecutor(f core.Factory, p runtime.InterfaceProber, r runtime.RouteController, notes chan any) *Executor {
-	e := &Executor{factory: f, prober: p, routes: r, notes: notes, store: newAppStore(proxiedAppsPath)}
+func NewExecutor(f core.Factory, reg *protocol.Registry, p runtime.InterfaceProber, r runtime.RouteController, notes chan any) *Executor {
+	e := &Executor{factory: f, registry: reg, prober: p, routes: r, notes: notes, store: newAppStore(proxiedAppsPath)}
 	_ = e.store.Load() // best-effort: a missing/corrupt store just starts empty
 	return e
 }
@@ -264,13 +305,114 @@ func (e *Executor) MarkIntroSeen() error {
 	return fn()
 }
 
+// SetAutostartSaver registers the persistence hook SetAutostartMode calls
+// (best-effort) after changing the mode — the profile.Store-backed
+// implementation in cmd/singctl/main.go, mirroring SetSaver.
+func (e *Executor) SetAutostartSaver(fn func(string) error) {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	e.saveAutostart = fn
+}
+
+// AutostartMode returns the persisted autostart mode ("off" by default — F2
+// item 2: a fresh install, or one from before F2, must come up idle rather
+// than re-deriving an old --vpn flag).
+func (e *Executor) AutostartMode() string {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	if e.autostartMode == "" {
+		return "off"
+	}
+	return e.autostartMode
+}
+
+// SetAutostartMode validates and records mode ("off"|"proxy"|"vpn"),
+// persisting it via the saver registered with SetAutostartSaver (best-effort:
+// a persistence failure is reported to the caller — typically SETTINGS-SET —
+// but never prevents the in-memory value from taking effect for the rest of
+// this run). It does NOT itself change what is currently running — see
+// ApplyAutostart, which is what the daemon calls once at startup.
+func (e *Executor) SetAutostartMode(mode string) error {
+	switch mode {
+	case "off", "proxy", "vpn":
+	default:
+		return fmt.Errorf("unknown autostart mode %q (want off, proxy, or vpn)", mode)
+	}
+	e.cfgMu.Lock()
+	e.autostartMode = mode
+	save := e.saveAutostart
+	e.cfgMu.Unlock()
+	if save != nil {
+		return save(mode)
+	}
+	return nil
+}
+
+// ApplyAutostart enables the persisted autostart mode (a no-op for the
+// default "off"), meant to be called once the daemon is otherwise up — after
+// the control socket, monitor and log sink are already live, so a GUI
+// attaching mid-startup sees a responsive daemon regardless of whether this
+// succeeds (F2 item 2).
+//
+// It is ALWAYS best-effort at the state level: if enabling the mode fails
+// (the reported bug — VPN failing with "no physical interface detected" —
+// is exactly this case), it forces a full Stop so the daemon is left
+// running in "off" rather than some partially-applied state, and returns the
+// original error for the caller to log. It never panics or exits — see F2
+// item 3 and cmd/singctl/main.go's runHeadless, which is what makes this
+// safe to call unconditionally from a KeepAlive-restarted LaunchDaemon.
+func (e *Executor) ApplyAutostart(ctx context.Context) error {
+	mode := e.AutostartMode()
+	var err error
+	switch mode {
+	case "proxy":
+		err = e.EnableProxy(ctx)
+	case "vpn":
+		err = e.EnableVPN(ctx)
+	default:
+		return nil
+	}
+	if err != nil {
+		_ = e.Stop(ctx) // never leave a half-applied mode running — fall back to fully off
+		return fmt.Errorf("apply autostart mode %q: %w", mode, err)
+	}
+	return nil
+}
+
 // --- Backend port (see internal/app.Executor's methods) ---
 
-// LoadLink validates+remembers the link and prepares the runtime WITHOUT
-// starting anything (the user explicitly enables a mode afterwards). Changing
-// the link tears down any previous runtime first.
-func (e *Executor) LoadLink(ctx context.Context, link string) error {
-	set, err := vless.ParseLinks([]string{link})
+// LoadLink validates+remembers the MANUAL key set and prepares the runtime
+// WITHOUT starting anything (the user explicitly enables a mode afterwards).
+// Changing the set tears down any previous runtime first.
+//
+// Manual keys are only one of the two inputs: whatever the configured
+// subscriptions last returned is merged in on top (see effectiveLinks). Only
+// the manual half is persisted to profile.txt — subscription servers belong to
+// the subscription and are re-fetched, never hand-edited.
+func (e *Executor) LoadLink(ctx context.Context, raw string) error {
+	profiles, err := e.registry.ParseAll([]string{raw})
+	if err != nil {
+		return err
+	}
+	manual := make([]string, 0, len(profiles))
+	for _, p := range profiles {
+		manual = append(manual, p.Raw)
+	}
+	e.subMu.Lock()
+	e.manual = manual
+	e.subMu.Unlock()
+	return e.applyEffective(ctx)
+}
+
+// applyEffective rebuilds the runtime from manual keys + subscription keys. It
+// is the single place that swaps the manager, so every mutation path (manual
+// edit, subscription refresh, startup restore) converges here.
+func (e *Executor) applyEffective(ctx context.Context) error {
+	effective := e.effectiveLinks()
+	if len(effective) == 0 {
+		return e.clearLinks(ctx)
+	}
+	profiles, err := e.registry.ParseAll(effective)
 	if err != nil {
 		return err
 	}
@@ -280,20 +422,22 @@ func (e *Executor) LoadLink(ctx context.Context, link string) error {
 	}
 	// Snapshot the tunables under cfgMu (never held across mgr work / mu).
 	e.cfgMu.Lock()
-	builder := runtime.ProfileConfigBuilder{
-		Profiles: set,
-		LogPath:  e.logPath,
-		LogLevel: e.logLevel,
-		Ports:    e.ports,
-		ClashAPI: clashAPIConfig(e.clashAddr, e.clashSecret),
-		URLTest:  e.urltest,
+	builder := firewallConfigBuilder{
+		registry: e.registry,
+		profiles: profiles,
+		logPath:  e.logPath,
+		logLevel: e.logLevel,
+		ports:    e.ports,
+		clashAPI: clashAPIConfig(e.clashAddr, e.clashSecret),
+		urltest:  e.urltest,
+		firewall: e.FirewallList(),
 	}
 	save := e.save
 	e.cfgMu.Unlock()
 
 	mgr := runtime.NewManager(e.factory, builder, e.prober, e.routes)
-	links := make([]string, 0, set.Len())
-	for _, p := range set.Profiles {
+	links := make([]string, 0, len(profiles))
+	for _, p := range profiles {
 		links = append(links, p.Raw)
 	}
 	e.mu.Lock()
@@ -301,12 +445,12 @@ func (e *Executor) LoadLink(ctx context.Context, link string) error {
 	e.links = links
 	e.mu.Unlock()
 	if save != nil {
-		_ = save(link)
+		_ = save(strings.Join(e.manualLinks(), "\n"))
 	}
 	return nil
 }
 
-// CurrentLinks returns the raw VLESS links currently loaded (in priority order).
+// CurrentLinks returns the raw share links currently loaded (in priority order).
 func (e *Executor) CurrentLinks() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -315,14 +459,14 @@ func (e *Executor) CurrentLinks() []string {
 	return out
 }
 
-// AddLink appends another VLESS server to the set and reloads, preserving the
+// AddLink appends another server to the set and reloads, preserving the
 // running mode so the new server joins the failover group live.
-func (e *Executor) AddLink(ctx context.Context, link string) error {
-	if _, err := vless.ParseLinks([]string{link}); err != nil {
+func (e *Executor) AddLink(ctx context.Context, raw string) error {
+	if _, err := e.registry.ParseAll([]string{raw}); err != nil {
 		return err
 	}
 	prev := e.StateLabel()
-	combined := append(e.CurrentLinks(), strings.TrimSpace(link))
+	combined := append(e.manualLinks(), strings.TrimSpace(raw))
 	if err := e.LoadLink(ctx, strings.Join(combined, "\n")); err != nil {
 		return err
 	}
@@ -342,28 +486,20 @@ func (e *Executor) DeleteLink(ctx context.Context, index int) error {
 	if index < 0 || index >= len(links) {
 		return fmt.Errorf("invalid key index: %d", index)
 	}
-	remaining := append(links[:index:index], links[index+1:]...)
-	if len(remaining) == 0 {
-		// Last key removed: stop the proxy and clear the loaded set + saved profile.
-		if err := e.Stop(ctx); err != nil {
-			return err
-		}
-		if old := e.manager(); old != nil {
-			_ = old.Shutdown(ctx)
-		}
-		e.mu.Lock()
-		e.mgr = nil
-		e.links = nil
-		e.mu.Unlock()
-		e.cfgMu.Lock()
-		save := e.save
-		e.cfgMu.Unlock()
-		if save != nil {
-			_ = save("")
-		}
-		return nil
+	if owner, owned := e.subscriptionOwning(links[index]); owned {
+		return fmt.Errorf("this server comes from subscription %q; remove the subscription instead — a refresh would bring the server straight back", owner)
 	}
-	return e.reloadPreservingMode(ctx, remaining)
+	manual := e.manualLinks()
+	remaining := make([]string, 0, len(manual))
+	for _, l := range manual {
+		if strings.TrimSpace(l) != strings.TrimSpace(links[index]) {
+			remaining = append(remaining, l)
+		}
+	}
+	e.subMu.Lock()
+	e.manual = remaining
+	e.subMu.Unlock()
+	return e.applyPreservingMode(ctx)
 }
 
 // RenameLink rewrites the #fragment label of the key at index and reloads.
@@ -372,28 +508,24 @@ func (e *Executor) RenameLink(ctx context.Context, index int, name string) error
 	if index < 0 || index >= len(links) {
 		return fmt.Errorf("invalid key index: %d", index)
 	}
-	renamed, err := vless.SetName(links[index], name)
+	if owner, owned := e.subscriptionOwning(links[index]); owned {
+		return fmt.Errorf("this server comes from subscription %q and is named by the panel; a refresh would overwrite the new name", owner)
+	}
+	renamed, err := e.registry.SetLabel(links[index], name)
 	if err != nil {
 		return err
 	}
-	links[index] = renamed
-	return e.reloadPreservingMode(ctx, links)
-}
-
-// reloadPreservingMode reloads the given link set and re-enables whatever mode
-// was running, so key edits take effect live. Shared by Delete/Rename.
-func (e *Executor) reloadPreservingMode(ctx context.Context, links []string) error {
-	prev := e.StateLabel()
-	if err := e.LoadLink(ctx, strings.Join(links, "\n")); err != nil {
-		return err
+	manual := e.manualLinks()
+	for i, l := range manual {
+		if strings.TrimSpace(l) == strings.TrimSpace(links[index]) {
+			manual[i] = renamed
+			break
+		}
 	}
-	switch prev {
-	case "vpn":
-		return e.EnableVPN(ctx)
-	case "proxy", "suspended":
-		return e.EnableProxy(ctx)
-	}
-	return nil
+	e.subMu.Lock()
+	e.manual = manual
+	e.subMu.Unlock()
+	return e.applyPreservingMode(ctx)
 }
 
 // clashAPIConfig returns the sing-box Clash API config, or nil if disabled.
@@ -403,6 +535,203 @@ func clashAPIConfig(addr, secret string) *singbox.ClashAPI {
 		return nil
 	}
 	return &singbox.ClashAPI{ExternalController: addr, Secret: secret}
+}
+
+// firewallConfigBuilder produces sing-box JSON for the two instances,
+// threading the persisted firewall rule set (F6 item 5 in docs/v2-spec.md)
+// into the proxy config's route rules via singbox.ProxyOpts.Firewall. It
+// carries the exact same fields as runtime.ProfileConfigBuilder plus
+// firewall, and satisfies runtime.ConfigBuilder structurally (Go interfaces
+// need no explicit implements) — so it can stand in for
+// runtime.ProfileConfigBuilder in applyEffective without this feature
+// touching internal/runtime/configbuilder.go, a file this task owns no
+// permission to change (see the FILE OWNERSHIP note for F6). applyLog below
+// intentionally duplicates runtime.ProfileConfigBuilder.applyLog's few lines
+// for the same reason: that method is unexported in another package.
+type firewallConfigBuilder struct {
+	registry *protocol.Registry
+	profiles []protocol.Profile
+	logPath  string
+	logLevel string
+	ports    singbox.Ports
+	clashAPI *singbox.ClashAPI
+	urltest  singbox.URLTestParams
+	firewall []firewall.Rule
+}
+
+func (b firewallConfigBuilder) ProxyConfig(physIface string) ([]byte, error) {
+	cfg, err := singbox.GenerateProxyConfigOpts(b.registry, b.profiles, singbox.ProxyOpts{
+		PhysIface: physIface,
+		Ports:     b.ports,
+		ClashAPI:  b.clashAPI,
+		URLTest:   b.urltest,
+		Firewall:  b.firewall,
+	})
+	if err != nil {
+		return nil, err
+	}
+	b.applyLog(&cfg)
+	return singbox.MarshalIndented(cfg)
+}
+
+func (b firewallConfigBuilder) ForwarderConfig() ([]byte, error) {
+	cfg, err := singbox.GenerateForwarderConfigSet(b.registry, b.profiles, b.ports)
+	if err != nil {
+		return nil, err
+	}
+	b.applyLog(&cfg)
+	return singbox.MarshalIndented(cfg)
+}
+
+// applyLog mirrors runtime.ProfileConfigBuilder.applyLog exactly (see this
+// type's doc comment for why it is duplicated rather than shared).
+func (b firewallConfigBuilder) applyLog(cfg *singbox.Config) {
+	if cfg.Log == nil {
+		return
+	}
+	if b.logPath != "" {
+		cfg.Log.Output = b.logPath
+	}
+	level := b.logLevel
+	if level == "" {
+		level = "warn"
+	}
+	cfg.Log.Level = level
+}
+
+// --- Live connections (F6 in docs/v2-spec.md) ---
+
+// Connections builds the CONNECTIONS control command's payload: the live
+// Clash API connection table, per-app/per-destination aggregates, and an
+// explicit diagnosis when the table is empty (F6 items 1-3) — see
+// clashapi.Connections, which is the single place that decides between
+// no_mode/api_disabled/api_unreachable/idle/active so this and whatever
+// drives the Dashboard's "Enable the Clash API" hint can never disagree.
+func (e *Executor) Connections(ctx context.Context) clashapi.Payload {
+	running := e.StateLabel() != "off"
+	e.cfgMu.Lock()
+	addr, secret := e.clashAddr, e.clashSecret
+	e.cfgMu.Unlock()
+	var client *clashapi.Client
+	if addr != "" {
+		client = clashapi.NewClient(addr, secret)
+	}
+	return clashapi.Connections(ctx, client, running, addr != "")
+}
+
+// CloseConnection closes one active connection by id (CONNECTION-CLOSE),
+// via the Clash API's DELETE /connections/{id}.
+func (e *Executor) CloseConnection(ctx context.Context, id string) error {
+	e.cfgMu.Lock()
+	addr, secret := e.clashAddr, e.clashSecret
+	e.cfgMu.Unlock()
+	if addr == "" {
+		return fmt.Errorf("the Clash API is disabled; enable it in settings to manage connections")
+	}
+	return clashapi.NewClient(addr, secret).CloseConnection(ctx, id)
+}
+
+// --- Firewall (F6 item 5 in docs/v2-spec.md) ---
+
+// SetFirewallSaver registers the persistence hook FirewallAdd/FirewallRemove
+// call after a successful mutation — the profile.Store-backed implementation
+// in cmd/singctl/main.go, mirroring SetSubscriptionDeps/SetSysProxySaver.
+func (e *Executor) SetFirewallSaver(fn func([]firewall.Rule) error) {
+	e.fwMu.Lock()
+	defer e.fwMu.Unlock()
+	e.saveFirewall = fn
+}
+
+// RestoreFirewallRules seeds the in-memory rule set from disk at startup
+// (mirrors RestoreSubscriptions). It does not itself reload the running
+// config — the caller's subsequent LoadLink/Reload picks the seeded rules up
+// through applyEffective, exactly like a restored subscription's servers do.
+func (e *Executor) RestoreFirewallRules(rules []firewall.Rule) {
+	e.fwMu.Lock()
+	defer e.fwMu.Unlock()
+	e.fwRules = append(e.fwRules[:0], rules...)
+}
+
+// FirewallList returns a snapshot of the configured firewall rules
+// (FIREWALL-LIST), in the order they were added.
+func (e *Executor) FirewallList() []firewall.Rule {
+	e.fwMu.Lock()
+	defer e.fwMu.Unlock()
+	out := make([]firewall.Rule, len(e.fwRules))
+	copy(out, e.fwRules)
+	return out
+}
+
+// FirewallAdd validates rule (assigning it a random id if it arrives without
+// one), appends it to the persisted set, and — if a mode is currently
+// running — reloads the live config the SAME way a key change does
+// (applyPreservingMode: one rebuild of the generated config, one re-enable of
+// whatever mode was already running), so the new rule takes effect without
+// dropping the connection (F6 item 5). With no mode running the rule is
+// simply persisted; it takes effect the next time a mode starts.
+func (e *Executor) FirewallAdd(ctx context.Context, rule firewall.Rule) (firewall.Rule, error) {
+	if rule.ID == "" {
+		rule.ID = randomHex()
+	}
+	if err := rule.Validate(); err != nil {
+		return firewall.Rule{}, err
+	}
+	e.fwMu.Lock()
+	for _, r := range e.fwRules {
+		if r.ID == rule.ID {
+			e.fwMu.Unlock()
+			return firewall.Rule{}, fmt.Errorf("firewall: rule id %q already exists", rule.ID)
+		}
+	}
+	e.fwRules = append(e.fwRules, rule)
+	snapshot := make([]firewall.Rule, len(e.fwRules))
+	copy(snapshot, e.fwRules)
+	save := e.saveFirewall
+	e.fwMu.Unlock()
+
+	if save != nil {
+		if err := save(snapshot); err != nil {
+			return firewall.Rule{}, err
+		}
+	}
+	if e.manager() == nil {
+		return rule, nil // nothing running yet — takes effect on the next mode start
+	}
+	return rule, e.applyPreservingMode(ctx)
+}
+
+// FirewallRemove drops the rule with the given id from the set and reloads
+// the same way FirewallAdd does (a single reload preserving whatever mode was
+// running, or none at all if nothing is running).
+func (e *Executor) FirewallRemove(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	e.fwMu.Lock()
+	kept := make([]firewall.Rule, 0, len(e.fwRules))
+	found := false
+	for _, r := range e.fwRules {
+		if r.ID == id {
+			found = true
+			continue
+		}
+		kept = append(kept, r)
+	}
+	e.fwRules = kept
+	snapshot := make([]firewall.Rule, len(kept))
+	copy(snapshot, kept)
+	save := e.saveFirewall
+	e.fwMu.Unlock()
+	if !found {
+		return fmt.Errorf("no such firewall rule: %s", id)
+	}
+	if save != nil {
+		if err := save(snapshot); err != nil {
+			return err
+		}
+	}
+	if e.manager() == nil {
+		return nil
+	}
+	return e.applyPreservingMode(ctx)
 }
 
 // EnableProxy starts (or switches to) proxy-only mode.
@@ -445,6 +774,7 @@ func (e *Executor) EnableVPN(ctx context.Context) error {
 // user can re-enable a mode.
 func (e *Executor) Stop(ctx context.Context) error {
 	e.stopPoller()
+	defer e.flushLog()
 	mgr := e.manager()
 	if mgr == nil {
 		return nil
@@ -518,9 +848,11 @@ func (e *Executor) stopPoller() {
 	}
 }
 
-// appendLog writes one enriched connection line to the same destination as the
+// appendLog queues one enriched connection line for the same destination as the
 // sing-box log: the log file in TUI/non-interactive mode, or stdout when logs
-// are streamed (headless --logs, logPath == "").
+// are streamed (headless --logs, logPath == ""). File output is deliberately
+// buffered: a busy browser can create hundreds of short-lived connections and
+// doing one write syscall per line has a measurable energy cost.
 func (e *Executor) appendLog(line string) {
 	e.cfgMu.Lock()
 	defer e.cfgMu.Unlock()
@@ -533,9 +865,70 @@ func (e *Executor) appendLog(line string) {
 		if err != nil {
 			return
 		}
-		e.logFile = f // kept open for the process lifetime (no per-line fd churn)
+		e.logFile = f
+		e.logWriter = bufio.NewWriterSize(f, 64*1024)
+		e.startLogFlusherLocked()
 	}
-	fmt.Fprintln(e.logFile, line)
+	_, _ = fmt.Fprintln(e.logWriter, line)
+	// Keep memory bounded even if the periodic flusher is delayed.
+	if e.logWriter.Buffered() >= 32*1024 {
+		_ = e.logWriter.Flush()
+	}
+}
+
+const logFlushInterval = 2 * time.Second
+
+// startLogFlusherLocked starts one low-frequency flusher for the current file.
+// cfgMu must be held.
+func (e *Executor) startLogFlusherLocked() {
+	if e.logFlushCancel != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	e.logFlushCancel = cancel
+	go func() {
+		ticker := time.NewTicker(logFlushInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				e.flushLog()
+			}
+		}
+	}()
+}
+
+func (e *Executor) flushLog() {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	if e.logWriter != nil {
+		_ = e.logWriter.Flush()
+	}
+}
+
+// CloseLog flushes the final partial chunk and closes the enriched-log sink.
+func (e *Executor) CloseLog() {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	e.closeLogLocked()
+}
+
+// closeLogLocked tears down the current writer. cfgMu must be held.
+func (e *Executor) closeLogLocked() {
+	if e.logFlushCancel != nil {
+		e.logFlushCancel()
+		e.logFlushCancel = nil
+	}
+	if e.logWriter != nil {
+		_ = e.logWriter.Flush()
+		e.logWriter = nil
+	}
+	if e.logFile != nil {
+		_ = e.logFile.Close()
+		e.logFile = nil
+	}
 }
 
 // diag writes a timestamped "[coexist]" diagnostic line to the same sink as the
@@ -775,6 +1168,128 @@ func (e *Executor) controller() netext.Controller {
 		e.ctrlBuilt = true
 	}
 	return e.ctrl
+}
+
+// sysProxyMgr lazily builds the Executor's own sysproxy.Manager — same lazy
+// pattern as controller(). Building it runs no `networksetup` command; see
+// internal/sysproxy's package doc.
+func (e *Executor) sysProxyMgr() *sysproxy.Manager {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	if !e.sysProxyBuilt {
+		e.sysProxy = sysproxy.NewManager(sysproxy.New()).WithPortDiagnostics(sysproxy.NewPortDiagnostics())
+		e.sysProxyBuilt = true
+	}
+	return e.sysProxy
+}
+
+// SysProxyStatus reports the macOS system-proxy (PAC) toggle's current mode,
+// service, PAC URL/reachability, and domain count — see
+// internal/sysproxy.Manager.Status.
+func (e *Executor) SysProxyStatus() sysproxy.Status {
+	return e.sysProxyMgr().Status()
+}
+
+// SetSysProxySaver registers the persistence hook SysProxySet/SysProxyImport
+// call (best-effort, after a successful Apply/Import) — the profile.Store-
+// backed implementation in cmd/singctl/main.go, mirroring SetAutostartSaver.
+// F1b item 1 in docs/v2-spec.md.
+func (e *Executor) SetSysProxySaver(fn func([]byte) error) {
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	e.saveSysproxy = fn
+}
+
+// persistSysProxy saves mgr's just-applied config via the registered saver
+// (a no-op if none was registered, e.g. no resolvable config directory). A
+// save failure is returned to the caller (typically SYSPROXY-SET/-IMPORT)
+// exactly like SetAutostartMode's save failure is — it never undoes the
+// in-memory Apply/Import that already succeeded.
+func (e *Executor) persistSysProxy(mgr *sysproxy.Manager) error {
+	e.cfgMu.Lock()
+	save := e.saveSysproxy
+	e.cfgMu.Unlock()
+	if save == nil {
+		return nil
+	}
+	return save(mgr.ConfigINI())
+}
+
+// SysProxySet applies cfg as the system-proxy configuration. Requires root
+// (the real NetworkSetup adapter shells out to `networksetup`); the daemon
+// has it, which is the whole reason this moved out of the GUI.
+//
+// A successful Apply is persisted (F1b item 1) so it survives a daemon
+// restart — including cfg.Mode == sysproxy.ModeOff, so a user who explicitly
+// turns the proxy off does not have it switched back on at the next restore.
+func (e *Executor) SysProxySet(cfg sysproxy.Config) error {
+	mgr := e.sysProxyMgr()
+	if err := mgr.Apply(cfg); err != nil {
+		return err
+	}
+	return e.persistSysProxy(mgr)
+}
+
+// RestoreSysProxyConfig restores a previously persisted sysproxy config (the
+// INI bytes returned by profile.Store.LoadSysproxyConfig — see
+// sysproxy.Config.INI) after a daemon restart (F1b item 2). data == nil/empty
+// means nothing was ever saved (a fresh install, or one from before F1b) —
+// a no-op, matching the Manager's own inert-by-default ModeOff. Restoration
+// is best-effort at the caller's discretion: this returns any parse/apply
+// error rather than swallowing it, but cmd/singctl/main.go logs it as a
+// warning and continues starting up regardless (F1b item 3), the same rule
+// F2 item 3 applies to the autostart mode.
+func (e *Executor) RestoreSysProxyConfig(data []byte) error {
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil
+	}
+	cfg, err := sysproxy.ParseINI(data)
+	if err != nil {
+		return fmt.Errorf("parse persisted system-proxy config: %w", err)
+	}
+	return e.sysProxyMgr().Restore(cfg)
+}
+
+// SysProxyConfig returns the currently-applied (or default) system-proxy
+// Config — used by SYSPROXY-SET to merge a partial (e.g. mode-only) request
+// onto the live config rather than a zero value.
+func (e *Executor) SysProxyConfig() sysproxy.Config {
+	return e.sysProxyMgr().Config()
+}
+
+// SysProxyConfigYAML returns the current system-proxy Config as YAML.
+// Retained for the pre-INI wire format; SYSPROXY-CONFIG itself now uses
+// SysProxyConfigINI.
+func (e *Executor) SysProxyConfigYAML() ([]byte, error) {
+	return e.sysProxyMgr().ConfigYAML()
+}
+
+// SysProxyConfigINI returns the current system-proxy Config as INI (see
+// internal/sysproxy/ini.go) — the SYSPROXY-CONFIG payload.
+func (e *Executor) SysProxyConfigINI() []byte {
+	return e.sysProxyMgr().ConfigINI()
+}
+
+// SysProxyImport decodes and applies an INI Config, a legacy YAML Config, or
+// a plain newline-separated domain list (see sysproxy.DecodeImport).
+//
+// A successful Import is persisted exactly like a successful SysProxySet
+// (F1b item 1) — see persistSysProxy.
+func (e *Executor) SysProxyImport(data []byte) error {
+	mgr := e.sysProxyMgr()
+	if err := mgr.Import(data); err != nil {
+		return err
+	}
+	return e.persistSysProxy(mgr)
+}
+
+// SysProxyReclaimPort removes singctl's own legacy PAC LaunchAgent that may
+// be holding the configured PAC port — only when it verifiably belongs to
+// singctl (see sysproxy.Manager.ReclaimPort); refuses otherwise. Never runs
+// on its own — only in response to the SYSPROXY-RECLAIM-PORT control
+// command, itself only reachable from an explicit user action.
+func (e *Executor) SysProxyReclaimPort() error {
+	return e.sysProxyMgr().ReclaimPort()
 }
 
 // RoutePID routes an already-running process's traffic through the proxy. The
@@ -1148,11 +1663,172 @@ func (e *Executor) TrafficSnapshot(ctx context.Context) (control.Traffic, error)
 	return control.Traffic{Up: up, Down: down}, nil
 }
 
+// --- Manual proxy selection (multi-server failover group) ---
+//
+// In multi-server mode the generated config wires a urltest group tagged
+// "auto" over every server, plus a selector tagged "proxy" whose members are
+// ["auto", "proxy-0", …, "proxy-N"], defaulting to "auto" (see
+// internal/singbox/generate.go's GenerateProxyConfigOpts). route.final and
+// the DNS detour reference "proxy", so switching the selector's active
+// member via the Clash API — PUT /proxies/proxy — changes where traffic
+// goes live, with no config rebuild. In single-server mode there is no
+// group at all: the lone outbound is tagged "proxy" directly.
+const (
+	proxyGroupTag = "proxy" // mirrors singbox.proxyTag
+	autoGroupTag  = "auto"  // mirrors singbox.autoTag
+)
+
+// ProxyGroup reports the multi-server failover group for the UI.
+type ProxyGroup struct {
+	Available bool          `json:"available"` // false in single-server mode
+	Auto      bool          `json:"auto"`      // selector currently on "auto"
+	Selected  string        `json:"selected"`  // the EFFECTIVE server tag, resolved through auto
+	Members   []ProxyMember `json:"members"`
+}
+
+// ProxyMember is one server in the failover group.
+type ProxyMember struct {
+	Tag   string `json:"tag"`   // "proxy-3"
+	Index int    `json:"index"` // 3 — its position in the loaded key list
+	Name  string `json:"name"`  // the key's display label, e.g. "France 🇫🇷"
+	Delay int    `json:"delay"` // ms; 0 = timeout/unknown
+}
+
+// proxyServerTag mirrors internal/singbox's own (unexported) helper of the
+// same name: the per-server outbound tag in a multi-server set.
+func proxyServerTag(i int) string { return fmt.Sprintf("%s-%d", proxyGroupTag, i) }
+
+// proxyTagIndex parses a "proxy-N" tag back into N. ok is false for anything
+// that doesn't match, including the bare "proxy"/"auto" group tags.
+func proxyTagIndex(tag string) (int, bool) {
+	const prefix = proxyGroupTag + "-"
+	if !strings.HasPrefix(tag, prefix) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(tag[len(prefix):])
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+// memberLabel resolves a member's display label: links[index] parsed through
+// the registry, for its Profile.Label. It returns "" (never an error) when
+// the index is out of range or the label can't be resolved — the caller
+// falls back to the raw tag. The links list and the live Clash-reported tags
+// are updated independently and can transiently disagree during a reload;
+// this must never panic on that race.
+func (e *Executor) memberLabel(links []string, index int) string {
+	if index < 0 || index >= len(links) {
+		return ""
+	}
+	p, err := e.registry.Parse(links[index])
+	if err != nil {
+		return ""
+	}
+	return p.Label
+}
+
+// ProxyGroup reports the failover group for the UI: whether one exists at
+// all, whether it's on automatic selection, the effective server (resolved
+// through "auto" when applicable), and each member with its resolved display
+// name and last-probed latency. Returns Available=false (no error) in
+// single-server mode, where selection is meaningless, and also if the
+// running instance hasn't (yet) reported a group — e.g. mid-reload.
+func (e *Executor) ProxyGroup(ctx context.Context) (ProxyGroup, error) {
+	links := e.CurrentLinks()
+	if len(links) < 2 {
+		return ProxyGroup{Available: false}, nil
+	}
+	e.cfgMu.Lock()
+	addr, secret := e.clashAddr, e.clashSecret
+	e.cfgMu.Unlock()
+	if addr == "" {
+		return ProxyGroup{}, fmt.Errorf("the Clash API is disabled; enable it in settings to select a proxy")
+	}
+	proxies, err := clashapi.NewClient(addr, secret).Proxies(ctx)
+	if err != nil {
+		return ProxyGroup{}, fmt.Errorf("clash api: %w", err)
+	}
+	group, ok := proxies[proxyGroupTag]
+	if !ok || len(group.All) == 0 {
+		return ProxyGroup{Available: false}, nil
+	}
+
+	now := group.Now
+	auto := now == autoGroupTag || now == ""
+	selected := now
+	if auto {
+		// The Clash API reports the selector's "now" as "auto"; resolve one
+		// more hop through the urltest group's own "now" to get the actually
+		// effective server.
+		if ag, ok := proxies[autoGroupTag]; ok && ag.Now != "" {
+			selected = ag.Now
+		}
+	}
+
+	members := make([]ProxyMember, 0, len(group.All))
+	for _, tag := range group.All {
+		if tag == autoGroupTag {
+			continue
+		}
+		idx, _ := proxyTagIndex(tag)
+		name := e.memberLabel(links, idx)
+		if name == "" {
+			name = tag
+		}
+		members = append(members, ProxyMember{
+			Tag:   tag,
+			Index: idx,
+			Name:  name,
+			Delay: proxies[tag].LastDelay(),
+		})
+	}
+	return ProxyGroup{Available: true, Auto: auto, Selected: selected, Members: members}, nil
+}
+
+// SelectProxy pins traffic to one member of the failover group, or restores
+// automatic selection when tag is "auto". It rejects a tag that is not
+// currently a member (listing the valid ones) and single-server mode, where
+// there is no group to select within.
+func (e *Executor) SelectProxy(ctx context.Context, tag string) error {
+	links := e.CurrentLinks()
+	if len(links) < 2 {
+		return fmt.Errorf("proxy selection needs more than one server loaded")
+	}
+	tag = strings.TrimSpace(tag)
+	valid := make([]string, 0, len(links)+1)
+	valid = append(valid, autoGroupTag)
+	member := tag == autoGroupTag
+	for i := range links {
+		t := proxyServerTag(i)
+		valid = append(valid, t)
+		member = member || tag == t
+	}
+	if !member {
+		return fmt.Errorf("unknown proxy %q; valid members: %s", tag, strings.Join(valid, ", "))
+	}
+	e.cfgMu.Lock()
+	addr, secret := e.clashAddr, e.clashSecret
+	e.cfgMu.Unlock()
+	if addr == "" {
+		return fmt.Errorf("the Clash API is disabled; enable it in settings to select a proxy")
+	}
+	if err := clashapi.NewClient(addr, secret).SelectOutbound(ctx, proxyGroupTag, tag); err != nil {
+		return fmt.Errorf("clash api: %w", err)
+	}
+	return nil
+}
+
 // CurrentSettings returns the live tunables as a notify.Settings (the inverse of
 // ApplySettings) so a remote client / SETTINGS-GET can seed its form.
 func (e *Executor) CurrentSettings() notify.Settings {
 	e.cfgMu.Lock()
+	mode := e.autostartMode
 	defer e.cfgMu.Unlock()
+	if mode == "" {
+		mode = "off"
+	}
 	return notify.Settings{
 		SocksPort:        e.ports.Socks,
 		ClashEnabled:     e.clashAddr != "",
@@ -1161,6 +1837,7 @@ func (e *Executor) CurrentSettings() notify.Settings {
 		URLTestInterval:  e.urltest.Interval,
 		URLTestTolerance: e.urltest.Tolerance,
 		SaveProfile:      e.save != nil,
+		AutostartMode:    mode,
 	}
 }
 
@@ -1180,6 +1857,11 @@ func (e *Executor) ApplySettings(ctx context.Context, s notify.Settings) error {
 		e.SetClashAPI("", "")
 	}
 	e.SetURLTest(singbox.URLTestParams{URL: s.URLTestURL, Interval: s.URLTestInterval, Tolerance: s.URLTestTolerance})
+	if s.AutostartMode != "" { // "" (a client that predates F2) means "leave it alone"
+		if err := e.SetAutostartMode(s.AutostartMode); err != nil {
+			return err
+		}
+	}
 	e.resetRouter() // new port → fresh per-process router
 
 	links := e.CurrentLinks()
@@ -1213,7 +1895,9 @@ func (e *Executor) Daemonize(_ context.Context) error {
 	}
 	e.cfgMu.Lock()
 	if e.save != nil {
-		_ = e.save(strings.Join(links, "\n"))
+		// Only the manual keys: the child restores subscriptions from
+		// subscriptions.json and refetches them itself.
+		_ = e.save(strings.Join(e.manualLinks(), "\n"))
 	}
 	cfg := daemon.Config{
 		Mode:             mode,

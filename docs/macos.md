@@ -3,7 +3,7 @@
 На macOS singctl изолирует трафик отдельных приложений через **системное
 расширение** (`NETransparentProxyProvider`) — в отличие от Linux, где это делается
 бесплатно через cgroup/nftables. Эта страница объясняет модель и как ей
-пользоваться. Установка/подпись Apple-модулей — в [LICENSATION.md](../LICENSATION.md).
+пользоваться. Установка и подпись Apple-модулей выполняются скриптом сборки.
 
 ## Установка как системный инструмент (LaunchDaemon)
 
@@ -68,7 +68,7 @@ identity родителя). Никаких env-переменных, флаго�
 2. Запустить `Singctl.app` и **одобрить** расширение в System Settings →
    General → Login Items & Extensions.
 3. Полную последовательность (Apple Developer Program, App IDs, capabilities,
-   нотаризация, подпись CLI) см. в **[LICENSATION.md](../LICENSATION.md)**.
+   нотаризация и подпись CLI выполняются штатными инструментами Xcode.
 
 Проверить, что расширение активно: `systemextensionsctl list` —
 `com.singctl.proxy.netext` должно быть `[activated enabled]`.
@@ -86,7 +86,7 @@ identity родителя). Никаких env-переменных, флаго�
 запущенного).
 
 Если расширение не установлено/не одобрено, эти действия вернут понятную ошибку со
-ссылкой на сборку (`make app-macos`) и LICENSATION.md.
+ссылкой на сборку (`make app-macos`).
 
 ## Сосуществование с Cisco
 

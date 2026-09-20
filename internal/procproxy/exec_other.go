@@ -35,7 +35,7 @@ func startProcess(ctx context.Context, argv, extraEnv []string, user *LaunchUser
 		return 0, fmt.Errorf("launch %s: %w", argv[0], err)
 	}
 	cmd := exec.CommandContext(ctx, bin, argv[1:]...)
-	env := append(os.Environ(), extraEnv...)
+	env := append(stripMallocStackLogging(os.Environ()), extraEnv...)
 
 	// Wire stdio BEFORE Start() so that, when we later drop to the real user via
 	// SysProcAttr.Credential, the child still inherits the pipe write-end fds.
@@ -184,7 +184,32 @@ func runCommand(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return nil
 	}
-	return exec.CommandContext(ctx, args[0], args[1:]...).Run()
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Env = stripMallocStackLogging(os.Environ())
+	return cmd.Run()
+}
+
+// mallocStackLoggingPrefix is the family of macOS malloc-debugging env vars
+// (MallocStackLogging, MallocStackLoggingNoCompact, MallocStackLoggingDirectory,
+// ...) that, once set in this process's own environment (Xcode/lldb often set
+// them on the daemon's launch context), get inherited by every child it spawns
+// and make each one emit "MallocStackLogging: can't turn off malloc stack
+// logging" — dominating the daemon's log (F2 item 6). Stripped here rather
+// than at the OS level so the daemon's OWN process is unaffected either way.
+const mallocStackLoggingPrefix = "MallocStackLogging"
+
+// stripMallocStackLogging returns env with every MallocStackLogging* entry
+// removed, preserving order otherwise.
+func stripMallocStackLogging(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(key, mallocStackLoggingPrefix) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // processArgv recovers a running process's command line via ps. Quoting is not

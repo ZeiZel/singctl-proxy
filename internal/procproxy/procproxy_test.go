@@ -27,6 +27,60 @@ func TestProxyEnv(t *testing.T) {
 	}
 }
 
+// TestStripMallocStackLogging is F2 item 6's regression test: every
+// MallocStackLogging* variable must be removed from a spawned child's
+// environment (it's what makes each one log "MallocStackLogging: can't turn
+// off malloc stack logging" and dominate the daemon's log), while everything
+// else — including a look-alike prefix that ISN'T the malloc family — passes
+// through untouched.
+func TestStripMallocStackLogging(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{
+			name: "strips the whole family",
+			in: []string{
+				"HOME=/root",
+				"MallocStackLogging=1",
+				"MallocStackLoggingNoCompact=1",
+				"MallocStackLoggingDirectory=/tmp/x",
+				"PATH=/usr/bin",
+			},
+			want: []string{"HOME=/root", "PATH=/usr/bin"},
+		},
+		{
+			name: "no malloc vars present is a no-op",
+			in:   []string{"HOME=/root", "PATH=/usr/bin"},
+			want: []string{"HOME=/root", "PATH=/usr/bin"},
+		},
+		{
+			name: "empty env",
+			in:   nil,
+			want: []string{},
+		},
+		{
+			name: "a key merely containing the substring, not as a prefix, survives",
+			in:   []string{"SOME_OTHER_MallocStackLogging_VAR=keep"},
+			want: []string{"SOME_OTHER_MallocStackLogging_VAR=keep"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := stripMallocStackLogging(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("stripMallocStackLogging(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestConfig_Defaults(t *testing.T) {
 	c := Config{}.withDefaults()
 	if c.SocksAddr != defaultSocksAddr || c.Gateway != defaultGateway || c.Mark != defaultMark {

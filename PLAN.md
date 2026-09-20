@@ -336,13 +336,31 @@ ServerProfile {
     TLS       TLSParams     { ServerName, Fingerprint string; ALPN []string; Insecure bool }
     Reality   RealityParams { Enabled bool; PublicKey, ShortID string }
     Transport TransportParams { Type TransportType; ServiceName string;  // grpc
-                                Path string;                              // ws/http
-                                Host []string; HeaderType string }
+                                Path string;                              // ws/http/xhttp
+                                Host []string; HeaderType string;
+                                Mode string; Extra string }             // xhttp-only
     // (опционально) Raw string — исходная ссылка для дебага/отображения в TUI
 }
 ```
 
-`ParseLink` использует `net/url` + `net.SplitHostPort` + `url.QueryUnescape`. Обрабатывает `security=reality|tls|none`, `type=grpc|ws|http|tcp`, параметры `pbk/sid/sni/fp/flow/alpn/host/path/serviceName/headerType/encryption`. Нормализует IPv6 в скобках и percent-encoding. По умолчанию `type=tcp`, `encryption=none`. Неизвестный transport → `ErrUnsupportedTransport` (не молчаливая ошибка). Ключи запроса матчатся case-insensitive где безопасно (`serviceName`/`servicename`).
+`ParseLink` использует `net/url` + `net.SplitHostPort` + `url.QueryUnescape`. Обрабатывает `security=reality|tls|none`, `type=grpc|ws|http|tcp|xhttp` (алиас `type=splithttp`, Xray'ево старое имя transport'а, нормализуется в `xhttp`), параметры `pbk/sid/sni/fp/flow/alpn/host/path/serviceName/headerType/encryption`. Нормализует IPv6 в скобках и percent-encoding. По умолчанию `type=tcp`, `encryption=none`. Неизвестный transport → `ErrUnsupportedTransport` (не молчаливая ошибка). Ключи запроса матчатся case-insensitive где безопасно (`serviceName`/`servicename`).
+
+**`type=xhttp` (Xray XHTTP, экс-SplitHTTP)** — добавлен на замену gRPC/WS, которые РКН научился блокировать; sing-box апстрим этот transport не реализует, поэтому singctl регистрирует собственный тип аутбаунда `vless-xhttp` в `internal/singboxext` (см. «Архитектура» в README.md) и реализует клиент в `internal/xhttp`. Два дополнительных link-параметра, оба распознаются только когда `type=xhttp`:
+  - `mode=auto|packet-up|stream-up|stream-one` — режим аплинка Xray; `auto` резолвится как `packet-up`, либо как `stream-one` под REALITY (как в самом Xray). По умолчанию `auto`.
+  - `extra=<JSON>` — сырой блок `xhttpSettings` Xray (padding placement/method, session/seq placement, uplink data placement, `scMaxEachPostBytes`, `scMinPostsIntervalMs`, `headers`, …), копируется в конфиг как есть; невалидный JSON → `ErrInvalidXHTTPExtra`.
+
+  Пример ключа:
+  ```
+  vless://0b1e2c3a-9f4d-4a1b-8e2f-7c6d5a4b3c2d@edge.example.invalid:443?security=reality&pbk=Xk3f9pQvW2s7rY1zN8mB4hC6dE0aJ5tL9oU2iP7qR3s&sid=a1b2c3d4&sni=www.microsoft.com&fp=chrome&type=xhttp&mode=packet-up&path=%2Fxh&extra=%7B%22scMaxEachPostBytes%22%3A1000000%7D#xhttp-example
+  ```
+
+  Известные ограничения (единое место, остальные документы на него ссылаются, не повторяют):
+  - **HTTP/3 (`alpn=h3`) не поддержан** — ключ с таким ALPN отклоняется при старте с явной ошибкой (`internal/xhttp` возвращает её из `New`).
+  - **`xmux` и `downloadSettings` (раздельные up/down-линки) внутри `extra=` игнорируются** — это server-side/специфичные для их собственного мультиплексора knobs, на то, что клиент кладёт на провод, не влияют.
+  - **XTLS Vision (`flow=`) не эмитится для xhttp-ключей** — сам Xray запрещает flow на не-raw transport'ах.
+  - **App Store SKU (сэндбоксовый `NEPacketTunnelProvider`, см. [docs/appstore-sku.md](docs/appstore-sku.md)) не может использовать xhttp-ключи** — та сборка линкует стоковый `Libbox.xcframework`, который хардкодит родной реестр аутбаундов sing-box, и туда наш `vless-xhttp` зарегистрировать нельзя; генерация конфига для этого SKU падает с явной ошибкой. Developer-ID приложение и CLI-демон не затронуты.
+
+  Верификация: `internal/xhttp` — round-trip тесты против тестового XHTTP-сервера внутри пакета; `internal/core/xhttp_e2e_test.go` (build-теги `integration singbox`, пропускается без `XRAY_BIN`) гоняет весь стек против РЕАЛЬНОГО Xray-core сервера для packet-up/stream-up/stream-one по HTTP/1.1 и HTTP/2, плюс кейс с REALITY.
 
 ### Производство двух конфигов
 

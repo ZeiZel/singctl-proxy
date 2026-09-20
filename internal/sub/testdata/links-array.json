@@ -1,0 +1,6 @@
+[
+  "vless://4ce58870-27d3-489b-87a0-3109db4fb919@193.188.22.147:443?type=grpc&security=reality&pbk=MLWbCmCus3crtCxy2QAuO1zp74nbDE1zMvO1azp-F0k&sid=4d04&sni=cursor.com&fp=chrome#json-array-vless",
+  "trojan://s3cr3t@5.6.7.8:8443?security=tls&sni=example.com&alpn=h2,http%2F1.1#json-array-trojan",
+  "ssr://not-a-supported-scheme-base64",
+  "ss://YWVzLTI1Ni1nY206cGFzc3dvcmQx@example.com:8388#json-array-ss"
+]

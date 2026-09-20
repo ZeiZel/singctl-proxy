@@ -4,7 +4,7 @@ How to publish the reduced App Store SKU of singctl (bead `singctl-proxy-8zz`,
 architecture in [`appstore-sku.md`](appstore-sku.md)). This is a **different
 product** from the Developer-ID build described in
 [`apple-distribution.md`](apple-distribution.md): sandboxed, whole-system VPN
-only, sold once for $9.99 instead of licensed per-token.
+only, sold once for $9.99 with all runtime features included.
 
 ---
 
@@ -53,7 +53,6 @@ Only once all three are done does the rest of this doc apply.
 | Per-app routing | ✅ (system extension, per-app picker) | ❌ not possible in the App Sandbox |
 | Connections / Console (live traffic, Clash API) | ✅ | ❌ |
 | CLI (`singctl`, control socket, `--attach`) | ✅ | ❌ |
-| License server / token activation | ✅ (own or free internal tokens) | ❌ — unlock is the one-time $9.99 App Store purchase |
 
 The App Store build is deliberately a smaller product: a personal VPN client
 with your own VLESS server(s), nothing that looks like a corporate MDM or
@@ -88,7 +87,7 @@ proxy-management tool. Don't let per-app, Console, or CLI scope creep back in
 7. **Privacy nutrition labels** (App Privacy section): declare what the app
    actually does. It only carries the traffic the user routes through their
    own VLESS server — the app itself doesn't collect analytics, doesn't phone
-   a license server, doesn't have accounts. Aim to declare **"Data Not
+   an account server, doesn't have accounts. Aim to declare **"Data Not
    Collected"** if that's still true once the datapath ships; if any
    telemetry/crash reporting is added, declare it honestly instead.
 8. **Privacy policy URL** — required for any app requesting VPN entitlements,

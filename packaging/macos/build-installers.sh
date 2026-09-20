@@ -54,13 +54,18 @@ codesign --verify --deep --strict --verbose=2 "$APP_PATH" \
 # 2) Stage the payload tree (mirrors final install locations).
 STAGE="$OUT_DIR/pkgroot"
 rm -rf "$STAGE"
-mkdir -p "$STAGE/Applications" "$STAGE/usr/local/bin"
+mkdir -p "$STAGE/Applications" "$STAGE/usr/local/bin" "$STAGE/usr/local/share/singctl"
 cp -R "$APP_PATH" "$STAGE/Applications/"
 install -m 0755 "$CLI_BIN" "$STAGE/usr/local/bin/singctl"
+# The shipped system-proxy rules. It has to travel INSIDE the package: it is the
+# file a user imports on a fresh machine and hands to colleagues, and keeping it
+# only in the repository means it is unreachable exactly where it is needed.
+install -m 0644 "$REPO_ROOT/packaging/macos/singctl-proxy-rules.ini" \
+	"$STAGE/usr/local/share/singctl/singctl-proxy-rules.ini"
 
 # 2b) Sign the staged CLI with the App Group entitlement so it can read/write
 #     the shared Group Container used by the Network Extension (see
-#     internal/netext/controller_darwin.go and LICENSATION.md §3).
+#     internal/netext/controller_darwin.go).
 if [ -n "${CODESIGN_IDENTITY:-}" ]; then
 	echo "==> codesign cli"
 	codesign --force --options runtime --timestamp \

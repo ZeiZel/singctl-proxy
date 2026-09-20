@@ -88,6 +88,38 @@ final class TunnelBackend: Backend {
         ClashConnections(downloadTotal: 0, uploadTotal: 0, connections: [])
     }
 
+    // TODO(datapath): the F6 CONNECTIONS/CONNECTION-CLOSE control verbs are
+    // a root-daemon + Clash API concept (state diagnosis, live table,
+    // aggregates) that has no equivalent here yet — Libbox is driven
+    // directly by this container app with no Clash API surfaced to it.
+    // Report "unsupported" rather than faking a state/payload, same as
+    // proxyGroup()/sysProxy* below — ConnectionsScreen itself is Dev-ID only
+    // (excluded from this target, see project.yml) so these aren't reachable
+    // from any screen today, but the contract stays honest if that changes.
+
+    func connectionsDetail() async throws -> ConnectionsPayload {
+        throw TunnelBackendError.unsupported
+    }
+
+    func closeConnection(_ id: String) async throws {
+        throw TunnelBackendError.unsupported
+    }
+
+    // MARK: - Proxy failover group
+    //
+    // TODO(datapath): this SKU has no daemon and no failover-group concept
+    // yet — Libbox is driven directly by this container app with no urltest
+    // group exposed to it. Report "unsupported" rather than faking a group
+    // or silently accepting a pin that can never take effect.
+
+    func proxyGroup() async throws -> ProxyGroup {
+        throw TunnelBackendError.unsupported
+    }
+
+    func proxySelect(_ tag: String) async throws {
+        throw TunnelBackendError.unsupported
+    }
+
     // MARK: - Keys (VLESS links)
 
     func keysGet() async throws -> [String] {
@@ -98,6 +130,14 @@ final class TunnelBackend: Backend {
         var config = TunnelConfigStore.load()
         config.keys.append(link.trimmingCharacters(in: .whitespacesAndNewlines))
         TunnelConfigStore.save(config)
+    }
+
+    // TODO(datapath): WireGuard, like subscriptions above, has no datapath
+    // here yet (no gomobile Libbox WireGuard support wired into the appex).
+    // Report "unsupported" rather than silently accepting a config this
+    // build can never actually connect with.
+    func keysAddConfig(_ config: String) async throws {
+        throw TunnelBackendError.unsupported
     }
 
     func keysRemove(_ index: Int) async throws {
@@ -127,6 +167,29 @@ final class TunnelBackend: Backend {
         return "\(base)#\(escaped)"
     }
 
+    // MARK: - Subscriptions
+    //
+    // TODO(datapath): subscription fetching lives in the daemon's internal/sub
+    // package (a real HTTP fetch + parse), which isn't reachable from this
+    // sandboxed container app or the appex yet. Report "unsupported" rather
+    // than silently no-opping, so the Subscriptions panel can say so instead
+    // of looking broken (an empty subAdd that pretended to succeed would just
+    // be a silently-stale subscription forever).
+
+    func subList() async throws -> [Subscription] { [] }
+
+    func subAdd(_ url: String) async throws {
+        throw TunnelBackendError.unsupported
+    }
+
+    func subRemove(_ url: String) async throws {
+        throw TunnelBackendError.unsupported
+    }
+
+    func subUpdate() async throws -> Int {
+        throw TunnelBackendError.unsupported
+    }
+
     // MARK: - Settings
 
     func settingsGet() async throws -> Settings {
@@ -137,6 +200,64 @@ final class TunnelBackend: Backend {
         var config = TunnelConfigStore.load()
         config.settings = settings
         TunnelConfigStore.save(config)
+    }
+
+    // MARK: - System proxy
+    //
+    // TODO(datapath): the system-wide PAC + `networksetup` proxy is a root-
+    // daemon-only concept (it shells out to `networksetup`, which this
+    // sandboxed container app cannot do). Report "unsupported" rather than
+    // faking success or a fabricated status, same as the failover-group
+    // methods above — SysProxyScreen still renders in this build and simply
+    // shows the error inline.
+
+    func sysProxyStatus() async throws -> SysProxyStatus {
+        throw TunnelBackendError.unsupported
+    }
+
+    func sysProxyConfig() async throws -> String {
+        throw TunnelBackendError.unsupported
+    }
+
+    func sysProxySet(mode: String) async throws {
+        throw TunnelBackendError.unsupported
+    }
+
+    func sysProxyImport(_ text: String) async throws {
+        throw TunnelBackendError.unsupported
+    }
+
+    // MARK: - Firewall
+    //
+    // TODO(datapath): no generated sing-box config / route-rules concept in
+    // this build yet (Libbox is driven directly, with no internal/firewall
+    // rendering wired into it) — report "unsupported" rather than silently
+    // no-opping or faking an empty rule set, same reasoning as above.
+
+    func firewallList() async throws -> [FirewallRule] {
+        throw TunnelBackendError.unsupported
+    }
+
+    func firewallAdd(_ rule: FirewallRule) async throws -> FirewallRule {
+        throw TunnelBackendError.unsupported
+    }
+
+    func firewallRemove(_ id: String) async throws {
+        throw TunnelBackendError.unsupported
+    }
+}
+
+/// Errors specific to the App Store SKU's `Backend` — currently the
+/// subscription methods and WireGuard config import, neither of which have
+/// a datapath in this build yet (see the MARK: - Subscriptions and
+/// keysAddConfig TODOs above).
+enum TunnelBackendError: Error, LocalizedError {
+    case unsupported
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupported: return "This feature isn't available in this build yet."
+        }
     }
 }
 

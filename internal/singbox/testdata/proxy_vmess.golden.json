@@ -1,0 +1,108 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "https",
+        "tag": "proxy-dns",
+        "server": "1.1.1.1",
+        "detour": "proxy"
+      },
+      {
+        "type": "local",
+        "tag": "local"
+      },
+      {
+        "type": "https",
+        "tag": "boot-dns",
+        "server": "1.1.1.1"
+      }
+    ],
+    "rules": [
+      {
+        "domain": [
+          "vmess.example.com"
+        ],
+        "server": "boot-dns"
+      }
+    ],
+    "final": "proxy-dns",
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "127.0.0.1",
+      "listen_port": 1080
+    },
+    {
+      "type": "http",
+      "tag": "http-in",
+      "listen": "127.0.0.1",
+      "listen_port": 2080
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vmess",
+      "tag": "proxy",
+      "server": "vmess.example.com",
+      "server_port": 443,
+      "uuid": "4ce58870-27d3-489b-87a0-3109db4fb919",
+      "security": "auto",
+      "tls": {
+        "enabled": true,
+        "server_name": "vmess.example.com"
+      },
+      "transport": {
+        "type": "ws",
+        "path": "/vm",
+        "headers": {
+          "Host": "cdn.example.com"
+        }
+      },
+      "connect_timeout": "10s"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "action": "sniff",
+        "timeout": "3s"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "domain_regex": [
+          "^([\\w\\-\\.]+\\.)?ru$",
+          "^([\\w\\-\\.]+\\.)?xn--p1ai$",
+          "^([\\w\\-\\.]+\\.)?xn--p1acf$",
+          "^([\\w\\-\\.]+\\.)?xn--80asehdb$",
+          "^([\\w\\-\\.]+\\.)?xn--c1avg$",
+          "^([\\w\\-\\.]+\\.)?xn--80aswg$",
+          "^([\\w\\-\\.]+\\.)?xn--80adxhks$",
+          "^([\\w\\-\\.]+\\.)?moscow$",
+          "^([\\w\\-\\.]+\\.)?xn--d1acj3b$"
+        ],
+        "outbound": "direct"
+      }
+    ],
+    "final": "proxy",
+    "default_domain_resolver": "local"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": false
+    }
+  }
+}

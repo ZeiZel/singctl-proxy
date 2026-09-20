@@ -4,7 +4,6 @@
 #
 # REQUIRES a Mac with Xcode + XcodeGen and an Apple Developer Team ID. This
 # CANNOT run in the Go repo's Linux CI/container. Full Apple setup (App IDs,
-# capabilities, entitlements, signing the CLI) is in ../../../LICENSATION.md.
 #
 # Env:
 #   DEVELOPMENT_TEAM   Apple Developer Team ID (default: S3UCF4USYC; override for
@@ -80,11 +79,11 @@ fi
 
 cat <<NEXT
 
-Build succeeded. Remaining steps (see LICENSATION.md):
+Build succeeded. Remaining steps:
   1. Run "$APP" once; approve the system extension in
      System Settings -> General -> Login Items & Extensions.
   2. Sign the singctl CLI with the App Group entitlement so it can write the
-     shared config.json (see LICENSATION.md §3).
+     shared config.json.
   3. Verify capture: isolate an app in singctl, then 'lsof -nP -p <PID> -i'
      should show 127.0.0.1:1080 (the SOCKS proxy), not a direct AWS/Cloudflare hit.
   4. Notarize (if not done above): re-run with NOTARY_PROFILE=<profile> set.

@@ -24,6 +24,8 @@
 
 import SwiftUI
 import AppKit
+import Combine
+import os.log
 
 @main
 struct SingctlApp: App {
@@ -58,6 +60,15 @@ struct SingctlApp: App {
                 .environment(\.backend, backend)
                 .appTheme()
                 .onAppear {
+                    // NOTE: store.start()/stop() is intentionally NOT tied to
+                    // this window's lifecycle anymore — the poll loop now
+                    // runs for the whole app's lifetime (started from
+                    // AppDelegate.applicationDidFinishLaunching below) since
+                    // it also drives the always-present menu-bar item, which
+                    // must keep reflecting/applying mode changes even while
+                    // this window is closed. LiveStore.start() is idempotent,
+                    // so this is a harmless no-op on the common path where
+                    // the window is already open at launch.
                     store.start()
                     #if !APPSTORE
                     // Headless/scripted activation: `open -a Singctl --args
@@ -69,7 +80,6 @@ struct SingctlApp: App {
                     }
                     #endif
                 }
-                .onDisappear { store.stop() }
         }
         .windowStyle(.hiddenTitleBar)
     }
@@ -90,8 +100,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
+    private var prefsCancellable: AnyCancellable?
+    private let log = OSLog(subsystem: "com.singctl.proxy", category: "tray")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        CrashReporter.shared.start()
+
+        // Observed (not read once): Settings' General group can flip "show
+        // menu-bar item" live, and `$showMenuBarItem` emits its current
+        // value immediately on subscribe, so this one subscription both
+        // creates the item at launch and tears it down/rebuilds it on every
+        // later change — no separate one-time creation needed.
+        prefsCancellable = AppPreferences.shared.$showMenuBarItem
+            .sink { [weak self] show in
+                self?.setMenuBarItemVisible(show)
+            }
+
+        // Start the poll loop here (app launch), NOT on the window's
+        // .onAppear — the menu-bar item is always present even when the
+        // window is closed, and its mode toggle/live status read
+        // `store.status`/`store.daemonRunning`, so the loop must keep running
+        // for the app's lifetime rather than stopping when the window
+        // disappears. LiveStore.start() is idempotent so RootView's own
+        // .onAppear calling it too (common case: window open at launch) is
+        // harmless.
+        store.start()
+    }
+
+    /// Creates or tears down the `NSStatusItem` to match the "show menu-bar
+    /// item" preference. Idempotent in both directions so the initial
+    /// `sink` emission and a later manual toggle behave identically.
+    private func setMenuBarItemVisible(_ visible: Bool) {
+        guard visible else {
+            if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
+            statusItem = nil
+            return
+        }
+        guard statusItem == nil else { return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
             button.image = NSImage(systemSymbolName: "shield", accessibilityDescription: "singctl")
@@ -143,7 +188,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func selectMode(_ sender: NSMenuItem) {
         guard let mode = sender.representedObject as? String else { return }
-        Task { try? await backend.setMode(mode) }
+        if mode == "vpn", !AppPreferences.shared.confirmVPNSwitch() { return }
+        os_log("tray menu: applying mode %{public}@", log: log, type: .info, mode)
+        let optimisticChange = store.optimisticallySetMode(mode)
+        Task { @MainActor in
+            do {
+                try await backend.setMode(mode)
+                store.refreshAfterMutation()
+            } catch {
+                store.restoreOptimisticStatus(optimisticChange)
+                store.refreshAfterMutation()
+                os_log(
+                    "tray menu: setMode(%{public}@) failed: %{public}@",
+                    log: log, type: .error, mode, error.localizedDescription
+                )
+            }
+        }
     }
 
     @objc private func showAbout() {
@@ -184,17 +244,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// for the selected one.
 private struct RootView: View {
     @EnvironmentObject private var store: LiveStore
-    @State private var selection: Section? = .dashboard
+    @StateObject private var navigation = NavigationModel()
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(selection: $selection)
+            SidebarView(selection: $navigation.selection)
         } detail: {
-            DetailView(section: selection ?? .dashboard)
+            DetailView(section: navigation.selection ?? .dashboard)
         }
         .containerBackground(for: .window) {
             Rectangle().fill(.regularMaterial).overlay(Color.black.opacity(0.22))
         }
+        .environmentObject(navigation)
     }
 }
 
@@ -204,6 +265,14 @@ private struct RootView: View {
 private struct SidebarView: View {
     @EnvironmentObject private var store: LiveStore
     @Binding var selection: Section?
+
+    #if !APPSTORE
+    // "Start daemon" state — see startDaemonControls below. Dev-ID only: the
+    // App Store build has no root LaunchDaemon to start (it drives a
+    // sandboxed NEPacketTunnelProvider instead).
+    @State private var isStartingDaemon = false
+    @State private var startDaemonMessage: String?
+    #endif
 
     var body: some View {
         List(selection: $selection) {
@@ -239,13 +308,71 @@ private struct SidebarView: View {
         .environment(\.sidebarRowSize, .medium)
         .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
         .safeAreaInset(edge: .bottom) {
-            Text(store.daemonRunning ? "daemon connected" : "daemon offline")
-                .font(.appSecondary)
-                .foregroundStyle(store.daemonRunning ? Color.sOk : Color.sTextFaint)
-                .padding(Spacing.sm)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text(store.daemonRunning ? "daemon connected" : "daemon offline")
+                    .font(.appSecondary)
+                    .foregroundStyle(store.daemonRunning ? Color.sOk : Color.sTextFaint)
+                #if !APPSTORE
+                if !store.daemonRunning {
+                    startDaemonControls
+                }
+                #endif
+                Text("singctl v\(Bundle.main.appVersion)")
+                    .font(.appCaption)
+                    .foregroundStyle(Color.sTextFaint)
+            }
+            .padding(Spacing.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
+
+    #if !APPSTORE
+    /// Shown only while `!store.daemonRunning`: either a "Start daemon"
+    /// button (plist installed — offer to bootstrap it, with an
+    /// administrator-privileges prompt) or a plain "not installed" message
+    /// pointing at the installer when it isn't (a start attempt with no
+    /// plist cannot work, so don't offer one — see DaemonLauncher.swift).
+    @ViewBuilder
+    private var startDaemonControls: some View {
+        if DaemonLauncher.isInstalled() {
+            AppButton("Start daemon", kind: .ghost, icon: "bolt.fill", isLoading: isStartingDaemon) {
+                startDaemon()
+            }
+            .help("macOS will ask for an administrator password to start the daemon.")
+        } else {
+            Text("Daemon not installed — run the installer (see docs/macos.md).")
+                .font(.appCaption)
+                .foregroundStyle(Color.sDanger)
+        }
+        if let startDaemonMessage {
+            Text(startDaemonMessage)
+                .font(.appCaption)
+                .foregroundStyle(Color.sDanger)
+        }
+    }
+
+    /// Bootstraps the LaunchDaemon under an administrator-privileges prompt,
+    /// then re-runs discovery (`LiveStore.refreshAfterMutation()` calls
+    /// `Backend.status()`, which re-resolves `InstanceDiscovery` from disk on
+    /// every call) so the UI recovers without a relaunch. The user cancelling
+    /// the prompt is a normal outcome, not an error — see
+    /// `DaemonLauncherError.cancelled`'s doc comment.
+    private func startDaemon() {
+        isStartingDaemon = true
+        startDaemonMessage = nil
+        Task {
+            defer { isStartingDaemon = false }
+            do {
+                try await DaemonLauncher.start()
+                store.refreshAfterMutation()
+            } catch DaemonLauncherError.cancelled {
+                // User dismissed the password prompt — say nothing.
+            } catch {
+                startDaemonMessage = error.localizedDescription
+            }
+        }
+    }
+    #endif
 }
 
 /// Routes to the screen for the selected `Section`. The `#if APPSTORE`
@@ -259,14 +386,14 @@ private struct DetailView: View {
             switch section {
             case .dashboard:   DashboardScreen()
             case .proxies:     ProxiesScreen()
+            case .sysProxy:    SysProxyScreen()
             #if !APPSTORE
             case .connections: ConnectionsScreen()
             case .apps:        AppsScreen()
             #endif
             case .keys:        KeysScreen()
             #if !APPSTORE
-            case .console:     ConsoleScreen()
-            case .license:     LicenseScreen()
+            case .logs:        LogsScreen()
             #endif
             case .settings:    SettingsScreen()
             }
@@ -286,6 +413,13 @@ private struct MenuBarContentView: View {
 
     @State private var isApplyingMode = false
     @State private var modeError: String?
+
+    #if !APPSTORE
+    @State private var isStartingDaemon = false
+    @State private var startDaemonMessage: String?
+    #endif
+
+    private let log = OSLog(subsystem: "com.singctl.proxy", category: "tray")
 
     private let modeOptions: [SegmentedOption<String>] = [
         SegmentedOption("off", "Off"),
@@ -308,6 +442,12 @@ private struct MenuBarContentView: View {
                     .font(.appSecondary.weight(.medium))
                     .foregroundStyle(Color.sText)
             }
+
+            #if !APPSTORE
+            if !store.daemonRunning {
+                startDaemonSection
+            }
+            #endif
 
             VStack(alignment: .leading, spacing: Spacing.xs) {
                 Text("MODE").font(.appCaption).foregroundStyle(Color.sTextDim)
@@ -333,15 +473,72 @@ private struct MenuBarContentView: View {
     }
 
     private func applyMode(_ mode: String) {
+        if mode == "vpn", !AppPreferences.shared.confirmVPNSwitch() { return }
         isApplyingMode = true
         modeError = nil
-        Task {
+        os_log("tray popover: applying mode %{public}@", log: log, type: .info, mode)
+        let optimisticChange = store.optimisticallySetMode(mode)
+        Task { @MainActor in
             defer { isApplyingMode = false }
             do {
                 try await backend.setMode(mode)
+                store.refreshAfterMutation()
             } catch {
+                store.restoreOptimisticStatus(optimisticChange)
+                store.refreshAfterMutation()
+                os_log(
+                    "tray popover: setMode(%{public}@) failed: %{public}@",
+                    log: log, type: .error, mode, error.localizedDescription
+                )
                 modeError = error.localizedDescription
             }
         }
     }
+
+    #if !APPSTORE
+    /// Mirrors `SidebarView.startDaemonControls` for the menu-bar popover —
+    /// same "not installed" vs. "offer to start" split, same administrator-
+    /// privileges disclosure. See DaemonLauncher.swift.
+    @ViewBuilder
+    private var startDaemonSection: some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            if DaemonLauncher.isInstalled() {
+                AppButton("Start daemon", kind: .ghost, icon: "bolt.fill", isLoading: isStartingDaemon) {
+                    startDaemon()
+                }
+                .help("macOS will ask for an administrator password to start the daemon.")
+            } else {
+                Text("Daemon not installed — run the installer.")
+                    .font(.appCaption)
+                    .foregroundStyle(Color.sDanger)
+            }
+            if let startDaemonMessage {
+                Text(startDaemonMessage)
+                    .font(.appCaption)
+                    .foregroundStyle(Color.sDanger)
+            }
+        }
+    }
+
+    private func startDaemon() {
+        isStartingDaemon = true
+        startDaemonMessage = nil
+        os_log("tray popover: starting daemon", log: log, type: .info)
+        Task {
+            defer { isStartingDaemon = false }
+            do {
+                try await DaemonLauncher.start()
+                store.refreshAfterMutation()
+            } catch DaemonLauncherError.cancelled {
+                os_log("tray popover: start-daemon prompt cancelled", log: log, type: .info)
+            } catch {
+                os_log(
+                    "tray popover: start-daemon failed: %{public}@",
+                    log: log, type: .error, error.localizedDescription
+                )
+                startDaemonMessage = error.localizedDescription
+            }
+        }
+    }
+    #endif
 }

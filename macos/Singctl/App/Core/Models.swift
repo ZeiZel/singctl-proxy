@@ -83,6 +83,33 @@ struct Traffic: Codable, Equatable {
     static let zero = Traffic(up: 0, down: 0)
 }
 
+/// One server in the failover group, as reported by PROXY-GROUP. `delay` is
+/// the last urltest probe result in milliseconds; 0 means timeout/unknown
+/// (same convention as `LatencyRow.delay` below).
+struct ProxyGroupMember: Codable, Equatable, Identifiable {
+    var tag: String
+    var index: Int
+    var name: String
+    var delay: Int
+
+    var id: String { tag }
+}
+
+/// PROXY-GROUP reply. `available == false` means single-server mode: there is
+/// no failover group configured at all, and callers should hide the picker
+/// entirely rather than render an empty one. `selected` is always the
+/// EFFECTIVE member's tag, even while `auto == true` — auto mode still
+/// resolves to one concrete member, it's just chosen by urltest rather than
+/// pinned via PROXY-SELECT.
+struct ProxyGroup: Codable, Equatable {
+    var available: Bool
+    var auto: Bool
+    var selected: String
+    var members: [ProxyGroupMember]
+
+    static let empty = ProxyGroup(available: false, auto: true, selected: "", members: [])
+}
+
 /// SETTINGS-GET/SET payload. PascalCase wire keys — matches the daemon's
 /// ui.Settings Go struct verbatim on both ends.
 struct Settings: Codable, Equatable {
@@ -93,6 +120,12 @@ struct Settings: Codable, Equatable {
     var urlTestInterval: String
     var urlTestTolerance: Int
     var saveProfile: Bool
+    /// "off" | "proxy" | "vpn" — what the daemon should switch to on its own
+    /// startup (F2). Added alongside this daemon-side key by another agent's
+    /// concurrent work on SETTINGS-GET/SET; `nil` decodes cleanly (via the
+    /// synthesized `decodeIfPresent`) against an older daemon build that
+    /// doesn't yet send the key, and is simply omitted on encode when unset.
+    var autostartMode: String?
 
     private enum CodingKeys: String, CodingKey {
         case socksPort = "SocksPort"
@@ -102,6 +135,7 @@ struct Settings: Codable, Equatable {
         case urlTestInterval = "URLTestInterval"
         case urlTestTolerance = "URLTestTolerance"
         case saveProfile = "SaveProfile"
+        case autostartMode = "AutostartMode"
     }
 }
 
@@ -159,6 +193,62 @@ struct ConsoleLine: Codable, Equatable, Identifiable {
     var app: String
     var stream: String
     var text: String
+}
+
+/// SYSPROXY-STATUS reply: the system proxy's current applied state (mode,
+/// which network service it's applied to, whether the localhost PAC server
+/// is answering, and how many domains the active list holds). Wire keys are
+/// already camelCase, so no `CodingKeys` remapping is needed. Mirrors the
+/// generated-PAC + `networksetup` mechanism the Makefile's `proxy-on`/
+/// `proxy-pac`/`proxy-off` targets used to drive by hand — see
+/// SysProxyScreen.swift.
+struct SysProxyStatus: Codable, Equatable {
+    /// "off" | "exclude" | "include".
+    var mode: String
+    var pacServerUp: Bool
+    var service: String
+    var pacURL: String
+    var domains: Int
+
+    /// The daemon speaks snake_case here (see `sysproxy.Status` in
+    /// internal/sysproxy/manager.go), like every other control payload. It also
+    /// marks `pac_url` omitempty, so the key is ABSENT — not empty — whenever
+    /// the proxy is off, which is the common case on first open. Both facts have
+    /// to be handled explicitly or the whole status fails to decode and the
+    /// screen shows a decoding error instead of "Off".
+    enum CodingKeys: String, CodingKey {
+        case mode
+        case service
+        case pacServerUp = "pac_server_up"
+        case pacURL = "pac_url"
+        case domains = "domain_count"
+    }
+
+    init(mode: String, pacServerUp: Bool, service: String, pacURL: String, domains: Int) {
+        self.mode = mode
+        self.pacServerUp = pacServerUp
+        self.service = service
+        self.pacURL = pacURL
+        self.domains = domains
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try container.decodeIfPresent(String.self, forKey: .mode) ?? "off"
+        service = try container.decodeIfPresent(String.self, forKey: .service) ?? ""
+        pacServerUp = try container.decodeIfPresent(Bool.self, forKey: .pacServerUp) ?? false
+        pacURL = try container.decodeIfPresent(String.self, forKey: .pacURL) ?? ""
+        domains = try container.decodeIfPresent(Int.self, forKey: .domains) ?? 0
+    }
+
+    static let empty = SysProxyStatus(mode: "off", pacServerUp: false, service: "", pacURL: "", domains: 0)
+}
+
+/// SYSPROXY-SET request body: `{"mode": "off"|"exclude"|"include"}`. The
+/// screen only ever drives `mode` explicitly (see SysProxyScreen's mode
+/// picker) — everything else in SYSPROXY-STATUS is read-only derived state.
+struct SysProxySetRequest: Codable, Equatable {
+    var mode: String
 }
 
 // MARK: - Local (non-daemon) models
@@ -314,4 +404,288 @@ struct Latency: Codable, Equatable {
     var rows: [LatencyRow]
 
     static let empty = Latency(selected: "", rows: [])
+}
+
+// MARK: - CONNECTIONS control command (F6 in docs/v2-spec.md)
+//
+// A distinct, richer command from the Clash API's own GET /connections
+// (ClashConnections/ConnRow above, still used as-is for Dashboard's traffic/
+// connection-count stats): the daemon's CONNECTIONS control verb wraps that
+// same live table with per-app/per-destination aggregates AND an explicit
+// diagnosis for why the table might be empty (no mode running / Clash API
+// disabled / API unreachable / genuinely idle) — the single source of truth
+// ConnectionsScreen's empty state and the Dashboard's traffic empty state
+// both read, so the two can never disagree about which is true. Mirrors
+// clashapi.Payload/Row/AppTotal/DestTotal (internal/clashapi/connections.go)
+// field-for-field.
+
+/// Why the CONNECTIONS table might have nothing to show. Mirrors
+/// clashapi.State exactly.
+enum ConnectionsState: String, Codable, Equatable {
+    /// No proxy/VPN mode is running at all.
+    case noMode = "no_mode"
+    /// A mode is up but the Clash API is switched off in Settings.
+    case apiDisabled = "api_disabled"
+    /// A mode is up and the API is enabled, but the request to it failed —
+    /// `detail` names the address tried and the error.
+    case apiUnreachable = "api_unreachable"
+    /// The API answered; there is simply no traffic right now.
+    case idle
+    /// The API answered with at least one live connection.
+    case active
+}
+
+/// One live connection row from the CONNECTIONS command. Mirrors
+/// clashapi.Row exactly.
+struct ConnectionRow: Codable, Equatable, Identifiable {
+    var id: String
+    var app: String
+    var process: String
+    var host: String
+    var port: String
+    var network: String
+    var rule: String
+    var chain: [String]
+    var upload: Int64
+    var download: Int64
+    /// Raw RFC3339 start time (Go's `time.Time` wire format) — parse with
+    /// `WireTime.parse` (declared below), same as Subscription's timestamps.
+    var start: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id, app, process, host, port, network, rule, chain, upload, download, start
+    }
+
+    /// Most of the Go fields are `omitempty`; decode permissively so a
+    /// partial row (e.g. no process metadata at all) still decodes instead
+    /// of failing the whole payload.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+        app = try c.decodeIfPresent(String.self, forKey: .app) ?? ""
+        process = try c.decodeIfPresent(String.self, forKey: .process) ?? ""
+        host = try c.decodeIfPresent(String.self, forKey: .host) ?? ""
+        port = try c.decodeIfPresent(String.self, forKey: .port) ?? ""
+        network = try c.decodeIfPresent(String.self, forKey: .network) ?? ""
+        rule = try c.decodeIfPresent(String.self, forKey: .rule) ?? ""
+        chain = try c.decodeIfPresent([String].self, forKey: .chain) ?? []
+        upload = try c.decodeIfPresent(Int64.self, forKey: .upload) ?? 0
+        download = try c.decodeIfPresent(Int64.self, forKey: .download) ?? 0
+        start = try c.decodeIfPresent(String.self, forKey: .start) ?? ""
+    }
+
+    /// Parsed connection start time, or `nil` when unset/Go's zero value.
+    var startDate: Date? { WireTime.parse(start) }
+
+    /// Friendly destination label: host with port appended when known —
+    /// mirrors ClashMetadata.dest's "host:port" shape.
+    var destination: String {
+        port.isEmpty ? host : "\(host):\(port)"
+    }
+}
+
+/// One application's aggregate across every connection currently attributed
+/// to it. Mirrors clashapi.AppTotal.
+struct ConnectionAppTotal: Codable, Equatable, Identifiable {
+    var app: String
+    var upload: Int64
+    var download: Int64
+    var count: Int
+
+    var id: String { app }
+}
+
+/// One destination host's aggregate across every connection currently
+/// dialing it. Mirrors clashapi.DestTotal.
+struct ConnectionDestTotal: Codable, Equatable, Identifiable {
+    var host: String
+    var upload: Int64
+    var download: Int64
+    var count: Int
+
+    var id: String { host }
+}
+
+/// CONNECTIONS reply: the live table, its per-app/per-destination
+/// aggregates, and the explicit `state` diagnosis (F6 item 3). `rows`/
+/// `apps`/`dests` may be `null` as well as empty — Swift's synthesized
+/// decoding maps both to `nil`, so callers must handle `nil` the same as
+/// an empty array (never assume one implies the other means something
+/// different). Mirrors clashapi.Payload.
+struct ConnectionsPayload: Codable, Equatable {
+    var state: ConnectionsState
+    var rows: [ConnectionRow]?
+    var apps: [ConnectionAppTotal]?
+    var dests: [ConnectionDestTotal]?
+    var detail: String?
+
+    static let empty = ConnectionsPayload(state: .noMode, rows: nil, apps: nil, dests: nil, detail: nil)
+}
+
+// MARK: - Firewall (F6 item 5 in docs/v2-spec.md)
+
+/// One firewall rule: block or allow traffic matching exactly one of
+/// domain/cidr/process. Mirrors internal/firewall.Rule exactly. The client
+/// pre-validates "exactly one match field set, well-formed CIDR" before
+/// sending (see ConnectionsScreen) purely for fast feedback — the daemon
+/// (FirewallAdd -> Rule.Validate) remains the authority and re-checks on
+/// FIREWALL-ADD.
+struct FirewallRule: Codable, Equatable, Identifiable {
+    var id: String
+    /// "block" | "allow".
+    var action: String
+    var domain: String?
+    var cidr: String?
+    var process: String?
+}
+
+extension FirewallRule {
+    /// The match half of firewall.Rule.MatchDescription (without the action
+    /// prefix, which callers usually already show via a separate badge).
+    var matchDescription: String {
+        if let domain, !domain.isEmpty { return "domain \(domain)" }
+        if let cidr, !cidr.isEmpty { return "cidr \(cidr)" }
+        if let process, !process.isEmpty { return "process \(process)" }
+        return "—"
+    }
+}
+
+// MARK: - Subscriptions (internal/sub/record.go)
+
+/// Parses Go's RFC3339 `time.Time` wire format. `ControlClient.decode`'s
+/// `JSONDecoder()` has no date strategy configured (see DaemonStatus above,
+/// which decodes its own string fields manually for the same reason), so
+/// Subscription/SubscriptionMeta decode their time fields as raw strings and
+/// parse them through here. An empty string or Go's zero-value sentinel
+/// ("0001-01-01T00:00:00Z", which `omitempty` does NOT strip for struct-typed
+/// fields like `time.Time` — a well-known encoding/json quirk) both mean "not
+/// reported", so both parse to `nil`.
+enum WireTime {
+    private static let formatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let formatterNoFraction = ISO8601DateFormatter()
+
+    static func parse(_ raw: String) -> Date? {
+        guard !raw.isEmpty, !raw.hasPrefix("0001-01-01T00:00:00Z") else { return nil }
+        return formatter.date(from: raw) ?? formatterNoFraction.date(from: raw)
+    }
+}
+
+/// A subscription's optional panel-reported profile info. Mirrors
+/// internal/sub/sub.go's `Meta` exactly — every field may be absent/zero when
+/// the panel's `subscription-userinfo` header didn't report it.
+struct SubscriptionMeta: Codable, Equatable {
+    var title: String
+    /// `time.Duration` wire value, in nanoseconds (Go's default int64 JSON
+    /// encoding for a Duration — no custom Marshaler in internal/sub).
+    var updateIntervalNanos: Int64
+    var upload: Int64
+    var download: Int64
+    /// Bytes in the plan; 0 = unknown/unlimited (mirrors Meta.Total's doc).
+    var total: Int64
+    var expireRaw: String
+
+    private enum CodingKeys: String, CodingKey {
+        case title
+        case updateIntervalNanos = "update_interval"
+        case upload
+        case download
+        case total
+        case expireRaw = "expire"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        updateIntervalNanos = try c.decodeIfPresent(Int64.self, forKey: .updateIntervalNanos) ?? 0
+        upload = try c.decodeIfPresent(Int64.self, forKey: .upload) ?? 0
+        download = try c.decodeIfPresent(Int64.self, forKey: .download) ?? 0
+        total = try c.decodeIfPresent(Int64.self, forKey: .total) ?? 0
+        expireRaw = try c.decodeIfPresent(String.self, forKey: .expireRaw) ?? ""
+    }
+
+    init(
+        title: String, updateIntervalNanos: Int64, upload: Int64, download: Int64,
+        total: Int64, expireRaw: String
+    ) {
+        self.title = title
+        self.updateIntervalNanos = updateIntervalNanos
+        self.upload = upload
+        self.download = download
+        self.total = total
+        self.expireRaw = expireRaw
+    }
+
+    static let empty = SubscriptionMeta(
+        title: "", updateIntervalNanos: 0, upload: 0, download: 0, total: 0, expireRaw: ""
+    )
+
+    /// Mirrors Meta.HasUsage(): whether the panel sent a usage/quota line
+    /// worth showing.
+    var hasUsage: Bool { total > 0 || upload > 0 || download > 0 }
+
+    /// Mirrors Meta.Used(): total traffic consumed.
+    var used: Int64 { upload + download }
+
+    /// Parsed plan expiry, or `nil` when the panel reported none.
+    var expireDate: Date? { WireTime.parse(expireRaw) }
+}
+
+/// SUB-LIST row. Mirrors internal/sub/record.go's `Subscription` exactly
+/// (snake_case wire keys) — one configured subscription plus the outcome of
+/// its last fetch. A subscription OWNS the servers in `links`: they refresh
+/// automatically and cannot be renamed/removed individually (KEYS-REMOVE/
+/// KEYS-RENAME refuse them — the daemon would just undo it on the next
+/// refresh), only the whole subscription can be dropped via SUB-REMOVE.
+struct Subscription: Codable, Equatable, Identifiable {
+    var url: String
+    var title: String
+    var addedAtRaw: String
+    var lastUpdateRaw: String
+    var lastError: String
+    /// Share links this subscription currently owns (cached across daemon
+    /// restarts — see the Go doc comment on Subscription.Links).
+    var links: [String]
+    var meta: SubscriptionMeta
+
+    var id: String { url }
+
+    private enum CodingKeys: String, CodingKey {
+        case url
+        case title
+        case addedAtRaw = "added_at"
+        case lastUpdateRaw = "last_update"
+        case lastError = "last_error"
+        case links
+        case meta
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        url = try c.decode(String.self, forKey: .url)
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        addedAtRaw = try c.decodeIfPresent(String.self, forKey: .addedAtRaw) ?? ""
+        lastUpdateRaw = try c.decodeIfPresent(String.self, forKey: .lastUpdateRaw) ?? ""
+        lastError = try c.decodeIfPresent(String.self, forKey: .lastError) ?? ""
+        links = try c.decodeIfPresent([String].self, forKey: .links) ?? []
+        meta = try c.decodeIfPresent(SubscriptionMeta.self, forKey: .meta) ?? .empty
+    }
+
+    /// Mirrors Subscription.Label(): the panel's title when it sent one, else
+    /// the URL's host.
+    var label: String {
+        if !title.isEmpty { return title }
+        if let range = url.range(of: "://") {
+            let rest = url[range.upperBound...]
+            return String(rest.prefix { $0 != "/" })
+        }
+        return url
+    }
+
+    /// Parsed "when was this subscription last refreshed", or `nil` when it
+    /// has never been fetched.
+    var lastUpdateDate: Date? { WireTime.parse(lastUpdateRaw) }
 }

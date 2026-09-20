@@ -17,7 +17,7 @@ func Request(socketPath, cmd, arg string) (string, error) {
 		return "", err
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(connDeadline))
+	_ = conn.SetDeadline(time.Now().Add(DeadlineFor(cmd)))
 
 	line := cmd
 	if arg != "" {

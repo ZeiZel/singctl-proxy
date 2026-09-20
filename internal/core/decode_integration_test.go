@@ -15,15 +15,16 @@ import (
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json"
 
+	"singctl/internal/protocol"
 	"singctl/internal/singbox"
-	"singctl/internal/vless"
+	"singctl/internal/singboxext"
 )
 
 func decodeOptions(t *testing.T, data []byte) {
 	t.Helper()
 	ctx := box.Context(context.Background(),
 		include.InboundRegistry(),
-		include.OutboundRegistry(),
+		singboxext.OutboundRegistry(),
 		include.EndpointRegistry(),
 		include.DNSTransportRegistry(),
 		include.ServiceRegistry(),
@@ -53,7 +54,7 @@ func startInstance(t *testing.T, data []byte) {
 	t.Helper()
 	ctx := box.Context(context.Background(),
 		include.InboundRegistry(),
-		include.OutboundRegistry(),
+		singboxext.OutboundRegistry(),
 		include.EndpointRegistry(),
 		include.DNSTransportRegistry(),
 		include.ServiceRegistry(),
@@ -74,23 +75,24 @@ func startInstance(t *testing.T, data []byte) {
 }
 
 func TestDecodeOptions_GeneratedConfigsAreValidSingbox(t *testing.T) {
-	p, err := vless.ParseLink("vless://4ce58870-27d3-489b-87a0-3109db4fb919@193.188.22.147:443?type=grpc&security=reality&pbk=MLWbCmCus3crtCxy2QAuO1zp74nbDE1zMvO1azp-F0k&sid=4d04&sni=cursor.com&fp=chrome#t")
+	p, err := integrationReg.Parse("vless://4ce58870-27d3-489b-87a0-3109db4fb919@193.188.22.147:443?type=grpc&security=reality&pbk=MLWbCmCus3crtCxy2QAuO1zp74nbDE1zMvO1azp-F0k&sid=4d04&sni=cursor.com&fp=chrome#t")
 	if err != nil {
 		t.Fatal(err)
 	}
+	profiles := []protocol.Profile{p}
 
-	proxyVPN, err := singbox.GenerateProxyConfig(p, "en0")
+	proxyVPN, err := singbox.GenerateProxyConfigOpts(integrationReg, profiles, singbox.ProxyOpts{PhysIface: "en0"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	pj, _ := singbox.MarshalIndented(proxyVPN)
 	decodeOptions(t, pj)
 
-	proxyOnly, _ := singbox.GenerateProxyConfig(p, "")
+	proxyOnly, _ := singbox.GenerateProxyConfigOpts(integrationReg, profiles, singbox.ProxyOpts{})
 	pj2, _ := singbox.MarshalIndented(proxyOnly)
 	decodeOptions(t, pj2)
 
-	fwd, err := singbox.GenerateForwarderConfig(p)
+	fwd, err := singbox.GenerateForwarderConfigSet(integrationReg, profiles, singbox.DefaultPorts())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,29 +108,80 @@ func TestDecodeOptions_BootstrapDNS(t *testing.T) {
 	const a = "vless://4ce58870-27d3-489b-87a0-3109db4fb919@usa.cloudpath.live:443?type=tcp&security=reality&pbk=MLWbCmCus3crtCxy2QAuO1zp74nbDE1zMvO1azp-F0k&sid=0cf78906&sni=microsoft.com&fp=chrome#usa"
 	const b = "vless://4ce58870-27d3-489b-87a0-3109db4fb919@auto.cloudpath.live:443?type=tcp&security=reality&pbk=MLWbCmCus3crtCxy2QAuO1zp74nbDE1zMvO1azp-F0k&sid=085ba77f&sni=microsoft.com&fp=chrome#auto"
 
-	// High, unused ports so Start()'s inbound binds don't clash with a running
-	// proxy on 1080/2080.
-	hiPorts := singbox.Ports{Socks: 21080, HTTP: 21081}
+	// Ports are allocated rather than hardcoded: a fixed "surely unused" port
+	// is a lie on a developer machine — 21080 turned out to be the PAC server's,
+	// and this test failed for an entire session for that reason alone.
+	hiPorts := singbox.Ports{Socks: freePort(t), HTTP: freePort(t)}
 
-	multi, err := vless.ParseLinks([]string{a, b})
+	multi, err := integrationReg.ParseAll([]string{a, b})
 	if err != nil {
 		t.Fatal(err)
 	}
-	mc, err := singbox.GenerateProxyConfigOpts(multi, singbox.ProxyOpts{Ports: hiPorts})
+	mc, err := singbox.GenerateProxyConfigOpts(integrationReg, multi, singbox.ProxyOpts{Ports: hiPorts})
 	if err != nil {
 		t.Fatal(err)
 	}
 	mj, _ := singbox.MarshalIndented(mc)
 	startInstance(t, mj) // must actually START (boot-dns detour bug shows here)
 
-	single, err := vless.ParseLinks([]string{a})
+	single, err := integrationReg.ParseAll([]string{a})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sc, err := singbox.GenerateProxyConfigOpts(single, singbox.ProxyOpts{Ports: hiPorts})
+	sc, err := singbox.GenerateProxyConfigOpts(integrationReg, single, singbox.ProxyOpts{Ports: hiPorts})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sj, _ := singbox.MarshalIndented(sc)
 	startInstance(t, sj)
+}
+
+// TestDecodeOptions_XHTTP validates that a `type=xhttp` key produces a config
+// the embedded core actually accepts and can START. This is the check that
+// catches a missing/renamed registration of singctl's own "vless-xhttp"
+// outbound type: without internal/singboxext in the registry the config fails
+// to decode with "outbound type not found".
+func TestDecodeOptions_XHTTP(t *testing.T) {
+	const reality = "vless://4ce58870-27d3-489b-87a0-3109db4fb919@193.188.22.147:443?type=xhttp&security=reality&" +
+		"pbk=MLWbCmCus3crtCxy2QAuO1zp74nbDE1zMvO1azp-F0k&sid=4d04&sni=cursor.com&fp=chrome&path=%2Fxh&mode=auto#xh-reality"
+	const withExtra = "vless://4ce58870-27d3-489b-87a0-3109db4fb919@example.cloudpath.live:443?type=xhttp&security=tls&" +
+		"sni=example.cloudpath.live&fp=chrome&host=cdn.example.com&path=%2Fxh&mode=packet-up&" +
+		"extra=%7B%22scMaxEachPostBytes%22%3A%22100000-200000%22%2C%22xPaddingBytes%22%3A%22100-1000%22%7D#xh-tls"
+
+	hiPorts := singbox.Ports{Socks: freePort(t), HTTP: freePort(t)}
+
+	for _, raw := range []string{reality, withExtra} {
+		set, err := integrationReg.ParseAll([]string{raw})
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		cfg, err := singbox.GenerateProxyConfigOpts(integrationReg, set, singbox.ProxyOpts{Ports: hiPorts})
+		if err != nil {
+			t.Fatalf("generate: %v", err)
+		}
+		data, _ := singbox.MarshalIndented(cfg)
+		startInstance(t, data)
+
+		fwd, err := singbox.GenerateForwarderConfigSet(integrationReg, set, hiPorts)
+		if err != nil {
+			t.Fatalf("generate forwarder: %v", err)
+		}
+		fj, _ := singbox.MarshalIndented(fwd)
+		decodeOptions(t, fj)
+	}
+
+	// A mixed set must still build: the urltest group holds one stock vless
+	// outbound and one of ours.
+	mixed, err := integrationReg.ParseAll([]string{reality,
+		"vless://4ce58870-27d3-489b-87a0-3109db4fb919@usa.cloudpath.live:443?type=tcp&security=reality&" +
+			"pbk=MLWbCmCus3crtCxy2QAuO1zp74nbDE1zMvO1azp-F0k&sid=0cf78906&sni=microsoft.com&fp=chrome#tcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mc, err := singbox.GenerateProxyConfigOpts(integrationReg, mixed, singbox.ProxyOpts{Ports: hiPorts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mj, _ := singbox.MarshalIndented(mc)
+	startInstance(t, mj)
 }

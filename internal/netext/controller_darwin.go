@@ -123,7 +123,7 @@ func (c *darwinController) Targets() []string {
 // flushLocked persists the current set to config.json (caller holds c.mu). All
 // failures are wrapped with the offending path so the TUI can show why per-app
 // capture didn't take (e.g. the CLI isn't signed with the App Group entitlement,
-// so the shared container isn't writable — see LICENSATION.md).
+// so the shared container isn't writable.
 func (c *darwinController) flushLocked() error {
 	if c.cfgPath == "" {
 		return errors.New("netext: could not determine App Group config.json path (HOME not set?)")
@@ -137,7 +137,7 @@ func (c *darwinController) flushLocked() error {
 		return fmt.Errorf("netext: create config directory %s: %w", dir, err)
 	}
 	if err := os.WriteFile(c.cfgPath, data, 0o644); err != nil {
-		return fmt.Errorf("netext: write %s: %w (is the CLI signed with the App Group entitlement? see LICENSATION.md)", c.cfgPath, err)
+		return fmt.Errorf("netext: write %s: %w (is the CLI signed with the App Group entitlement?)", c.cfgPath, err)
 	}
 	return nil
 }

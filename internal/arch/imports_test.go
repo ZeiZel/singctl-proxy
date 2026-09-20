@@ -56,24 +56,34 @@ func goFiles(t *testing.T, root string) []string {
 }
 
 // execAllowed reports whether a file is an approved place to import os/exec.
-// Only real OS adapters may shell out; pure logic packages must not.
+// Only real OS adapters may shell out; pure logic packages must not. Test files
+// are exempt (as in TestNoCiscoBinaryReferences): the rule is about production
+// code, and an integration test may legitimately spawn a reference server —
+// internal/core/xhttp_e2e_test.go runs a real Xray to validate XHTTP on the
+// wire.
 func execAllowed(rel string) bool {
 	base := filepath.Base(rel)
-	return strings.HasSuffix(base, "_real.go") ||
+	return strings.HasSuffix(base, "_test.go") ||
+		strings.HasSuffix(base, "_real.go") ||
 		strings.HasSuffix(base, "_darwin.go") ||
 		strings.HasSuffix(base, "_other.go") || // portable (!darwin) OS adapters
 		strings.Contains(rel, filepath.FromSlash("internal/platform/"))
 }
 
 // singboxAllowed reports whether a file is an approved place to import sing-box.
-// The embedded core is isolated behind internal/core.
+// The embedded core is isolated behind internal/core; internal/singboxext is the
+// one other exception — it registers singctl's own protocol types (the XHTTP
+// outbound) into sing-box's registries, which is impossible without importing
+// them. Both are behind the `singbox` build tag, so the hermetic unit build
+// still links without the library.
 func singboxAllowed(rel string) bool {
-	return strings.Contains(rel, filepath.FromSlash("internal/core/"))
+	return strings.Contains(rel, filepath.FromSlash("internal/core/")) ||
+		strings.Contains(rel, filepath.FromSlash("internal/singboxext/"))
 }
 
 // TestNoForbiddenImports enforces the architecture boundaries from PLAN.md §8:
-// sing-box is importable only inside internal/core, and os/exec only inside the
-// real OS adapters. This makes "fully mockable" a structural guarantee.
+// sing-box is importable only inside internal/core and internal/singboxext, and
+// os/exec only inside the real OS adapters. This makes "fully mockable" a structural guarantee.
 func TestNoForbiddenImports(t *testing.T) {
 	root := moduleRoot(t)
 	fset := token.NewFileSet()
@@ -96,7 +106,7 @@ func TestNoForbiddenImports(t *testing.T) {
 				}
 			case strings.HasPrefix(path, "github.com/sagernet/sing-box"):
 				if !singboxAllowed(rel) {
-					t.Errorf("%s imports sing-box (%s) outside internal/core", rel, path)
+					t.Errorf("%s imports sing-box (%s) outside internal/core and internal/singboxext", rel, path)
 				}
 			}
 		}

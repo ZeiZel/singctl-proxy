@@ -112,6 +112,14 @@ final class DaemonBackend: Backend {
         try await clashClient().connections()
     }
 
+    func connectionsDetail() async throws -> ConnectionsPayload {
+        try await control.connectionsDetail()
+    }
+
+    func closeConnection(_ id: String) async throws {
+        try await control.closeConnection(id)
+    }
+
     /// Builds a fresh `ClashClient` from the live daemon endpoint, throwing
     /// `.noDaemon` when there is none or the Clash API is disabled — mirrors
     /// the `guard endpoint.clashEnabled else { return }` that used to gate
@@ -121,6 +129,16 @@ final class DaemonBackend: Backend {
             throw ControlClientError.noDaemon
         }
         return ClashClient(externalController: endpoint.clashAPIAddr, secret: endpoint.clashSecret)
+    }
+
+    // MARK: - Proxy failover group
+
+    func proxyGroup() async throws -> ProxyGroup {
+        try await control.proxyGroup()
+    }
+
+    func proxySelect(_ tag: String) async throws {
+        try await control.proxySelect(tag)
     }
 
     // MARK: - Keys (VLESS links)
@@ -133,12 +151,34 @@ final class DaemonBackend: Backend {
         try await control.keysAdd(link)
     }
 
+    func keysAddConfig(_ config: String) async throws {
+        try await control.keysAddConfig(config)
+    }
+
     func keysRemove(_ index: Int) async throws {
         try await control.keysRemove(index)
     }
 
     func keysRename(_ index: Int, _ name: String) async throws {
         try await control.keysRename(index, name)
+    }
+
+    // MARK: - Subscriptions
+
+    func subList() async throws -> [Subscription] {
+        try await control.subList()
+    }
+
+    func subAdd(_ url: String) async throws {
+        try await control.subAdd(url)
+    }
+
+    func subRemove(_ url: String) async throws {
+        try await control.subRemove(url)
+    }
+
+    func subUpdate() async throws -> Int {
+        try await control.subUpdate()
     }
 
     // MARK: - Settings
@@ -149,6 +189,38 @@ final class DaemonBackend: Backend {
 
     func settingsSet(_ settings: Settings) async throws {
         try await control.settingsSet(settings)
+    }
+
+    // MARK: - System proxy
+
+    func sysProxyStatus() async throws -> SysProxyStatus {
+        try await control.sysProxyStatus()
+    }
+
+    func sysProxyConfig() async throws -> String {
+        try await control.sysProxyConfig()
+    }
+
+    func sysProxySet(mode: String) async throws {
+        try await control.sysProxySet(mode: mode)
+    }
+
+    func sysProxyImport(_ text: String) async throws {
+        try await control.sysProxyImport(text)
+    }
+
+    // MARK: - Firewall
+
+    func firewallList() async throws -> [FirewallRule] {
+        try await control.firewallList()
+    }
+
+    func firewallAdd(_ rule: FirewallRule) async throws -> FirewallRule {
+        try await control.firewallAdd(rule)
+    }
+
+    func firewallRemove(_ id: String) async throws {
+        try await control.firewallRemove(id)
     }
 }
 #endif

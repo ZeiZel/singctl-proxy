@@ -14,6 +14,8 @@ import (
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json"
+
+	"singctl/internal/singboxext"
 )
 
 type boxCore struct {
@@ -22,11 +24,14 @@ type boxCore struct {
 
 // newBoxCore parses a sing-box JSON config and constructs a (not-yet-started)
 // instance. The 6-arg box.Context registers all protocol registries exactly
-// once; box.Options embeds option.Options.
+// once; box.Options embeds option.Options. The outbound registry comes from
+// internal/singboxext, which adds singctl's own "vless-xhttp" type on top of
+// sing-box's stock outbounds — without it, configs for `type=xhttp` keys fail
+// to decode.
 func newBoxCore(ctx context.Context, label string, configJSON []byte) (Core, error) {
 	bctx := box.Context(ctx,
 		include.InboundRegistry(),
-		include.OutboundRegistry(),
+		singboxext.OutboundRegistry(),
 		include.EndpointRegistry(),
 		include.DNSTransportRegistry(),
 		include.ServiceRegistry(),

@@ -1,0 +1,6 @@
+{
+  "links": [
+    "vmess://eyJhZGQiOiJleGFtcGxlLmNvbSIsImFpZCI6MCwiaWQiOiI0Y2U1ODg3MC0yN2QzLTQ4OWItODdhMC0zMTA5ZGI0ZmI5MTkiLCJuZXQiOiJ0Y3AiLCJwb3J0Ijo0NDMsInBzIjoianNvbi13cmFwcGVyLXZtZXNzIiwic2N5IjoiYXV0byIsInYiOiIyIn0=",
+    "hysteria2://hy2pass@192.0.2.99:44333?sni=hy2.example.com&obfs=salamander&obfs-password=obfspass#json-wrapper-hy2"
+  ]
+}

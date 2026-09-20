@@ -32,7 +32,6 @@ cat > "$PLIST" <<PLIST
     <array>
         <string>${BIN}</string>
         <string>--headless</string>
-        <string>--vpn</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
@@ -56,9 +55,34 @@ cat > "$PLIST" <<PLIST
 PLIST
 chown root:wheel "$PLIST"
 
-# (Re)load it. KeepAlive=true means it self-restarts once a key/license exists.
+# (Re)load it. KeepAlive=true keeps the daemon available after installation.
 launchctl bootout system "$PLIST" 2>/dev/null || true
 launchctl bootstrap system "$PLIST" 2>/dev/null || launchctl load -w "$PLIST" 2>/dev/null || true
+
+# Verify the daemon actually came up instead of assuming bootstrap succeeded.
+# Poll briefly (bounded, a few seconds) for either launchd reporting the job
+# loaded or the control socket appearing under the real user's
+# ~/.config/singctl. This is diagnostic only: the payload is installed
+# correctly either way, and the GUI has its own "start the daemon" path, so
+# failing the whole .pkg install here would be worse than just reporting it.
+SOCK_PATH="${REAL_HOME}/.config/singctl/control.sock"
+DAEMON_UP=0
+for _ in 1 2 3 4 5 6; do
+	if launchctl print "system/${LABEL}" >/dev/null 2>&1; then
+		DAEMON_UP=1
+		break
+	fi
+	if [ -S "$SOCK_PATH" ]; then
+		DAEMON_UP=1
+		break
+	fi
+	sleep 1
+done
+if [ "$DAEMON_UP" = "1" ]; then
+	echo "==> ${LABEL} is up"
+else
+	echo "==> WARNING: ${LABEL} did not come up within the poll window (checked launchctl print system/${LABEL} and ${SOCK_PATH}); the app installed correctly — start the daemon from the GUI or run 'sudo launchctl kickstart -k system/${LABEL}'"
+fi
 
 # Launch the GUI once in the console user's session so macOS surfaces the
 # "Allow Network Extension" prompt right away instead of the user having to

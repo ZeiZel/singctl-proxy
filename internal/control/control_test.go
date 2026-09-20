@@ -1,6 +1,7 @@
 package control
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -127,6 +128,78 @@ func TestRegistry_HandlerArgsAndErrors(t *testing.T) {
 }
 
 var errSample = fmt.Errorf("sample")
+
+// wireguardConfigFixture is a realistic multi-line WireGuard INI config —
+// the case that motivates KEYS-ADD-CONFIG's base64 framing below.
+const wireguardConfigFixture = `[Interface]
+PrivateKey = uIlt6l0MZjOFCUyGSFHK1uZ8gr0od7CIvS9nXqOSlmg=
+Address = 10.66.66.2/32
+
+[Peer]
+PublicKey = xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=
+Endpoint = vpn.example.com:51820
+AllowedIPs = 0.0.0.0/0, ::/0
+`
+
+// TestServer_OneLineFraming pins the constraint documented on HandlerFunc:
+// the wire protocol is one line per request, so a plain multi-line argument
+// arrives at the handler truncated at the first newline, with no error. This
+// is not a bug to fix — it is the reason KEYS-ADD-CONFIG (base64) exists —
+// but the truncation must stay exactly this predictable so callers can rely
+// on it never silently doing something else.
+func TestServer_OneLineFraming(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "c.sock")
+	srv := NewServer(sock)
+	var gotArg string
+	srv.Handle("ECHO", func(arg string) (string, error) { gotArg = arg; return "OK", nil })
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer srv.Close()
+
+	if _, err := Request(sock, "ECHO", wireguardConfigFixture); err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	if gotArg != "[Interface]" {
+		t.Fatalf("a raw multi-line argument must truncate at the first newline; got %q, want %q",
+			gotArg, "[Interface]")
+	}
+}
+
+// TestKeysAddConfig_RoundTrip is the regression that motivates
+// KEYS-ADD-CONFIG: a WireGuard config sent via plain KEYS-ADD would be
+// silently truncated to its first line. Base64-encoding it and sending it
+// through a dedicated command (mirroring cmd/singctl/main.go's
+// KEYS-ADD-CONFIG handler) must deliver it to the handler byte-for-byte.
+func TestKeysAddConfig_RoundTrip(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "c.sock")
+	srv := NewServer(sock)
+	var got string
+	srv.Handle("KEYS-ADD-CONFIG", func(arg string) (string, error) {
+		data, err := base64.StdEncoding.DecodeString(arg)
+		if err != nil {
+			return "", err
+		}
+		got = string(data)
+		return "OK", nil
+	})
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer srv.Close()
+
+	enc := base64.StdEncoding.EncodeToString([]byte(wireguardConfigFixture))
+	reply, err := Request(sock, "KEYS-ADD-CONFIG", enc)
+	if err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	if reply != "OK" {
+		t.Fatalf("reply = %q, want OK", reply)
+	}
+	if got != wireguardConfigFixture {
+		t.Errorf("config did not round-trip intact:\n got: %q\nwant: %q", got, wireguardConfigFixture)
+	}
+}
 
 func TestClient_NoServer(t *testing.T) {
 	if err := Stop(filepath.Join(t.TempDir(), "absent.sock")); err == nil {

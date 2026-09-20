@@ -16,15 +16,26 @@
 //     DaemonBackend.swift, TunnelBackend.swift.
 //   - `ControlClient` itself is still exposed via `\.controlClient`, but only
 //     in the Developer-ID build: the App-Store-forbidden screens (AppsScreen,
-//     ConnectionsScreen, ConsoleScreen, LicenseScreen) are excluded from the
-//     App Store target entirely and keep talking to it directly, since their
-//     verbs (PROC-*/APP-*/CONSOLE-POLL) aren't part of the cross-build
-//     `Backend` contract.
+//     ConnectionsScreen) are excluded from the App Store target entirely and
+//     keep talking to it directly, since their verbs (PROC-*/APP-*) aren't
+//     part of the cross-build `Backend` contract. CONSOLE-POLL is polled by
+//     `LiveStore` itself (Dev-ID only) and merged into LogsScreen — see
+//     LiveStore.swift/LogsScreen.swift.
 //
 // All live for the app's lifetime; there is exactly one of each, shared by
 // every screen and the menu-bar extra (see SingctlApp.swift).
 
 import SwiftUI
+
+/// Shared cross-screen navigation state: lets a screen jump straight to
+/// another sidebar section (e.g. Settings' "System proxy" group linking to
+/// `.sysProxy`) instead of only reading/writing its own local UI state.
+/// Owned by `RootView` (SingctlApp.swift) and injected via
+/// `.environmentObject`, same lifetime pattern as `LiveStore`.
+@MainActor
+final class NavigationModel: ObservableObject {
+    @Published var selection: Section? = .dashboard
+}
 
 #if !APPSTORE
 private struct ControlClientKey: EnvironmentKey {

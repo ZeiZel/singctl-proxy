@@ -1,0 +1,74 @@
+# Domains routed THROUGH the Singctl proxy (allowlist / include mode).
+#
+# One registrable domain per line. The generated PAC matches the domain AND all
+# of its subdomains, so `openai.com` also covers `api.openai.com`,
+# `chat.openai.com`, etc. — list base domains only, not every subdomain.
+#
+# `#` starts a comment; blank lines are ignored. Edit this file, then re-run
+# `make proxy-pac` to regenerate and re-apply. Everything NOT listed here goes
+# DIRECT (corporate/.ru traffic never touches the tunnel).
+
+# --- Google ---
+google.com
+gstatic.com
+googleapis.com
+googleusercontent.com
+ggpht.com
+gvt1.com
+gvt2.com
+withgoogle.com
+google.dev
+
+# --- YouTube ---
+youtube.com
+youtu.be
+youtube-nocookie.com
+youtubekids.com
+ytimg.com
+googlevideo.com
+
+# --- OpenAI / ChatGPT ---
+openai.com
+chatgpt.com
+oaistatic.com
+oaiusercontent.com
+sora.com
+
+# --- Anthropic / Claude ---
+anthropic.com
+claude.ai
+claude.com
+claudeusercontent.com
+
+# --- Cursor ---
+cursor.sh
+cursor.com
+cursor-cdn.com
+cursorapi.com
+
+# --- Other AI services ---
+gemini.google.com
+perplexity.ai
+huggingface.co
+midjourney.com
+x.ai
+
+# --- Dev / GitHub Copilot ---
+githubcopilot.com
+githubusercontent.com
+
+# --- Social / media (often geo-blocked) ---
+instagram.com
+cdninstagram.com
+facebook.com
+fbcdn.net
+twitter.com
+x.com
+twimg.com
+
+# --- Spotify ---
+spotify.com
+scdn.co
+spoti.fi
+spotifycdn.com
+spotifycdn.net

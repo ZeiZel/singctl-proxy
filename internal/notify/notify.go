@@ -110,6 +110,11 @@ type Settings struct {
 	URLTestInterval  string
 	URLTestTolerance int
 	SaveProfile      bool
+	// AutostartMode is the persisted mode ("off"|"proxy"|"vpn", default "off")
+	// the daemon applies to itself, best-effort, once it is otherwise up (F2
+	// item 2) — this is what a fresh install's LaunchDaemon now relies on
+	// instead of a hardcoded --vpn flag in its plist.
+	AutostartMode string
 }
 
 // ProcInfo is one application for the per-process routing picker/wire format

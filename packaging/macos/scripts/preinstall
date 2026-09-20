@@ -1,0 +1,103 @@
+#!/bin/bash
+#
+# pkg preinstall — clean-slate a previous singctl installation BEFORE the new
+# payload lands, so an upgrade replaces rather than layers on top of it (an old
+# daemon binary can otherwise keep running under the new LaunchDaemon plist, or
+# a stale /Applications/Singctl.app can shadow the freshly installed one until
+# the next reboot). Runs as root.
+#
+# Every step below is best-effort and MUST NOT fail the install: a preinstall
+# that returns non-zero aborts the whole .pkg, which is worse than leaving a
+# stray process around. Guard every command, never let a missing file/process
+# propagate a non-zero exit, and always `exit 0` at the end.
+#
+# ============================================================================
+# DO NOT TOUCH USER DATA. Never delete, move, or truncate:
+#   - ~/.config/singctl                              (keys, subscriptions, saved profile)
+#   - ~/Library/Group Containers/group.com.singctl.proxy   (shared App Group container)
+# These belong to the PERSON, not the installation. A future edit that "cleans
+# up" old state as part of a reinstall/upgrade must not touch either path —
+# doing so silently destroys the user's saved keys with no way to recover them.
+# ============================================================================
+set -u
+
+LABEL="com.singctl.proxy"
+DAEMON_PLIST="/Library/LaunchDaemons/${LABEL}.plist"
+BIN="/usr/local/bin/singctl"
+APP="/Applications/Singctl.app"
+APP_BUNDLE_ID="com.singctl.proxy"
+PAC_LABEL="com.singctl.pacserver"
+
+# Resolve the real desktop user (pkg installers run as root); mirrors postinstall.
+REAL_USER="$(stat -f "%Su" /dev/console 2>/dev/null || echo root)"
+if [ "$REAL_USER" = "root" ] || [ -z "$REAL_USER" ]; then
+	REAL_HOME="/var/root"
+	REAL_UID=""
+else
+	REAL_HOME="$(dscl . -read "/Users/${REAL_USER}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+	[ -n "$REAL_HOME" ] || REAL_HOME="/Users/${REAL_USER}"
+	REAL_UID="$(id -u "$REAL_USER" 2>/dev/null || true)"
+fi
+
+echo "==> singctl preinstall: cleaning up previous installation (user: ${REAL_USER:-unknown})"
+
+# --- 1. Boot out the system LaunchDaemon -----------------------------------
+# Modern spelling first, legacy spelling as fallback; both tolerate "not loaded".
+launchctl bootout system "$DAEMON_PLIST" >/dev/null 2>&1 || true
+launchctl unload -w "$DAEMON_PLIST" >/dev/null 2>&1 || true
+
+# --- 2. Boot out the user LaunchAgent, but ONLY if it is singctl's own -----
+# scripts/install-macos.sh does not manage this agent; it is created by
+# `make pac-server` (see Makefile PAC_AGENT_PLIST) at
+# ~/Library/LaunchAgents/com.singctl.pacserver.plist, serving PAC files out of
+# ~/.config/singctl via `python3 -m http.server` (see
+# packaging/macos/com.singctl.pacserver.plist.in). The user also runs their
+# OWN unrelated proxy toggle from ~/projects/ExampleOrganization/mac-proxy — that one does not
+# use this LaunchAgent label/plist, so it is never touched here. We verify
+# the on-disk plist actually looks like ours (serves via http.server out of a
+# .config/singctl directory) before booting it out, rather than trusting the
+# label alone.
+if [ -n "$REAL_UID" ] && [ "$REAL_USER" != "root" ]; then
+	PAC_PLIST="${REAL_HOME}/Library/LaunchAgents/${PAC_LABEL}.plist"
+	if [ -f "$PAC_PLIST" ] \
+		&& grep -q "http.server" "$PAC_PLIST" 2>/dev/null \
+		&& grep -q "\.config/singctl" "$PAC_PLIST" 2>/dev/null; then
+		echo "==> booting out user LaunchAgent ${PAC_LABEL} (confirmed singctl-owned)"
+		launchctl bootout "gui/${REAL_UID}/${PAC_LABEL}" >/dev/null 2>&1 || true
+		launchctl asuser "$REAL_UID" launchctl unload -w "$PAC_PLIST" >/dev/null 2>&1 || true
+	fi
+fi
+
+# --- 3. Terminate any remaining singctl processes ---------------------------
+# Match ONLY the real installed binary path, never a bare name, so an
+# unrelated process that happens to be called "singctl" elsewhere is never
+# touched. TERM first, give it a moment, KILL only what is still alive.
+PATTERN='^/usr/local/bin/singctl([[:space:]]|$)'
+term_pids="$(pgrep -f "$PATTERN" 2>/dev/null || true)"
+if [ -n "$term_pids" ]; then
+	echo "==> sending SIGTERM to running singctl processes: ${term_pids}"
+	# shellcheck disable=SC2086
+	kill -TERM $term_pids >/dev/null 2>&1 || true
+	sleep 2
+	kill_pids="$(pgrep -f "$PATTERN" 2>/dev/null || true)"
+	if [ -n "$kill_pids" ]; then
+		echo "==> singctl still running, sending SIGKILL: ${kill_pids}"
+		# shellcheck disable=SC2086
+		kill -KILL $kill_pids >/dev/null 2>&1 || true
+	fi
+fi
+
+# --- 4. Quit a running Singctl.app gracefully (by bundle id) ---------------
+if [ -n "$REAL_UID" ] && [ "$REAL_USER" != "root" ]; then
+	launchctl asuser "$REAL_UID" sudo -u "$REAL_USER" \
+		osascript -e "tell application id \"${APP_BUNDLE_ID}\" to quit" >/dev/null 2>&1 || true
+	sleep 1
+fi
+
+# --- 5. Remove the previous install (payload lands after this script) ------
+rm -f "$BIN" 2>/dev/null || true
+rm -rf "$APP" 2>/dev/null || true
+rm -f "$DAEMON_PLIST" 2>/dev/null || true
+
+echo "==> singctl preinstall: done"
+exit 0

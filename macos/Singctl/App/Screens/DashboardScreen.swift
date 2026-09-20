@@ -6,10 +6,8 @@
 //   @EnvironmentObject private var store: LiveStore
 //   @Environment(\.backend) private var backend
 //
-// Layout: warning banners (daemon offline / invalid license) -> mode switch
-// -> stat grid -> traffic chart. Status badges live in the toolbar next to
-// the native navigation title. The license banner is Developer-ID only (App
-// Store apps don't self-license — see LICENSATION.md) — guarded `#if !APPSTORE`.
+// Layout: warning banner (daemon offline) -> mode switch -> stat grid ->
+// traffic chart. Status badges live in the toolbar next to the native title.
 
 import SwiftUI
 import Charts
@@ -20,9 +18,22 @@ struct DashboardScreen: View {
 
     @State private var isApplyingMode = false
     @State private var modeError: String?
-    #if !APPSTORE
-    @State private var license: LicenseStatus?
-    #endif
+
+    /// F6 item 3's fix: the traffic empty state used to say "Enable the
+    /// Clash API in Settings" purely from `store.trafficSamples.isEmpty`,
+    /// which could show even when Settings already had it on (e.g. no mode
+    /// running, or the API unreachable) — the exact contradiction reported.
+    /// Polled independently of `LiveStore` from the same CONNECTIONS control
+    /// verb ConnectionsScreen reads (see Backend.connectionsDetail's doc
+    /// comment), so the two screens read one shared `state` and can no
+    /// longer disagree about which is true.
+    @State private var connectionsState: ConnectionsPayload = .empty
+    /// Set only when `backend.connectionsDetail()` itself throws (the App
+    /// Store `TunnelBackend` reports "unsupported" rather than faking a
+    /// state — see TunnelBackend.swift) — distinct from any of
+    /// `ConnectionsState`'s cases, so this build gets an honest message
+    /// instead of being misread as "no mode running."
+    @State private var connectionsStateError: String?
 
     private let modeOptions: [SegmentedOption<String>] = [
         SegmentedOption("off", "Off"),
@@ -45,23 +56,13 @@ struct DashboardScreen: View {
                     }
                 }
 
-                #if !APPSTORE
-                if let license, !license.valid {
-                    Card {
-                        Label(licenseMessage(license), systemImage: "exclamationmark.octagon.fill")
-                            .font(.appBody)
-                            .foregroundStyle(Color.sDanger)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                #endif
-
                 modeSection
                 statGrid
                 trafficSection
             }
             .padding(Spacing.lg)
         }
+        .task { await connectionsStatePollLoop() }
         .navigationTitle("Dashboard")
         .toolbar {
             // `sharedBackgroundVisibility(.hidden)` drops the system glass
@@ -82,9 +83,6 @@ struct DashboardScreen: View {
             }
             .sharedBackgroundVisibility(.hidden)
         }
-        #if !APPSTORE
-        .task { license = try? await LicenseService.status() }
-        #endif
     }
 
     // MARK: - Mode switch
@@ -121,13 +119,21 @@ struct DashboardScreen: View {
     }
 
     private func applyMode(_ mode: String) {
+        // VPN mode reroutes ALL system traffic, not just proxy-aware apps —
+        // ask first, unless the user turned that confirmation off in
+        // Settings → General (see AppPreferences.swift).
+        if mode == "vpn", !AppPreferences.shared.confirmVPNSwitch() { return }
         isApplyingMode = true
         modeError = nil
-        Task {
+        let optimisticChange = store.optimisticallySetMode(mode)
+        Task { @MainActor in
             defer { isApplyingMode = false }
             do {
                 try await backend.setMode(mode)
+                store.refreshAfterMutation()
             } catch {
+                store.restoreOptimisticStatus(optimisticChange)
+                store.refreshAfterMutation()
                 modeError = error.localizedDescription
             }
         }
@@ -167,7 +173,7 @@ struct DashboardScreen: View {
             Badge(text: "\(store.connections.count) active connections", tone: .accent)
         } content: {
             if store.trafficSamples.isEmpty {
-                EmptyState(text: "No traffic yet. Enable the Clash API in Settings to see live traffic here.")
+                trafficEmptyState
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 TrafficChart(samples: store.trafficSamples)
@@ -176,13 +182,48 @@ struct DashboardScreen: View {
         }
     }
 
-    #if !APPSTORE
-    private func licenseMessage(_ status: LicenseStatus) -> String {
-        status.reason.isEmpty
-            ? "No valid license — open the License section to activate."
-            : "No valid license — \(status.reason)"
+    /// Driven by `connectionsState.state` — the same CONNECTIONS field
+    /// ConnectionsScreen's own empty state reads (see this screen's
+    /// `connectionsState` doc comment) — instead of guessing from
+    /// `trafficSamples.isEmpty` alone, so this can never again tell the user
+    /// to enable a Clash API that Settings already shows enabled.
+    @ViewBuilder
+    private var trafficEmptyState: some View {
+        if let connectionsStateError {
+            EmptyState(text: "Live traffic diagnosis isn't available in this build: \(connectionsStateError)")
+        } else {
+            switch connectionsState.state {
+            case .noMode:
+                EmptyState(text: "No mode is running. Switch Mode above to Proxy or VPN to start routing traffic.")
+            case .apiDisabled:
+                EmptyState(text: "The Clash API is disabled. Enable it in Settings → General to see live traffic here.")
+            case .apiUnreachable:
+                let detail = (connectionsState.detail?.isEmpty == false) ? connectionsState.detail! : "unknown error"
+                EmptyState(text: "The Clash API is unreachable (\(detail)). Check the address in Settings → General, or restart the daemon.")
+            case .idle:
+                EmptyState(text: "The proxy is up and the Clash API is reachable — there is simply no traffic right now.")
+            case .active:
+                // Rows exist but the traffic sample window hasn't populated
+                // yet (just switched modes, or between traffic polls).
+                EmptyState(text: "Traffic is flowing; the chart will populate shortly.")
+            }
+        }
     }
-    #endif
+
+    /// Independent of `LiveStore`'s poll loop — same 5s-ish cadence idea as
+    /// its traffic polling, but this screen only needs the `state` field, not
+    /// the full row/aggregate payload ConnectionsScreen renders.
+    private func connectionsStatePollLoop() async {
+        while !Task.isCancelled {
+            do {
+                connectionsState = try await backend.connectionsDetail()
+                connectionsStateError = nil
+            } catch {
+                connectionsStateError = error.localizedDescription
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+        }
+    }
 }
 
 /// Dual-area chart (upload = accent, download = ok) over `LiveStore`'s

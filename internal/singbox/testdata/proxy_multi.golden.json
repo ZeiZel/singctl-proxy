@@ -85,7 +85,7 @@
     },
     {
       "type": "urltest",
-      "tag": "proxy",
+      "tag": "auto",
       "outbounds": [
         "proxy-0",
         "proxy-1"
@@ -93,6 +93,16 @@
       "url": "https://www.gstatic.com/generate_204",
       "interval": "3m",
       "tolerance": 50
+    },
+    {
+      "type": "selector",
+      "tag": "proxy",
+      "outbounds": [
+        "auto",
+        "proxy-0",
+        "proxy-1"
+      ],
+      "default": "auto"
     },
     {
       "type": "direct",

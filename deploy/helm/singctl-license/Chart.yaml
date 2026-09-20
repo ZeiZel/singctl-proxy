@@ -1,6 +1,0 @@
-apiVersion: v2
-name: singctl-license
-description: singctl license server (Ed25519 issuance + revocation + payment webhook)
-type: application
-version: 0.1.0
-appVersion: "0.1.0"

@@ -1,0 +1,107 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "https",
+        "tag": "proxy-dns",
+        "server": "1.1.1.1",
+        "detour": "proxy"
+      },
+      {
+        "type": "local",
+        "tag": "local"
+      }
+    ],
+    "final": "proxy-dns",
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "127.0.0.1",
+      "listen_port": 1080
+    },
+    {
+      "type": "http",
+      "tag": "http-in",
+      "listen": "127.0.0.1",
+      "listen_port": 2080
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "proxy"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "action": "sniff",
+        "timeout": "3s"
+      },
+      {
+        "domain_suffix": [
+          "ads.example.com"
+        ],
+        "outbound": "block"
+      },
+      {
+        "ip_cidr": [
+          "203.0.113.0/24"
+        ],
+        "outbound": "block"
+      },
+      {
+        "process_name": [
+          "malware"
+        ],
+        "outbound": "block"
+      },
+      {
+        "process_name": [
+          "trusted-app"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "domain_regex": [
+          "^([\\w\\-\\.]+\\.)?ru$",
+          "^([\\w\\-\\.]+\\.)?xn--p1ai$",
+          "^([\\w\\-\\.]+\\.)?xn--p1acf$",
+          "^([\\w\\-\\.]+\\.)?xn--80asehdb$",
+          "^([\\w\\-\\.]+\\.)?xn--c1avg$",
+          "^([\\w\\-\\.]+\\.)?xn--80aswg$",
+          "^([\\w\\-\\.]+\\.)?xn--80adxhks$",
+          "^([\\w\\-\\.]+\\.)?moscow$",
+          "^([\\w\\-\\.]+\\.)?xn--d1acj3b$"
+        ],
+        "outbound": "direct"
+      }
+    ],
+    "final": "proxy",
+    "default_domain_resolver": "local"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": false
+    }
+  }
+}

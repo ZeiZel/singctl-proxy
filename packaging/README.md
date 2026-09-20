@@ -43,12 +43,7 @@ are set (otherwise unsigned artifacts are produced for dry runs):
   to the project's Generic Package Registry, and creates the GitLab Release
   with `SHA256SUMS`.
 
-Required CI/CD variables (Settings → CI/CD → Variables) — full list with
-formats/masked/protected settings in
-[docs/deploy-gitlab.md](../docs/deploy-gitlab.md):
-
-- `LICENSE_PUBKEY` — base64 Ed25519 public key (`bin/singctl-server keygen`),
-  embedded so released builds verify licenses.
+Required signing variables are documented in the CI configuration.
 - macOS (optional; unset → unsigned artifacts): `APPLE_CERT_P12`,
   `APPLE_CERT_PASSWORD`, `CODESIGN_IDENTITY`, `INSTALLER_IDENTITY`,
   `AC_APPLE_ID`, `AC_PASSWORD`, `AC_TEAM_ID`. On the `macos` runner these are

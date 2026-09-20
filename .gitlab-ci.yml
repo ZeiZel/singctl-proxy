@@ -1,50 +1,21 @@
-# singctl-proxy CI/CD — migrated from GitHub Actions (.github/workflows/{ci,deploy,release}.yml).
-#
-# Operational notes (read before touching runners/variables):
-#  - deploy:compose runs on a shell-executor runner living on the license-server
-#    VPS (Ansible provisioned, deploy_mode: compose — deploy/compose/). Create
-#    it in the GitLab UI as a PROJECT runner tagged "singctl-deploy", with
-#    Protected = on and "Run untagged jobs" = off, so it never picks up jobs
-#    from untrusted branches.
-#  - deploy:compose needs these protected CI/CD variables: LICENSE_PRIVATE_KEY,
-#    LICENSE_ADMIN_TOKEN, LICENSE_WEBHOOK_SECRET, LICENSE_DEFAULT_TTL_DAYS,
-#    LICENSE_SITE_ADDRESS (public domain for Caddy's automatic HTTPS, or empty
-#    for plain HTTP — replaces the old Helm-only LICENSE_HOST/ingress.host).
-#  - Settings > Repository > Protected tags must have a wildcard "v*" rule (with
-#    at least "Maintainers" allowed to create), otherwise tag pipelines won't be
-#    able to see protected CI/CD variables (LICENSE_PUBKEY, LICENSE_PRIVATE_KEY,
-#    APPLE_CERT_P12, CODESIGN_IDENTITY, ...) and release:* jobs will fail.
-#  - release:macos runs on the user's own Mac, registered as a shell-executor
-#    project runner tagged "macos". gitlab.com has no free shared macOS runners.
-
+# singctl-proxy GitLab CI/CD
 stages:
   - test
-  - build
-  - deploy
   - release
-
 workflow:
-  # Standard pattern to avoid duplicate branch+MR pipelines: only create a
-  # pipeline for merge requests, the default branch, and release tags.
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_COMMIT_TAG =~ /^v/'
-
 variables:
   GOMODCACHE: $CI_PROJECT_DIR/.cache/go-mod
   GOCACHE: $CI_PROJECT_DIR/.cache/go-build
-
 .go_cache: &go_cache
   key:
-    files:
-      - go.sum
+    files: [go.sum]
   paths:
     - .cache/go-mod
     - .cache/go-build
-
-# --- test stage (mirrors .github/workflows/ci.yml) ---------------------------
-
 test:go:
   stage: test
   image: golang:1.24-bookworm
@@ -53,132 +24,35 @@ test:go:
   script:
     - go vet ./...
     - go test ./...
-    - go build ./cmd/server
     - go build ./cmd/singctl
-    - go build -tags unlicensed ./cmd/singctl
-
-# The old Wails GUI (gui/) has been removed; the desktop app is now the native
-# SwiftUI app in macos/Singctl/ (built via `make app-macos`), so there is no
-# test:gui job anymore. Swift-side tests for the new app run via `xcodebuild
-# test` on the macOS runner (not yet wired into a CI job here — see
-# macos/Singctl/ProxyExtension/Tests).
-
-# --- build stage (mirrors .github/workflows/deploy.yml "image" job) ----------
-
-build:image:
-  stage: build
-  image: docker:27
-  services:
-    - docker:27-dind
-  variables:
-    # Disable dind TLS setup — simplest way to talk to the linked "docker" host
-    # from the docker:27 client image (not in the original GitHub workflow,
-    # but required for docker-in-docker to work on gitlab.com shared runners).
-    DOCKER_TLS_CERTDIR: ""
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-    - if: '$CI_COMMIT_TAG =~ /^v/'
-  script:
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
-    - docker build -f deploy/server.Dockerfile --build-arg VERSION="${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" .
-    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
-    - |
-      if [ -n "$CI_COMMIT_TAG" ]; then
-        docker tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
-        docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
-      fi
-    - |
-      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
-        docker tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" "$CI_REGISTRY_IMAGE:latest"
-        docker push "$CI_REGISTRY_IMAGE:latest"
-      fi
-
-# --- deploy stage (mirrors .github/workflows/deploy.yml "deploy" job) --------
-
-deploy:compose:
-  stage: deploy
-  tags:
-    - singctl-deploy
-  needs:
-    - build:image
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-    - if: '$CI_COMMIT_TAG =~ /^v/'
-  script:
-    # Shell executor on the license-server VPS: docker + the compose plugin
-    # are already on PATH and gitlab-runner is in the `docker` group
-    # (provisioned by Ansible, deploy_mode: compose). Write the runtime .env
-    # next to the compose file, then pull + (re)start the stack.
-    - |
-      cat > deploy/compose/.env <<EOF
-      IMAGE=$CI_REGISTRY_IMAGE
-      TAG=$CI_COMMIT_SHA
-      LICENSE_SITE_ADDRESS=$LICENSE_SITE_ADDRESS
-      LICENSE_PRIVATE_KEY=$LICENSE_PRIVATE_KEY
-      LICENSE_ADMIN_TOKEN=$LICENSE_ADMIN_TOKEN
-      LICENSE_WEBHOOK_SECRET=$LICENSE_WEBHOOK_SECRET
-      LICENSE_DEFAULT_TTL_DAYS=$LICENSE_DEFAULT_TTL_DAYS
-      EOF
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
-    - docker compose -f deploy/compose/docker-compose.yml pull
-    - docker compose -f deploy/compose/docker-compose.yml up -d
-
-# --- release stage (mirrors .github/workflows/release.yml) -------------------
-
 release:macos:
   stage: release
-  tags:
-    - macos
+  tags: [macos]
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v/'
       when: manual
   allow_failure: true
   script:
-    # Developer ID signing/notarization identities are assumed to already live
-    # in this Mac's login keychain (interactive user's machine, registered as
-    # the "macos" runner). CODESIGN_IDENTITY / INSTALLER_IDENTITY / AC_APPLE_ID
-    # / AC_PASSWORD / AC_TEAM_ID come from GitLab CI/CD variables (protected)
-    # and are picked up as env vars automatically. If this ever moves to a
-    # dedicated/headless CI Mac, import $APPLE_CERT_P12 into a CI keychain
-    # first (the GitHub Actions equivalent was apple-actions/import-codesign-certs) —
-    # deliberately NOT scripted here since it isn't needed on this runner.
-    # LICENSE_SERVER_URL bakes the default activation/revocation server into the
-    # build (SINGCTL_LICENSE_SERVER can still override at runtime). Without it a
-    # released build has no server to activate against and licensing is inert.
-    - make build-macos LICENSE_PUBKEY="$LICENSE_PUBKEY" LICENSE_SERVER_URL="$LICENSE_SERVER_URL"
+    - make build-macos
     - make app-macos DEVELOPMENT_TEAM=S3UCF4USYC
     - make pkg-macos PKG_VERSION="${CI_COMMIT_TAG#v}" CLI_BIN=bin/singctl-darwin-arm64
     - mkdir -p out
     - cp bin/singctl-darwin-* dist/*.pkg dist/*.dmg out/ 2>/dev/null || true
   artifacts:
-    paths:
-      - out/
+    paths: [out/]
     expire_in: 1 week
-
 release:appstore:
   stage: release
-  tags:
-    - macos
+  tags: [macos]
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v/'
       when: manual
   allow_failure: true
   script:
-    # App Store SKU (see docs/appstore-sku.md): sandboxed container app +
-    # NEPacketTunnelProvider appex, built from macos/Singctl/project.yml's
-    # flagged SingctlAppStore/PacketTunnel targets (SAME App/ sources as
-    # release:macos's Singctl target, gated by SWIFT_ACTIVE_COMPILATION_
-    # CONDITIONS=APPSTORE). Automatic signing via App Store Connect, so no
-    # DEVELOPMENT_TEAM override is needed beyond the Makefile default.
-    # Manual + allow_failure: the PacketTunnel appex is still a stub (no
-    # Libbox datapath yet — see the Makefile's `appstore` target), so this
-    # lane is not expected to produce a submittable build yet.
     - make appstore
   artifacts:
-    paths:
-      - dist/
+    paths: [dist/]
     expire_in: 1 week
-
 release:publish:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest

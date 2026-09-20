@@ -2,6 +2,7 @@ package clashapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,7 +27,18 @@ const proxiesJSON = `{"proxies":{
   "proxy-1":{"type":"Vless","history":[{"delay":88}]}
 }}`
 
+// lastSelect records the last PUT /proxies/{group} body newTestServer saw, so
+// TestSelectOutbound can assert on it.
+type lastSelect struct {
+	group string
+	name  string
+}
+
 func newTestServer(t *testing.T, secret string) (*Client, *httptest.Server) {
+	return newTestServerWithSelect(t, secret, nil)
+}
+
+func newTestServerWithSelect(t *testing.T, secret string, sel *lastSelect) (*Client, *httptest.Server) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if secret != "" && r.Header.Get("Authorization") != "Bearer "+secret {
@@ -40,6 +52,16 @@ func newTestServer(t *testing.T, secret string) (*Client, *httptest.Server) {
 			_, _ = w.Write([]byte(proxiesJSON))
 		case strings.HasPrefix(r.URL.Path, "/proxies/") && strings.HasSuffix(r.URL.Path, "/delay"):
 			_, _ = w.Write([]byte(`{"delay":42}`))
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/proxies/"):
+			if sel != nil {
+				var body struct {
+					Name string `json:"name"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				sel.group = strings.TrimPrefix(r.URL.Path, "/proxies/")
+				sel.name = body.Name
+			}
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -107,6 +129,18 @@ func TestProxies(t *testing.T) {
 	}
 	if proxies["proxy-1"].LastDelay() != 88 {
 		t.Errorf("proxy-1 delay = %d, want 88", proxies["proxy-1"].LastDelay())
+	}
+}
+
+func TestSelectOutbound(t *testing.T) {
+	var sel lastSelect
+	c, srv := newTestServerWithSelect(t, "", &sel)
+	defer srv.Close()
+	if err := c.SelectOutbound(context.Background(), "proxy", "proxy-1"); err != nil {
+		t.Fatalf("SelectOutbound: %v", err)
+	}
+	if sel.group != "proxy" || sel.name != "proxy-1" {
+		t.Errorf("PUT /proxies/%s {name:%q}, want proxy {name:proxy-1}", sel.group, sel.name)
 	}
 }
 

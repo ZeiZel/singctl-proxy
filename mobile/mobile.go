@@ -4,7 +4,7 @@
 // The container app (macos/Singctl/App/Core/TunnelBackend.swift) persists
 // mode/keys/settings as a TunnelConfig struct to config.json in the shared
 // App Group container. The PacketTunnel appex (a sandboxed
-// NEPacketTunnelProvider) has no way to run internal/vless + internal/singbox
+// NEPacketTunnelProvider) has no way to run internal/protocol + internal/singbox
 // directly — those stay pure Go packages with no sing-box import — so this
 // package is bound to a Libbox.xcframework via `gomobile bind` and called
 // from Swift to turn that JSON into the actual sing-box config JSON the appex
@@ -21,8 +21,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"singctl/internal/protocol/all"
 	"singctl/internal/singbox"
-	"singctl/internal/vless"
 )
 
 // tunnelConfig mirrors TunnelConfig in
@@ -79,9 +79,10 @@ func BuildConfig(configJSON string) (string, error) {
 		return "", fmt.Errorf("mobile: no keys configured")
 	}
 
-	set, err := vless.ParseLinks(tc.Keys)
+	reg := all.Registry()
+	profiles, err := reg.ParseAll(tc.Keys)
 	if err != nil {
-		return "", fmt.Errorf("mobile: parse VLESS keys: %w", err)
+		return "", fmt.Errorf("mobile: parse keys: %w", err)
 	}
 
 	opts := singbox.TunnelOpts{
@@ -92,7 +93,7 @@ func BuildConfig(configJSON string) (string, error) {
 		},
 	}
 
-	cfg, err := singbox.GenerateTunnelConfigSet(set, opts)
+	cfg, err := singbox.GenerateTunnelConfigSet(reg, profiles, opts)
 	if err != nil {
 		return "", fmt.Errorf("mobile: generate tunnel config: %w", err)
 	}

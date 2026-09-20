@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,16 +11,23 @@ import (
 	"strings"
 	"testing"
 
+	"singctl/internal/clashapi"
 	"singctl/internal/core"
+	"singctl/internal/firewall"
 	"singctl/internal/monitor"
 	"singctl/internal/netext"
 	"singctl/internal/notify"
 	"singctl/internal/policy"
 	"singctl/internal/proclist"
 	"singctl/internal/procproxy"
+	"singctl/internal/protocol/all"
 	"singctl/internal/runtime"
 	"singctl/internal/types"
 )
+
+// testRegistry is the real, default protocol registry — the same one
+// production code builds from all.Registry().
+var testRegistry = all.Registry()
 
 type fakeProber struct{}
 
@@ -30,10 +39,28 @@ func (fakeRoutes) CleanupOrphans() error { return nil }
 
 const validLink = "vless://4ce58870-27d3-489b-87a0-3109db4fb919@193.188.22.147:443?type=grpc&security=reality&pbk=k&sni=cursor.com&fp=chrome#t"
 
+func TestExecutor_ConnectionLogIsFlushedOnClose(t *testing.T) {
+	e := NewExecutor(core.NewFakeFactory().Factory(), testRegistry, fakeProber{}, fakeRoutes{}, nil)
+	path := filepath.Join(t.TempDir(), "singbox.log")
+	e.SetLogPath(path)
+
+	e.appendLog("first")
+	e.appendLog("second")
+	e.CloseLog()
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "first\nsecond\n" {
+		t.Fatalf("flushed log = %q", got)
+	}
+}
+
 func newExecutor() (*Executor, chan any) {
 	notes := make(chan any, 32)
 	ff := core.NewFakeFactory()
-	e := NewExecutor(ff.Factory(), fakeProber{}, fakeRoutes{}, notes)
+	e := NewExecutor(ff.Factory(), testRegistry, fakeProber{}, fakeRoutes{}, notes)
 	// The production proxiedAppsPath lives under root-owned /Library — swap in
 	// a temp-dir-backed store so the persistent per-app store's tests don't
 	// need root (white-box: appStore is unexported, only reachable from tests
@@ -102,6 +129,102 @@ func TestExecutor_EnableWithoutLinkErrors(t *testing.T) {
 	}
 	if err := e.EnableVPN(context.Background()); err == nil {
 		t.Error("EnableVPN without a loaded link must error")
+	}
+}
+
+// TestExecutor_AutostartMode_DefaultAndPersistence covers F2 item 2's wiring:
+// the default is "off", SetAutostartMode validates + persists via the
+// registered saver, and it round-trips through CurrentSettings/ApplySettings
+// exactly like the other tunables (SETTINGS-GET/SETTINGS-SET).
+func TestExecutor_AutostartMode_DefaultAndPersistence(t *testing.T) {
+	e, _ := newExecutor()
+	if got := e.AutostartMode(); got != "off" {
+		t.Errorf("default autostart mode = %q, want off", got)
+	}
+	if got := e.CurrentSettings().AutostartMode; got != "off" {
+		t.Errorf("CurrentSettings().AutostartMode = %q, want off", got)
+	}
+
+	var saved string
+	e.SetAutostartSaver(func(m string) error { saved = m; return nil })
+	if err := e.SetAutostartMode("vpn"); err != nil {
+		t.Fatalf("SetAutostartMode: %v", err)
+	}
+	if e.AutostartMode() != "vpn" || saved != "vpn" {
+		t.Errorf("AutostartMode()=%q saved=%q, want vpn/vpn", e.AutostartMode(), saved)
+	}
+	if err := e.SetAutostartMode("bogus"); err == nil {
+		t.Error("an unknown autostart mode must be rejected")
+	}
+
+	// SETTINGS-SET (ApplySettings) with an empty AutostartMode ("" — a client
+	// that predates F2) must leave the persisted value alone.
+	if err := e.ApplySettings(context.Background(), notify.Settings{}); err != nil {
+		t.Fatal(err)
+	}
+	if e.AutostartMode() != "vpn" {
+		t.Errorf("ApplySettings with empty AutostartMode changed it to %q, want unchanged (vpn)", e.AutostartMode())
+	}
+	// A non-empty AutostartMode in SETTINGS-SET does update it.
+	if err := e.ApplySettings(context.Background(), notify.Settings{AutostartMode: "proxy"}); err != nil {
+		t.Fatal(err)
+	}
+	if e.AutostartMode() != "proxy" {
+		t.Errorf("ApplySettings did not apply AutostartMode: got %q, want proxy", e.AutostartMode())
+	}
+}
+
+// TestExecutor_ApplyAutostart is F2 items 2+3's core regression test: a
+// failing autostart mode must never be fatal, and must leave the manager
+// fully in "off" — never some partially-applied state — so the daemon (a
+// LaunchDaemon with KeepAlive) stays up and a later MODE command can retry.
+func TestExecutor_ApplyAutostart(t *testing.T) {
+	cases := []struct {
+		name         string
+		mode         string // "" = default (off), never explicitly set
+		forwarderErr error  // injects a StartForwarder failure (the reported "no physical interface" class of bug)
+		wantState    runtime.State
+		wantErr      bool
+	}{
+		{name: "default off does nothing", mode: "", wantState: runtime.StateStopped},
+		{name: "explicit off does nothing", mode: "off", wantState: runtime.StateStopped},
+		{name: "proxy applies", mode: "proxy", wantState: runtime.StateProxyOnly},
+		{name: "vpn applies", mode: "vpn", wantState: runtime.StateVPN},
+		{
+			name: "failing vpn leaves off, no fatal", mode: "vpn",
+			forwarderErr: fmt.Errorf("start forwarder: no physical interface detected"),
+			wantState:    runtime.StateStopped, wantErr: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			notes := make(chan any, 32)
+			ff := core.NewFakeFactory()
+			if tc.forwarderErr != nil {
+				ff.NewErrOn["forwarder"] = tc.forwarderErr
+			}
+			e := NewExecutor(ff.Factory(), testRegistry, fakeProber{}, fakeRoutes{}, notes)
+			ctx := context.Background()
+			if err := e.LoadLink(ctx, validLink); err != nil {
+				t.Fatal(err)
+			}
+			if tc.mode != "" {
+				if err := e.SetAutostartMode(tc.mode); err != nil {
+					t.Fatalf("SetAutostartMode: %v", err)
+				}
+			}
+
+			err := e.ApplyAutostart(ctx)
+			if tc.wantErr && err == nil {
+				t.Fatal("ApplyAutostart should have returned the underlying failure (for the caller to log)")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("ApplyAutostart: %v", err)
+			}
+			if got := e.manager().State(); got != tc.wantState {
+				t.Errorf("manager state after ApplyAutostart = %v, want %v", got, tc.wantState)
+			}
+		})
 	}
 }
 
@@ -634,5 +757,397 @@ func TestExecutor_TrafficSnapshot(t *testing.T) {
 	}
 	if tr.Up != 1024 || tr.Down != 4096 {
 		t.Errorf("TrafficSnapshot = %+v, want up 1024 down 4096", tr)
+	}
+}
+
+// multiLink builds a distinct vless share link (unique host, so it isn't
+// deduped) labeled via its #fragment.
+func multiLink(host, label string) string {
+	return "vless://4ce58870-27d3-489b-87a0-3109db4fb919@" + host + ":443?security=tls#" + label
+}
+
+func loadMultiServer(t *testing.T, e *Executor, labels ...string) {
+	t.Helper()
+	links := make([]string, len(labels))
+	for i, l := range labels {
+		links[i] = multiLink(fmt.Sprintf("192.0.2.%d", i+1), l)
+	}
+	if err := e.LoadLink(context.Background(), strings.Join(links, "\n")); err != nil {
+		t.Fatalf("LoadLink(%d servers): %v", len(labels), err)
+	}
+}
+
+func TestExecutor_ProxyGroup_SingleServer_Unavailable(t *testing.T) {
+	e, _ := newExecutor()
+	loadMultiServer(t, e, "Solo")
+	got, err := e.ProxyGroup(context.Background())
+	if err != nil {
+		t.Fatalf("ProxyGroup: %v", err)
+	}
+	if got.Available {
+		t.Errorf("ProxyGroup single-server = %+v, want Available=false", got)
+	}
+}
+
+func TestExecutor_ProxyGroup_NoLinksLoaded_Unavailable(t *testing.T) {
+	e, _ := newExecutor()
+	got, err := e.ProxyGroup(context.Background())
+	if err != nil || got.Available {
+		t.Errorf("ProxyGroup with nothing loaded = %+v, %v; want Available=false, nil", got, err)
+	}
+}
+
+// clashProxiesServer stubs GET /proxies with the given JSON body and records
+// every PUT /proxies/{group} it receives.
+func clashProxiesServer(t *testing.T, proxiesJSON string, puts *[]struct{ Group, Name string }) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies":
+			_, _ = w.Write([]byte(proxiesJSON))
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/proxies/"):
+			var body struct {
+				Name string `json:"name"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if puts != nil {
+				*puts = append(*puts, struct{ Group, Name string }{
+					Group: strings.TrimPrefix(r.URL.Path, "/proxies/"), Name: body.Name,
+				})
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+func TestExecutor_ProxyGroup_ResolvesNamesAndEffectiveSelection(t *testing.T) {
+	e, _ := newExecutor()
+	loadMultiServer(t, e, "France 🇫🇷", "Poland", "Germany")
+
+	// "proxy" is on auto; "auto" itself has settled on proxy-1 — Selected must
+	// resolve through that second hop. proxy-2 carries no history entry, so
+	// its delay is 0 (unknown), not a zero-value crash.
+	const proxiesJSON = `{"proxies":{
+		"proxy":{"type":"Selector","now":"auto","all":["auto","proxy-0","proxy-1","proxy-2"]},
+		"auto":{"type":"URLTest","now":"proxy-1","all":["proxy-0","proxy-1","proxy-2"]},
+		"proxy-0":{"history":[{"delay":120}]},
+		"proxy-1":{"history":[{"delay":45}]}
+	}}`
+	srv := clashProxiesServer(t, proxiesJSON, nil)
+	defer srv.Close()
+	e.SetClashAPI(strings.TrimPrefix(srv.URL, "http://"), "")
+
+	got, err := e.ProxyGroup(context.Background())
+	if err != nil {
+		t.Fatalf("ProxyGroup: %v", err)
+	}
+	if !got.Available || !got.Auto || got.Selected != "proxy-1" {
+		t.Fatalf("ProxyGroup = %+v, want Available+Auto=true, Selected=proxy-1", got)
+	}
+	if len(got.Members) != 3 {
+		t.Fatalf("Members = %+v, want 3 entries", got.Members)
+	}
+	byTag := map[string]ProxyMember{}
+	for _, m := range got.Members {
+		byTag[m.Tag] = m
+	}
+	if m := byTag["proxy-0"]; m.Name != "France 🇫🇷" || m.Index != 0 || m.Delay != 120 {
+		t.Errorf("proxy-0 = %+v, want name=France 🇫🇷 index=0 delay=120", m)
+	}
+	if m := byTag["proxy-1"]; m.Name != "Poland" || m.Index != 1 || m.Delay != 45 {
+		t.Errorf("proxy-1 = %+v, want name=Poland index=1 delay=45", m)
+	}
+	if m := byTag["proxy-2"]; m.Name != "Germany" || m.Index != 2 || m.Delay != 0 {
+		t.Errorf("proxy-2 = %+v, want name=Germany index=2 delay=0 (no history)", m)
+	}
+}
+
+func TestExecutor_ProxyGroup_NameFallback_TagIndexOutOfRange(t *testing.T) {
+	e, _ := newExecutor()
+	// Only 2 servers loaded, but the live Clash report (racing a reload)
+	// still carries a "proxy-2" member — the resolver must fall back to the
+	// raw tag rather than panic on the out-of-range index.
+	loadMultiServer(t, e, "France", "Poland")
+
+	const proxiesJSON = `{"proxies":{
+		"proxy":{"type":"Selector","now":"proxy-0","all":["auto","proxy-0","proxy-2"]},
+		"auto":{"type":"URLTest","now":"proxy-0"},
+		"proxy-0":{"history":[{"delay":10}]}
+	}}`
+	srv := clashProxiesServer(t, proxiesJSON, nil)
+	defer srv.Close()
+	e.SetClashAPI(strings.TrimPrefix(srv.URL, "http://"), "")
+
+	got, err := e.ProxyGroup(context.Background())
+	if err != nil {
+		t.Fatalf("ProxyGroup: %v", err)
+	}
+	if got.Auto {
+		t.Errorf("Auto = true, want false (selector pinned to proxy-0)")
+	}
+	if got.Selected != "proxy-0" {
+		t.Errorf("Selected = %q, want proxy-0", got.Selected)
+	}
+	byTag := map[string]ProxyMember{}
+	for _, m := range got.Members {
+		byTag[m.Tag] = m
+	}
+	if m := byTag["proxy-2"]; m.Name != "proxy-2" {
+		t.Errorf("proxy-2 name = %q, want fallback to the raw tag %q", m.Name, "proxy-2")
+	}
+}
+
+func TestExecutor_SelectProxy_SingleServer(t *testing.T) {
+	e, _ := newExecutor()
+	loadMultiServer(t, e, "Solo")
+	if err := e.SelectProxy(context.Background(), "auto"); err == nil {
+		t.Error("SelectProxy in single-server mode: expected an error")
+	}
+}
+
+func TestExecutor_SelectProxy_RejectsUnknownTag(t *testing.T) {
+	e, _ := newExecutor()
+	loadMultiServer(t, e, "France", "Poland", "Germany")
+	err := e.SelectProxy(context.Background(), "proxy-9")
+	if err == nil {
+		t.Fatal("SelectProxy(unknown tag): expected an error")
+	}
+	if !strings.Contains(err.Error(), "proxy-0") || !strings.Contains(err.Error(), "auto") {
+		t.Errorf("error %q should list valid members (auto, proxy-0, …)", err)
+	}
+}
+
+func TestExecutor_SelectProxy_IssuesCorrectClashCall(t *testing.T) {
+	e, _ := newExecutor()
+	loadMultiServer(t, e, "France", "Poland", "Germany")
+	var puts []struct{ Group, Name string }
+	srv := clashProxiesServer(t, `{"proxies":{}}`, &puts)
+	defer srv.Close()
+	e.SetClashAPI(strings.TrimPrefix(srv.URL, "http://"), "")
+
+	if err := e.SelectProxy(context.Background(), "auto"); err != nil {
+		t.Fatalf("SelectProxy(auto): %v", err)
+	}
+	if err := e.SelectProxy(context.Background(), "proxy-1"); err != nil {
+		t.Fatalf("SelectProxy(proxy-1): %v", err)
+	}
+	if len(puts) != 2 {
+		t.Fatalf("PUT calls = %+v, want 2", puts)
+	}
+	if puts[0].Group != "proxy" || puts[0].Name != "auto" {
+		t.Errorf("call 1 = %+v, want PUT /proxies/proxy {name:auto}", puts[0])
+	}
+	if puts[1].Group != "proxy" || puts[1].Name != "proxy-1" {
+		t.Errorf("call 2 = %+v, want PUT /proxies/proxy {name:proxy-1}", puts[1])
+	}
+}
+
+// --- Connections (F6 in docs/v2-spec.md) ---
+
+func TestExecutor_Connections_NoModeRunning(t *testing.T) {
+	e, _ := newExecutor()
+	got := e.Connections(context.Background())
+	if got.State != clashapi.StateNoMode {
+		t.Errorf("State = %q, want %q", got.State, clashapi.StateNoMode)
+	}
+}
+
+func TestExecutor_Connections_APIDisabled(t *testing.T) {
+	e, _ := newExecutor()
+	ctx := context.Background()
+	if err := e.LoadLink(ctx, validLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.EnableProxy(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := e.Connections(ctx)
+	if got.State != clashapi.StateAPIDisabled {
+		t.Errorf("State = %q, want %q", got.State, clashapi.StateAPIDisabled)
+	}
+}
+
+func TestExecutor_Connections_Active(t *testing.T) {
+	e, _ := newExecutor()
+	ctx := context.Background()
+	if err := e.LoadLink(ctx, validLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.EnableProxy(ctx); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/connections" {
+			_, _ = w.Write([]byte(`{"downloadTotal":0,"uploadTotal":0,"connections":[
+				{"id":"c1","metadata":{"process":"codex","host":"api.openai.com","destinationPort":"443"},
+				 "upload":1,"download":2,"chains":["proxy"],"rule":"final"}
+			]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	e.SetClashAPI(strings.TrimPrefix(srv.URL, "http://"), "")
+
+	got := e.Connections(ctx)
+	if got.State != clashapi.StateActive {
+		t.Fatalf("State = %q, want %q", got.State, clashapi.StateActive)
+	}
+	if len(got.Rows) != 1 || got.Rows[0].App != "codex" {
+		t.Errorf("Rows = %+v, want one codex row", got.Rows)
+	}
+	if len(got.Apps) != 1 || got.Apps[0].App != "codex" {
+		t.Errorf("Apps = %+v, want one codex total", got.Apps)
+	}
+}
+
+func TestExecutor_CloseConnection_APIDisabled(t *testing.T) {
+	e, _ := newExecutor()
+	if err := e.CloseConnection(context.Background(), "c1"); err == nil {
+		t.Fatal("expected error when the Clash API is disabled")
+	}
+}
+
+func TestExecutor_CloseConnection_CallsDeleteEndpoint(t *testing.T) {
+	e, _ := newExecutor()
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	e.SetClashAPI(strings.TrimPrefix(srv.URL, "http://"), "")
+
+	if err := e.CloseConnection(context.Background(), "c1"); err != nil {
+		t.Fatalf("CloseConnection: %v", err)
+	}
+	if gotMethod != http.MethodDelete || gotPath != "/connections/c1" {
+		t.Errorf("got %s %s, want DELETE /connections/c1", gotMethod, gotPath)
+	}
+}
+
+// --- Firewall (F6 item 5 in docs/v2-spec.md) ---
+
+func TestExecutor_FirewallAdd_RejectsInvalidRule(t *testing.T) {
+	e, _ := newExecutor()
+	if _, err := e.FirewallAdd(context.Background(), firewall.Rule{Action: firewall.ActionBlock}); err == nil {
+		t.Fatal("expected a validation error for a rule matching nothing")
+	}
+	if len(e.FirewallList()) != 0 {
+		t.Errorf("an invalid rule must not be added: %+v", e.FirewallList())
+	}
+}
+
+func TestExecutor_Firewall_PersistenceRoundTrip(t *testing.T) {
+	e, _ := newExecutor()
+	var saved []firewall.Rule
+	e.SetFirewallSaver(func(rules []firewall.Rule) error {
+		saved = append([]firewall.Rule(nil), rules...)
+		return nil
+	})
+
+	added, err := e.FirewallAdd(context.Background(), firewall.Rule{Action: firewall.ActionBlock, CIDR: "10.0.0.0/8"})
+	if err != nil {
+		t.Fatalf("FirewallAdd: %v", err)
+	}
+	if added.ID == "" {
+		t.Error("FirewallAdd did not assign an id")
+	}
+	if len(saved) != 1 || saved[0].ID != added.ID {
+		t.Fatalf("saver not called with the new rule set: %+v", saved)
+	}
+
+	// A fresh executor (simulating a restart) restores from what got "persisted".
+	e2, _ := newExecutor()
+	e2.RestoreFirewallRules(saved)
+	got := e2.FirewallList()
+	if len(got) != 1 || got[0].CIDR != "10.0.0.0/8" {
+		t.Fatalf("RestoreFirewallRules did not seed the rule set: %+v", got)
+	}
+
+	if err := e.FirewallRemove(context.Background(), added.ID); err != nil {
+		t.Fatalf("FirewallRemove: %v", err)
+	}
+	if len(saved) != 0 {
+		t.Errorf("saver after remove = %+v, want empty", saved)
+	}
+	if len(e.FirewallList()) != 0 {
+		t.Errorf("FirewallList after remove = %+v, want empty", e.FirewallList())
+	}
+	if err := e.FirewallRemove(context.Background(), added.ID); err == nil {
+		t.Error("removing an already-removed rule should error")
+	}
+}
+
+func TestExecutor_FirewallAdd_NoModeRunning_PersistsWithoutReload(t *testing.T) {
+	ff := core.NewFakeFactory()
+	e := NewExecutor(ff.Factory(), testRegistry, fakeProber{}, fakeRoutes{}, nil)
+	ctx := context.Background()
+	if err := e.LoadLink(ctx, validLink); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.FirewallAdd(ctx, firewall.Rule{Action: firewall.ActionBlock, Process: "malware"}); err != nil {
+		t.Fatalf("FirewallAdd: %v", err)
+	}
+	if len(ff.BuiltFor("proxy")) != 0 {
+		t.Errorf("FirewallAdd built a proxy core while nothing was running")
+	}
+	if len(e.FirewallList()) != 1 {
+		t.Errorf("FirewallList() = %+v, want 1 rule", e.FirewallList())
+	}
+}
+
+// TestExecutor_FirewallAdd_WhileRunning_TriggersExactlyOneReload is the F6
+// item 5 requirement: adding a rule while a mode is running must reuse the
+// existing "reload preserving mode" path (applyPreservingMode) — one rebuild
+// of the generated config, one re-enable of the mode that was running — never
+// a second, separate reload.
+func TestExecutor_FirewallAdd_WhileRunning_TriggersExactlyOneReload(t *testing.T) {
+	ff := core.NewFakeFactory()
+	e := NewExecutor(ff.Factory(), testRegistry, fakeProber{}, fakeRoutes{}, nil)
+	ctx := context.Background()
+	if err := e.LoadLink(ctx, validLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.EnableProxy(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before := len(ff.BuiltFor("proxy"))
+	if before != 1 {
+		t.Fatalf("proxy builds before FirewallAdd = %d, want 1", before)
+	}
+
+	added, err := e.FirewallAdd(ctx, firewall.Rule{Action: firewall.ActionBlock, Domain: "ads.example.com"})
+	if err != nil {
+		t.Fatalf("FirewallAdd: %v", err)
+	}
+	if added.ID == "" {
+		t.Error("FirewallAdd did not assign an id")
+	}
+
+	built := ff.BuiltFor("proxy")
+	if len(built) != before+1 {
+		t.Fatalf("proxy builds after FirewallAdd = %d, want %d (exactly one reload)", len(built), before+1)
+	}
+	latest := built[len(built)-1]
+	if !strings.Contains(string(latest.Config), "ads.example.com") {
+		t.Errorf("reloaded config does not carry the new firewall rule:\n%s", latest.Config)
+	}
+	if e.manager().State() != runtime.StateProxyOnly {
+		t.Errorf("mode not preserved across the reload: state = %v", e.manager().State())
+	}
+
+	// Removing while running must likewise trigger exactly one more reload.
+	if err := e.FirewallRemove(ctx, added.ID); err != nil {
+		t.Fatalf("FirewallRemove: %v", err)
+	}
+	built = ff.BuiltFor("proxy")
+	if len(built) != before+2 {
+		t.Fatalf("proxy builds after FirewallRemove = %d, want %d (exactly one more reload)", len(built), before+2)
+	}
+	if strings.Contains(string(built[len(built)-1].Config), "ads.example.com") {
+		t.Errorf("reloaded config after FirewallRemove still carries the removed rule:\n%s", built[len(built)-1].Config)
 	}
 }

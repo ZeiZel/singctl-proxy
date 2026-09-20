@@ -185,3 +185,31 @@ enum ByteFormat {
         bytes(Int64(value.rounded())) + "/s"
     }
 }
+
+/// Duration formatting for connection age (Connections screen). Coarsest
+/// non-zero unit first, mirroring `ByteFormat`'s "one decimal, biggest unit
+/// that fits" spirit but for whole seconds/minutes/hours.
+enum DurationFormat {
+    /// Formats an elapsed interval, e.g. `short(75) == "1m 15s"`.
+    static func short(_ seconds: TimeInterval) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "—" }
+        let total = Int(seconds)
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        if h > 0 { return String(format: "%dh %02dm", h, m) }
+        if m > 0 { return String(format: "%dm %02ds", m, s) }
+        return "\(s)s"
+    }
+}
+
+// MARK: - App version
+
+extension Bundle {
+    /// The app's marketing version (CFBundleShortVersionString), e.g. "1.4.1",
+    /// shown in the sidebar footer and Settings → About. Falls back to "—" when
+    /// the key is somehow absent.
+    var appVersion: String {
+        infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+    }
+}

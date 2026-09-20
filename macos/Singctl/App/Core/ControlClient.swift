@@ -88,12 +88,85 @@ actor ControlClient {
         _ = try await roundTrip("KEYS-ADD", link.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    /// Adds a WireGuard key from INI config text (`[Interface]`/`[Peer]`
+    /// sections) — the one key kind with no `scheme://` to dispatch on, so
+    /// it can't go through `keysAdd`'s KEYS-ADD verb. The wire protocol is
+    /// strictly line-delimited (this file's header; the server reads a
+    /// single line with `bufio.Reader.ReadString('\n')` and cuts the verb
+    /// from the argument on the first space — internal/control/server.go's
+    /// serve()), so a raw multi-line config would be silently truncated at
+    /// its first embedded newline if sent as a normal argument. KEYS-ADD-CONFIG
+    /// instead takes the config as standard base64 (with padding) of its raw
+    /// UTF-8 bytes, which is always a single line regardless of content;
+    /// the daemon decodes it back before parsing the INI. Replies "OK",
+    /// same as KEYS-ADD.
+    func keysAddConfig(_ config: String) async throws {
+        let trimmed = config.trimmingCharacters(in: .whitespacesAndNewlines)
+        let encoded = Data(trimmed.utf8).base64EncodedString()
+        _ = try await roundTrip("KEYS-ADD-CONFIG", encoded)
+    }
+
     func keysRemove(_ index: Int) async throws {
         _ = try await roundTrip("KEYS-REMOVE", String(index))
     }
 
     func keysRename(_ index: Int, _ name: String) async throws {
         _ = try await roundTrip("KEYS-RENAME", "\(index) \(name.trimmingCharacters(in: .whitespacesAndNewlines))")
+    }
+
+    // MARK: - Subscriptions
+
+    /// SUB-LIST's reply is a JSON array of `Subscription` records (see
+    /// internal/sub/record.go).
+    func subList() async throws -> [Subscription] {
+        try decode(await roundTrip("SUB-LIST"))
+    }
+
+    /// SUB-ADD fetches the subscription immediately; the daemon errors (an
+    /// "ERR " reply, surfaced as .serverError) if the URL is unusable.
+    func subAdd(_ url: String) async throws {
+        _ = try await roundTrip("SUB-ADD", url.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    func subRemove(_ url: String) async throws {
+        _ = try await roundTrip("SUB-REMOVE", url.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// SUB-UPDATE's reply is a bare decimal count of subscriptions whose
+    /// server list changed, not JSON.
+    func subUpdate() async throws -> Int {
+        try decodeBarePID(await roundTrip("SUB-UPDATE"))
+    }
+
+    // MARK: - System proxy (macOS PAC + `networksetup`, applied by the daemon)
+
+    func sysProxyStatus() async throws -> SysProxyStatus {
+        try decode(await roundTrip("SYSPROXY-STATUS"))
+    }
+
+    /// SYSPROXY-CONFIG's reply is raw INI text, NOT JSON — same idea as
+    /// KEYS-GET's raw-links reply (see that method's doc comment).
+    func sysProxyConfig() async throws -> String {
+        try await roundTrip("SYSPROXY-CONFIG")
+    }
+
+    func sysProxySet(mode: String) async throws {
+        let data = try JSONEncoder().encode(SysProxySetRequest(mode: mode))
+        _ = try await roundTrip("SYSPROXY-SET", String(data: data, encoding: .utf8) ?? "")
+    }
+
+    /// SYSPROXY-IMPORT takes an INI rules file, a YAML config or a plain
+    /// domain list as standard base64 (with padding) of its raw UTF-8 bytes —
+    /// the same trick `keysAddConfig` uses, and for the same reason: the
+    /// control protocol is one line per request (internal/control/server.go's
+    /// serve() cuts the verb from the argument at the first space and reads
+    /// one line with `bufio.Reader.ReadString('\n')`), so raw multi-line text
+    /// would be silently truncated at its first embedded newline if sent as a
+    /// normal argument. Replies "OK".
+    func sysProxyImport(_ text: String) async throws {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let encoded = Data(trimmed.utf8).base64EncodedString()
+        _ = try await roundTrip("SYSPROXY-IMPORT", encoded)
     }
 
     // MARK: - Console
@@ -106,6 +179,61 @@ actor ControlClient {
 
     func traffic() async throws -> Traffic {
         try decode(await roundTrip("TRAFFIC"))
+    }
+
+    // MARK: - Connections (F6 in docs/v2-spec.md)
+
+    /// CONNECTIONS' reply is a JSON object — the live connection table, its
+    /// per-app/per-destination aggregates, and an explicit `state` diagnosis
+    /// (see `ConnectionsPayload`'s doc comment). Distinct from `connections()`
+    /// above, which mirrors the Clash API's own GET /connections envelope.
+    func connectionsDetail() async throws -> ConnectionsPayload {
+        try decode(await roundTrip("CONNECTIONS"))
+    }
+
+    /// Closes one live connection by id (the Clash API's DELETE
+    /// /connections/{id}). Replies "OK".
+    func closeConnection(_ id: String) async throws {
+        _ = try await roundTrip("CONNECTION-CLOSE", id)
+    }
+
+    // MARK: - Firewall (F6 item 5)
+
+    /// FIREWALL-LIST's reply is a JSON array of `FirewallRule`, in the order
+    /// rules were added.
+    func firewallList() async throws -> [FirewallRule] {
+        try decode(await roundTrip("FIREWALL-LIST"))
+    }
+
+    /// FIREWALL-ADD's argument is the JSON-encoded rule (an empty `id` is
+    /// assigned one server-side); its reply is the JSON-encoded stored rule,
+    /// NOT "OK" — the caller needs the assigned id back. The daemon errors
+    /// (an "ERR " reply, surfaced as .serverError) when the rule doesn't
+    /// validate (exactly one of domain/cidr/process, a well-formed CIDR).
+    func firewallAdd(_ rule: FirewallRule) async throws -> FirewallRule {
+        let data = try JSONEncoder().encode(rule)
+        return try decode(await roundTrip("FIREWALL-ADD", String(data: data, encoding: .utf8) ?? ""))
+    }
+
+    /// Removes the rule with the given id. Replies "OK"; the daemon errors
+    /// for an unknown id.
+    func firewallRemove(_ id: String) async throws {
+        _ = try await roundTrip("FIREWALL-REMOVE", id)
+    }
+
+    // MARK: - Proxy failover group
+
+    /// PROXY-GROUP's reply is a JSON object — see `ProxyGroup`'s doc comment
+    /// for the shape and what `available`/`auto`/`selected` mean.
+    func proxyGroup() async throws -> ProxyGroup {
+        try decode(await roundTrip("PROXY-GROUP"))
+    }
+
+    /// Pins the failover group to `tag`, or restores automatic urltest
+    /// selection when `tag == "auto"`. Replies "OK"; the daemon errors (an
+    /// "ERR " reply, surfaced as .serverError) for an unknown tag.
+    func proxySelect(_ tag: String) async throws {
+        _ = try await roundTrip("PROXY-SELECT", tag)
     }
 
     // MARK: - Per-process routing

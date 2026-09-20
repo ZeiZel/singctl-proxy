@@ -1,10 +1,9 @@
-// Package profile persists the user's VLESS link under the REAL user's home
+// Package profile persists the user's share link under the REAL user's home
 // (resolved via SUDO_USER) and chowns files back to them, so running under sudo
 // never leaves root-owned files. The filesystem is injected for testing.
 package profile
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,100 +35,40 @@ func NewStore(fs FS, homeDir string, uid, gid int) *Store {
 	}
 }
 
-func (s *Store) path() string             { return filepath.Join(s.dir, "profile.txt") }
-func (s *Store) introPath() string        { return filepath.Join(s.dir, "intro-shown") }
-func (s *Store) licensePath() string      { return filepath.Join(s.dir, "license") }
-func (s *Store) licenseStatePath() string { return filepath.Join(s.dir, "license-state.json") }
+func (s *Store) path() string          { return filepath.Join(s.dir, "profile.txt") }
+func (s *Store) introPath() string     { return filepath.Join(s.dir, "intro-shown") }
+func (s *Store) autostartPath() string { return filepath.Join(s.dir, "autostart-mode.txt") }
 
-// LicenseState is the persisted record of the license activation lifecycle: it
-// lets the CLI remember that it once reached the license server successfully
-// (ActivatedOnce) so it can keep working offline indefinitely afterwards, and
-// remember the last status the server reported (for display/diagnostics).
-// LastCheckUnix/LastStatus are updated on every reachable check, whether it
-// allowed or blocked startup. Email is the contact address captured at
-// activation time (--license --email or the GUI activation form); it is
-// resent with every activation/status call so a re-activation (e.g. after
-// StatusSuperseded) or the daily recheck doesn't need it re-entered. Added
-// after the original fields; omitempty keeps old state files (without it)
-// parsing as "" rather than failing.
-type LicenseState struct {
-	ActivatedOnce bool   `json:"activated_once"`
-	LastCheckUnix int64  `json:"last_check_unix"`
-	LastStatus    string `json:"last_status"`
-	Email         string `json:"email,omitempty"`
-}
-
-// SaveLicense stores the license token, chowning it back to the real user.
-func (s *Store) SaveLicense(token string) error {
+// SaveAutostartMode persists the autostart mode (F2 item 2: "off"|"proxy"|
+// "vpn", chosen in Settings and applied by the daemon at the next startup)
+// and chowns it back to the real user like the saved profile.
+func (s *Store) SaveAutostartMode(mode string) error {
 	if err := s.fs.MkdirAll(s.dir, 0o700); err != nil {
 		return err
 	}
-	if err := s.fs.WriteFile(s.licensePath(), []byte(strings.TrimSpace(token)+"\n"), 0o600); err != nil {
+	if err := s.fs.WriteFile(s.autostartPath(), []byte(mode), 0o600); err != nil {
 		return err
 	}
 	_ = s.fs.Chown(s.dir, s.uid, s.gid)
-	_ = s.fs.Chown(s.licensePath(), s.uid, s.gid)
+	_ = s.fs.Chown(s.autostartPath(), s.uid, s.gid)
 	return nil
 }
 
-// LoadLicense returns the saved license token, or "" if none.
-func (s *Store) LoadLicense() (string, error) {
-	data, err := s.fs.ReadFile(s.licensePath())
+// LoadAutostartMode returns the persisted autostart mode, or "off" if none has
+// ever been saved (a fresh install, or one from before F2).
+func (s *Store) LoadAutostartMode() (string, error) {
+	data, err := s.fs.ReadFile(s.autostartPath())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", nil
+			return "off", nil
 		}
-		return "", err
+		return "off", err
 	}
-	return strings.TrimSpace(string(data)), nil
-}
-
-// LoadLicenseState returns the persisted license activation state, or the zero
-// value (never activated) if no state file exists yet.
-func (s *Store) LoadLicenseState() (LicenseState, error) {
-	data, err := s.fs.ReadFile(s.licenseStatePath())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return LicenseState{}, nil
-		}
-		return LicenseState{}, err
+	mode := strings.TrimSpace(string(data))
+	if mode == "" {
+		return "off", nil
 	}
-	var st LicenseState
-	if err := json.Unmarshal(data, &st); err != nil {
-		return LicenseState{}, err
-	}
-	return st, nil
-}
-
-// SaveLicenseState persists the license activation state, chowning it back to
-// the real user like SaveLicense.
-func (s *Store) SaveLicenseState(st LicenseState) error {
-	data, err := json.Marshal(st)
-	if err != nil {
-		return err
-	}
-	if err := s.fs.MkdirAll(s.dir, 0o700); err != nil {
-		return err
-	}
-	if err := s.fs.WriteFile(s.licenseStatePath(), data, 0o600); err != nil {
-		return err
-	}
-	_ = s.fs.Chown(s.dir, s.uid, s.gid)
-	_ = s.fs.Chown(s.licenseStatePath(), s.uid, s.gid)
-	return nil
-}
-
-// RemoveLicense deletes the stored license token and its activation state (no
-// error if either is already absent), for `singctl --license-remove` and the
-// GUI's equivalent action.
-func (s *Store) RemoveLicense() error {
-	if err := s.fs.Remove(s.licensePath()); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err := s.fs.Remove(s.licenseStatePath()); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+	return mode, nil
 }
 
 // HasSeenIntro reports whether the first-run intro animation has already played.

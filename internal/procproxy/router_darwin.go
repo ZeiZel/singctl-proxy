@@ -20,7 +20,7 @@ import (
 var errExtensionUnavailable = errors.New(
 	"system extension is not installed or not approved — build and approve it " +
 		"(make app-macos DEVELOPMENT_TEAM=…, then System Settings → Login Items & " +
-		"Extensions; see LICENSATION.md for details)")
+		"Extensions; see the macOS distribution documentation for details)")
 
 // darwinRouter is the macOS per-app backend. Unlike the Linux cgroup router or
 // the Windows env fallback, it does NO env injection or process restart: it

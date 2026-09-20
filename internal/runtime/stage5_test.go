@@ -6,18 +6,29 @@ import (
 	"testing"
 
 	"singctl/internal/netstate"
-	"singctl/internal/vless"
+	"singctl/internal/protocol"
+	"singctl/internal/protocol/all"
 )
 
 const realLink = "vless://4ce58870-27d3-489b-87a0-3109db4fb919@193.188.22.147:443?type=grpc&security=reality&pbk=k&sid=4d04&sni=cursor.com&fp=chrome#t"
 
-func TestProfileConfigBuilder_LogLevel(t *testing.T) {
-	p, err := vless.ParseLink(realLink)
+// testReg is the real, default registry — the same one production code
+// builds from all.Registry().
+var testReg = all.Registry()
+
+func mustParse(t *testing.T, raw string) protocol.Profile {
+	t.Helper()
+	p, err := testReg.Parse(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return p
+}
+
+func TestProfileConfigBuilder_LogLevel(t *testing.T) {
+	p := mustParse(t, realLink)
 	// Default: quiet "warn" on BOTH the proxy and forwarder configs (no info firehose).
-	def := ProfileConfigBuilder{Profiles: vless.SingleSet(p)}
+	def := ProfileConfigBuilder{Registry: testReg, Profiles: []protocol.Profile{p}}
 	for _, gen := range []struct {
 		name string
 		fn   func() ([]byte, error)
@@ -34,7 +45,7 @@ func TestProfileConfigBuilder_LogLevel(t *testing.T) {
 		}
 	}
 	// Override (e.g. --verbose): level=info.
-	verbose := ProfileConfigBuilder{Profiles: vless.SingleSet(p), LogLevel: "info"}
+	verbose := ProfileConfigBuilder{Registry: testReg, Profiles: []protocol.Profile{p}, LogLevel: "info"}
 	cfg, _ := verbose.ProxyConfig("")
 	if !strings.Contains(string(cfg), `"level": "info"`) {
 		t.Errorf("LogLevel=info must produce level=info:\n%s", cfg)
@@ -42,11 +53,8 @@ func TestProfileConfigBuilder_LogLevel(t *testing.T) {
 }
 
 func TestProfileConfigBuilder_BindAndForwarder(t *testing.T) {
-	p, err := vless.ParseLink(realLink)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b := ProfileConfigBuilder{Profiles: vless.SingleSet(p)}
+	p := mustParse(t, realLink)
+	b := ProfileConfigBuilder{Registry: testReg, Profiles: []protocol.Profile{p}}
 
 	proxyVPN, err := b.ProxyConfig("en0")
 	if err != nil {

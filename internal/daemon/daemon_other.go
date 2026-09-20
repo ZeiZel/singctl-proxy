@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 )
 
@@ -18,7 +19,11 @@ func Spawn(c Config) error {
 		return fmt.Errorf("locate executable: %w", err)
 	}
 	cmd := exec.Command(self, BuildArgs(c)...)
-	cmd.Env = append(os.Environ(), childEnv+"=1")
+	// Strip MallocStackLogging* (Xcode/lldb sometimes set it on the parent's
+	// launch context): inherited into the re-exec'd daemon, it would print
+	// "MallocStackLogging: can't turn off malloc stack logging" and, worse,
+	// propagate into every child THAT process spawns (F2 item 6).
+	cmd.Env = append(stripMallocStackLoggingEnv(os.Environ()), childEnv+"=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	out, err := daemonOutput(c.LogPath)
@@ -36,6 +41,21 @@ func Spawn(c Config) error {
 		_ = out.Close() // the child holds its own dup'd fd
 	}
 	return nil
+}
+
+// stripMallocStackLoggingEnv returns env with every MallocStackLogging* entry
+// removed (see internal/procproxy's identical helper, which strips the same
+// family of macOS malloc-debugging vars from launched-app children).
+func stripMallocStackLoggingEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(key, "MallocStackLogging") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // daemonOutput opens the child's stdio sink: the log file when set, else /dev/null.

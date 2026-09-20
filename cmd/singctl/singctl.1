@@ -1,12 +1,12 @@
 .TH SINGCTL 1 "2026" "singctl" "User Commands"
 .SH NAME
-singctl \- VLESS proxy / VPN client on an embedded sing-box core
+singctl \- proxy / VPN client on an embedded sing-box core
 .SH SYNOPSIS
 .B sudo singctl
 .RI [ flags ]
 .SH DESCRIPTION
 .B singctl
-runs a VLESS proxy on an embedded sing-box core and toggles a system-wide VPN
+runs a proxy on an embedded sing-box core and toggles a system-wide VPN
 (TUN) mode. It is driven entirely by flags (
 .BR \-\-headless " or " \-\-daemon
 to run it, \-\-status/\-\-attach/\-\-stop to manage a running instance); there
@@ -23,10 +23,21 @@ The shipping binary is built with the
 build tag; the default build links a stub core for the hermetic test suite.
 .SH FLAGS
 .TP
-.BR \-k ", " \-\-key " " \fIvless://...\fR
-VLESS key (link) to load. May be given more than once to register several
+.BR \-k ", " \-\-key " " \fIlink\fR
+Share link to load. The protocol is taken from the link's scheme, so there is
+nothing to select: \fBvless://\fR, \fBvmess://\fR, \fBtrojan://\fR,
+\fBss://\fR, \fBhysteria2://\fR (alias \fBhy2://\fR), \fBhysteria://\fR
+(alias \fBhy://\fR), \fBtuic://\fR and \fBanytls://\fR are accepted.
+May be given more than once to register several
 servers; the proxy then picks the fastest reachable one automatically
 (latency-tested, priority follows the order given).
+.TP
+.BR \-\-sub " " \fIURL\fR
+Subscription URL \(em an \fBhttp(s)://\fR address a panel hands out, returning a
+list of share links. May be repeated. Its servers are owned by the
+subscription: they refresh automatically and cannot be renamed or deleted one
+by one, because the next refresh would undo that. Manual keys and subscription
+servers coexist.
 .TP
 .B \-\-headless
 Run the proxy in the foreground (the only way to run it interactively; there is
@@ -132,27 +143,6 @@ Do not persist the key to ~/.config/singctl.
 .B \-\-man
 Print this man page (roff) and exit.
 .TP
-.BI \-\-license " token|path"
-Install a license (a token string or a path to a file containing one) and exit.
-.TP
-.BI \-\-install " token|path"
-Alias for \-\-license.
-.TP
-.B \-\-license\-status
-Print the current license status and exit.
-.TP
-.B \-\-json
-With \-\-license\-status, print machine-readable JSON instead of text (used by
-GUI clients): a single object with
-.BR valid ", " dev ", " subject ", " expiresAt ", " daysLeft ", " features " and " reason .
-Exits 0 even when the license is invalid; validity is carried in the JSON.
-.TP
-.B \-\-license\-remove
-Remove the installed license and its activation state, then exit.
-.TP
-.BI \-\-email " address"
-Contact email to register with \-\-license/\-\-install for device activation (resent on re-activation and daily rechecks).
-.TP
 .BR \-v ", " \-\-version
 Print version and exit.
 .TP
@@ -161,12 +151,16 @@ Show usage help.
 .SH ENVIRONMENT
 .TP
 .B SINGCTL_KEY
-VLESS key, used when
+Share link, used when
 .B \-\-key
 is not given. May contain several newline-separated links.
 .TP
 .B SINGCTL_KEYS
-Several newline/semicolon-separated VLESS keys for failover.
+Several newline/semicolon-separated share links for failover. They need not
+share a protocol \(em the failover group is protocol-agnostic.
+.TP
+.B SINGCTL_SUB
+Subscription URL(s), separated by newlines, semicolons or commas.
 .TP
 .B SINGCTL_PORT
 SOCKS port, used when
@@ -187,7 +181,7 @@ These variables can also be placed in a .env file in the working directory.
 .SH FILES
 .TP
 .B ~/.config/singctl/profile.txt
-Saved VLESS key(s).
+Saved key(s).
 .TP
 .B ~/.config/singctl/singbox.log
 sing-box log output.

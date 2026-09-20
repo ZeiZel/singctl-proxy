@@ -4,24 +4,6 @@ PKG := ./...
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION)
 
-# LICENSE_PUBKEY (base64 Ed25519 public key from `bin/singctl-server keygen`) is
-# embedded into the CLI so it can verify licenses offline. Release builds MUST
-# set it; dev builds without it cannot verify any license (use build-unlicensed
-# for local runs). Never embed the PRIVATE key — it lives only on the server.
-LICENSE_PUBKEY ?=
-ifneq ($(LICENSE_PUBKEY),)
-LDFLAGS += -X singctl/internal/license.PublicKeyB64=$(LICENSE_PUBKEY)
-endif
-
-# LICENSE_SERVER_URL is the baked-in default license/revocation server base URL
-# (SINGCTL_LICENSE_SERVER still overrides it at runtime without a rebuild).
-# Release builds should set it so a normal install activates/re-checks without
-# any extra configuration.
-LICENSE_SERVER_URL ?=
-ifneq ($(LICENSE_SERVER_URL),)
-LDFLAGS += -X singctl/internal/license.LicenseServerDefault=$(LICENSE_SERVER_URL)
-endif
-
 # man page install location: `make install-man` enables `man singctl`.
 MANPREFIX ?= /usr/local/share/man
 MANPAGE := cmd/singctl/singctl.1
@@ -32,13 +14,27 @@ MANPAGE := cmd/singctl/singctl.1
 # core fails at startup with "clash api is not included in this build". We use the
 # TUN system stack, so `with_gvisor` is intentionally omitted (it also fails to
 # build with sing-tun's pinned gVisor version).
-SINGBOX_TAGS := singbox with_utls with_clash_api
+# with_gvisor is required by with_wireguard: sing-box builds its WireGuard
+# device on a userspace gVisor netstack, and without the tag the endpoint
+# decodes and then fails with "gVisor is not included in this build". It does
+# NOT change our own TUN, which pins stack:"system". Enabling it required
+# un-pinning a stale github.com/sagernet/gvisor in go.mod — the fork's version
+# string sorts as newer than the one sing-box/sing-tun actually need, so MVS
+# had been silently selecting an incompatible older revision.
+#
+# with_utls is required for REALITY; with_quic gates the QUIC-based protocols
+# (hysteria, hysteria2, tuic) — without it sing-box parses their outbounds and
+# then refuses to construct them ("QUIC is not included in this build").
+# with_wireguard gates the wireguard endpoint the same way: without it, a
+# WireGuard config decodes fine and then fails to construct at runtime — the
+# same silent-dead-key failure a missing with_quic already cost us once.
+SINGBOX_TAGS := singbox with_utls with_clash_api with_quic with_wireguard with_gvisor
 
 .PHONY: build build-macos build-windows build-all app-macos appstore libbox \
-	build-unlicensed build-server docker-server \
 	test test-integration tidy run lint clean install-man uninstall-man \
 	install uninstall \
-	pkg-macos
+	pkg-macos \
+	proxy-on proxy-off proxy-status proxy-pac pac-server
 
 # Install prefix for the binary (`make install`).
 PREFIX ?= /usr/local
@@ -49,23 +45,6 @@ UNAME_S := $(shell uname -s)
 # CGO is required for the sing-box TUN on darwin.
 build:
 	CGO_ENABLED=1 $(GO) build -tags "$(SINGBOX_TAGS)" -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/singctl
-
-# Build with license enforcement COMPILED OUT (-tags unlicensed). For local
-# development only — the bypass code is not present in any other build, and this
-# target must never be published (CI release builds omit the tag). GNU make can't
-# use a literal ':' in a target name, so this is `build-unlicensed` (not
-# `build:unlicensed`).
-build-unlicensed:
-	CGO_ENABLED=1 $(GO) build -tags "$(SINGBOX_TAGS) unlicensed" -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-unlicensed ./cmd/singctl
-	@echo "Built bin/$(BINARY)-unlicensed — license checks DISABLED (dev only)."
-
-# License server: pure Go (no sing-box, CGO-free), embeds bbolt. Container image
-# is built from deploy/server.Dockerfile.
-build-server:
-	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-server ./cmd/server
-
-docker-server:
-	docker build -f deploy/server.Dockerfile -t singctl-license:$(VERSION) .
 
 # --- cross-platform builds (bin/<binary>-<os>-<arch>) ---
 #
@@ -156,7 +135,7 @@ endif
 # the framework PacketTunnel/ imports. ~68MB, gitignored; rerun after bumping
 # sing-box or changing ./mobile. Uses sagernet's gomobile fork (pinned in
 # go.mod) and the same minimal build tags as the daemon (SINGBOX_TAGS).
-LIBBOX_TAGS := with_utls,with_clash_api,badlinkname,tfogo_checklinkname0,grpcnotrace
+LIBBOX_TAGS := with_utls,with_clash_api,with_quic,with_wireguard,with_gvisor,badlinkname,tfogo_checklinkname0,grpcnotrace
 libbox:
 ifeq ($(UNAME_S),Darwin)
 	$(GO) install github.com/sagernet/gomobile/cmd/gomobile github.com/sagernet/gomobile/cmd/gobind
@@ -182,6 +161,16 @@ test:
 # Needs the library first: go get github.com/sagernet/sing-box@v1.12.x
 test-singbox-decode:
 	$(GO) test -tags "integration $(SINGBOX_TAGS)" ./internal/core/
+
+# XHTTP against the reference implementation: starts a real Xray-core server
+# locally and runs the whole stack through it (packet-up/stream-up/stream-one
+# over HTTP/1.1 and HTTP/2, REALITY, and a urltest group). Skipped without
+# XRAY_BIN; grab a binary from https://github.com/XTLS/Xray-core/releases.
+#
+#   make test-xhttp-e2e XRAY_BIN=/path/to/xray
+XRAY_BIN ?=
+test-xhttp-e2e:
+	XRAY_BIN="$(XRAY_BIN)" $(GO) test -v -tags "integration $(SINGBOX_TAGS)" -run TestXHTTP_EndToEnd ./internal/core/
 
 # Live integration suite: root + a live machine (see PLAN.md §8 checklist).
 test-integration:
@@ -223,10 +212,129 @@ uninstall:
 PKG_VERSION ?= $(patsubst v%,%,$(VERSION))
 PKG_ARCH ?= $(shell $(GO) env GOARCH)
 
+# Full macOS release in one step: stamps the version everywhere, builds the CLI,
+# the app + embedded system extension and the signed installers, then VERIFIES
+# that every artifact carries the same version (a release once shipped as 1.5.0
+# with a 1.4.1 app bundle inside). See README-build.md "Релиз macOS".
+#
+#   make release-macos RELEASE_VERSION=1.5.0
+#   make release-macos RELEASE_VERSION=1.5.0 RELEASE_ARGS=--skip-app
+#   make release-macos RELEASE_VERSION=1.5.0 RELEASE_ARGS=--unsigned-installer
+RELEASE_VERSION ?=
+RELEASE_ARGS ?=
+release-macos:
+	@[ -n "$(RELEASE_VERSION)" ] || { echo "usage: make release-macos RELEASE_VERSION=1.5.0" >&2; exit 2; }
+	./scripts/release-macos.sh $(RELEASE_VERSION) $(RELEASE_ARGS)
+
+# Stamp a version into the app/extension Info.plists without building anything.
+#   make set-version RELEASE_VERSION=1.5.0
+set-version:
+	@[ -n "$(RELEASE_VERSION)" ] || { echo "usage: make set-version RELEASE_VERSION=1.5.0" >&2; exit 2; }
+	./scripts/set-version.sh $(RELEASE_VERSION)
+
 # macOS notarized .pkg + .dmg. Needs the app (make app-macos) + CLI (make build)
 # built; signing/notarization apply only when the identity/cred env vars are set.
+# Prefer `make release-macos` — it also stamps versions and verifies the result.
 pkg-macos:
 	PKG_VERSION="$(PKG_VERSION)" packaging/macos/build-installers.sh
 
 clean:
 	rm -rf bin dist
+
+# --- macOS system proxy toggle -------------------------------------------------
+# Two mutually-exclusive modes, both driven by a generated PAC (Automatic Proxy
+# Configuration) so they switch cleanly and can express rules the manual proxy
+# fields cannot — exclude simple hostnames, large domain lists, IP ranges:
+#   proxy-on  = EXCLUDE mode: proxy everything EXCEPT corporate + Russian +
+#               simple hostnames. See gen-exclude-pac.sh for the full rule set.
+#   proxy-pac = INCLUDE mode: proxy ONLY the allowlist (proxy-domains.txt).
+#   proxy-off = disable both manual proxy and PAC.
+# Override the service if not on Wi-Fi: `make proxy-on PROXY_SERVICE=Ethernet`.
+PROXY_SERVICE ?= Wi-Fi
+PROXY_HOST    ?= 127.0.0.1
+PROXY_PORT    ?= 2080
+
+# The PAC is served over http:// by a tiny localhost LaunchAgent, NOT file://,
+# because Chrome/Chromium refuses to load file:// PAC scripts (they silently
+# fall through to DIRECT). PAC_PORT is where that server listens; the generated
+# .pac files live in ~/.config/singctl and are what it serves.
+PAC_PORT         ?= 21080
+PAC_AGENT_LABEL  := com.singctl.pacserver
+PAC_AGENT_PLIST  := $(HOME)/Library/LaunchAgents/$(PAC_AGENT_LABEL).plist
+PAC_DIR          := $(HOME)/.config/singctl
+PAC_URL_BASE     := http://127.0.0.1:$(PAC_PORT)
+
+# Install/reload the localhost PAC server LaunchAgent (idempotent).
+pac-server:
+	@mkdir -p "$(PAC_DIR)" "$(HOME)/Library/LaunchAgents"
+	@sed -e "s#__CONFIG_DIR__#$(PAC_DIR)#g" -e "s#__PORT__#$(PAC_PORT)#g" \
+	    packaging/macos/com.singctl.pacserver.plist.in > "$(PAC_AGENT_PLIST)"
+	@launchctl bootout gui/$$(id -u)/$(PAC_AGENT_LABEL) 2>/dev/null || true
+	@launchctl bootstrap gui/$$(id -u) "$(PAC_AGENT_PLIST)"
+	@sleep 1; curl -sf --noproxy '*' -o /dev/null "$(PAC_URL_BASE)/" \
+	  && echo "pac-server up on $(PAC_URL_BASE)" \
+	  || echo "pac-server WARN: not reachable yet (check /tmp/singctl-pacserver.log)"
+
+# Ensure the server is up without a full reload when it already answers.
+define ensure_pac_server
+	curl -sf --noproxy '*' -o /dev/null "$(PAC_URL_BASE)/" 2>/dev/null \
+	  || $(MAKE) --no-print-directory pac-server
+endef
+
+# EXCLUDE-mode (proxy-on) keeps Russian + corporate + simple-hostname traffic off
+# the proxy. Corporate coverage (*.ExampleOrganization.*, RFC1918 + CGNAT 100.64/10, link-local)
+# and .ru/.xn--p1ai(=.рф) are baked into the PAC directly. The broader set of
+# Russian services on non-.ru TLDs comes from a domain list fetched from v2fly
+# `category-ru`: RU_CACHE is the live copy, RU_BASELINE the committed offline
+# fallback. proxy-on builds the PAC instantly from whichever exists (cache wins)
+# and refreshes the cache in the BACKGROUND (the full fetch is ~1min; the new
+# list applies on the next proxy-on). FETCH_PROXY routes that refresh through
+# Singctl so it works even when the Cisco path can't reach GitHub.
+RU_BASELINE      ?= packaging/macos/ru-extra.txt
+RU_CACHE         ?= $(HOME)/.config/singctl/ru-domains.txt
+EXCLUDE_PAC_PATH ?= $(HOME)/.config/singctl/proxy-exclude.pac
+
+proxy-on:
+	@mkdir -p "$(PAC_DIR)"
+	@ru="$(RU_CACHE)"; [ -f "$$ru" ] || ru="$(RU_BASELINE)"; \
+	  packaging/macos/gen-exclude-pac.sh "$$ru" "PROXY $(PROXY_HOST):$(PROXY_PORT)" > "$(EXCLUDE_PAC_PATH)"; \
+	  echo "proxy-on: exclude PAC built from $$ru"
+	@$(ensure_pac_server)
+	networksetup -setwebproxystate "$(PROXY_SERVICE)" off
+	networksetup -setsecurewebproxystate "$(PROXY_SERVICE)" off
+	networksetup -setautoproxyurl "$(PROXY_SERVICE)" "$(PAC_URL_BASE)/proxy-exclude.pac"
+	networksetup -setautoproxystate "$(PROXY_SERVICE)" on
+	@echo "proxy ON (exclude mode) -> $(PAC_URL_BASE)/proxy-exclude.pac on '$(PROXY_SERVICE)'"
+	@( FETCH_PROXY="$(PROXY_HOST):$(PROXY_PORT)" packaging/macos/fetch-ru-domains.sh "$(RU_CACHE)" >/dev/null 2>&1 & ) ; \
+	  echo "proxy-on: RU domain list refreshing in background -> $(RU_CACHE)"
+
+proxy-off:
+	networksetup -setwebproxystate "$(PROXY_SERVICE)" off
+	networksetup -setsecurewebproxystate "$(PROXY_SERVICE)" off
+	networksetup -setautoproxystate "$(PROXY_SERVICE)" off
+	@echo "proxy OFF on '$(PROXY_SERVICE)' (manual + PAC)"
+
+proxy-status:
+	@echo "== $(PROXY_SERVICE) web proxy ==";        networksetup -getwebproxy "$(PROXY_SERVICE)"
+	@echo "== $(PROXY_SERVICE) secure web proxy =="; networksetup -getsecurewebproxy "$(PROXY_SERVICE)"
+	@echo "== bypass domains ==";                    networksetup -getproxybypassdomains "$(PROXY_SERVICE)"
+	@echo "== auto proxy (PAC) ==";                  networksetup -getautoproxyurl "$(PROXY_SERVICE)"
+
+# Include-mode: proxy ONLY the domains in $(PROXY_DOMAINS_FILE) (and their
+# subdomains); everything else goes DIRECT. Generates a PAC from the list and
+# switches the service to Automatic Proxy Configuration, turning the manual
+# web/secure proxy off so the two mechanisms don't overlap. Edit the domain list
+# and re-run to update. Add domains inline: append to proxy-domains.txt.
+PROXY_DOMAINS_FILE ?= packaging/macos/proxy-domains.txt
+PROXY_PAC_PATH     ?= $(HOME)/.config/singctl/proxy.pac
+
+proxy-pac:
+	@mkdir -p "$(PAC_DIR)"
+	packaging/macos/gen-pac.sh "$(PROXY_DOMAINS_FILE)" "PROXY $(PROXY_HOST):$(PROXY_PORT)" > "$(PROXY_PAC_PATH)"
+	@$(ensure_pac_server)
+	networksetup -setwebproxystate "$(PROXY_SERVICE)" off
+	networksetup -setsecurewebproxystate "$(PROXY_SERVICE)" off
+	networksetup -setautoproxyurl "$(PROXY_SERVICE)" "$(PAC_URL_BASE)/proxy.pac"
+	networksetup -setautoproxystate "$(PROXY_SERVICE)" on
+	@echo "proxy PAC (include mode) -> $(PAC_URL_BASE)/proxy.pac on '$(PROXY_SERVICE)'"
+	@echo "proxy PAC ON -> file://$(PROXY_PAC_PATH) on '$(PROXY_SERVICE)'"

@@ -7,6 +7,7 @@
 package clashapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -163,6 +164,68 @@ func (c *Client) Delay(ctx context.Context, tag, testURL string, timeout time.Du
 		return 0, err
 	}
 	return resp.Delay, nil
+}
+
+// SelectOutbound switches the active member of a selector group (PUT
+// /proxies/{group} with body {"name":"<member>"}) — how sing-box's Clash API
+// implements manual proxy selection (see
+// experimental/clashapi/proxies.go → group.Selector.SelectOutbound). Used to
+// pin the multi-server failover group ("proxy") to one server, or back to
+// "auto" for automatic urltest selection.
+func (c *Client) SelectOutbound(ctx context.Context, group, member string) error {
+	body, err := json.Marshal(struct {
+		Name string `json:"name"`
+	}{Name: member})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.BaseURL+"/proxies/"+url.PathEscape(group), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.Secret != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Secret)
+	}
+	hc := c.HTTP
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("clash api PUT /proxies/%s: status %d", group, resp.StatusCode)
+	}
+	return nil
+}
+
+// CloseConnection closes one active connection (DELETE /connections/{id}),
+// mirroring sing-box's Clash API. Used by the CONNECTIONS view's "close"
+// action (F6 item 1).
+func (c *Client) CloseConnection(ctx context.Context, id string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.BaseURL+"/connections/"+url.PathEscape(id), nil)
+	if err != nil {
+		return err
+	}
+	if c.Secret != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Secret)
+	}
+	hc := c.HTTP
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("clash api DELETE /connections/%s: status %d", id, resp.StatusCode)
+	}
+	return nil
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, out any) error {

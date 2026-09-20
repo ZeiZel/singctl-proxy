@@ -10,18 +10,57 @@ import (
 	"singctl/internal/clashapi"
 	"singctl/internal/control"
 	"singctl/internal/feature"
-	"singctl/internal/license"
 	"singctl/internal/proclist"
 	"singctl/internal/procproxy"
+	"singctl/internal/protocol"
 	"singctl/internal/runtime"
-	"singctl/internal/vless"
 )
+
+// keysFeatureDescriptor describes the connection-keys feature for the CLI
+// registry. It used to live in internal/link (internal/link.FeatureDescriptor);
+// that package is gone, and this is CLI-facing text with no other owner, so it
+// lives here next to the flag definitions that use it. reg's scheme list
+// drives the doc text so it can never drift from what is actually registered
+// (see docs/protocol-modules.md).
+func keysFeatureDescriptor(reg *protocol.Registry) feature.Descriptor {
+	schemes := reg.Schemes()
+	quoted := make([]string, len(schemes))
+	for i, s := range schemes {
+		quoted[i] = s + "://"
+	}
+	return feature.Descriptor{
+		Name:    "keys",
+		Title:   "Keys",
+		Summary: "connection server(s)",
+		Doc: "One or more share links. The protocol is taken from the link's " +
+			"scheme — " + strings.Join(quoted, ", ") + " — so there is nothing to select " +
+			"(a WireGuard config is the one exception: it carries no scheme, so it is " +
+			"recognised by its [Interface] section instead). " +
+			"With multiple keys, sing-box builds a urltest group and automatically picks " +
+			"the fastest available server (input order sets priority); the keys need not " +
+			"share a protocol.\n\n" +
+			"A subscription (--sub) is a panel URL returning a list of such links. " +
+			"Its servers are owned by the subscription: they are refreshed automatically " +
+			"and cannot be renamed or deleted individually, because the next refresh " +
+			"would undo that. Manual keys and subscription servers coexist.",
+		Flags: []feature.FlagSpec{
+			{Names: []string{"k", "key"}, Placeholder: "<vless://... | ss://... | ...>",
+				Usage: "share link; repeat for multiple servers (failover)",
+				Env:   []string{"SINGCTL_KEY", "SINGCTL_KEYS"}, Repeatable: true},
+			{Names: []string{"sub"}, Placeholder: "<https://...>",
+				Usage: "subscription URL to fetch keys from; repeat for several",
+				Env:   []string{"SINGCTL_SUB"}, Repeatable: true},
+			{Names: []string{"no-save"}, Usage: "do not save the key to ~/.config/singctl"},
+		},
+	}
+}
 
 // Environment variables (also read from a .env file via godotenv) that provide
 // defaults for the corresponding flags.
 const (
 	envKey         = "SINGCTL_KEY"
 	envKeys        = "SINGCTL_KEYS"
+	envSubs        = "SINGCTL_SUB"
 	envPort        = "SINGCTL_PORT"
 	envClashAPI    = "SINGCTL_CLASH_API"
 	envClashSecret = "SINGCTL_CLASH_SECRET"
@@ -41,19 +80,27 @@ func (s *stringList) Set(v string) error {
 
 // --- feature modules: each owns its flags + parsed values + a descriptor ---
 
-// keysModule: -k/--key, --no-save (feature: vless keys).
+// keysModule: -k/--key, --no-save (feature: protocol keys).
 type keysModule struct {
+	reg    *protocol.Registry
 	keys   stringList
+	subs   stringList
 	noSave bool
 }
 
-func (m *keysModule) Descriptor() feature.Descriptor { return vless.FeatureDescriptor() }
+func (m *keysModule) Descriptor() feature.Descriptor { return keysFeatureDescriptor(m.reg) }
 func (m *keysModule) Bind(fs *flag.FlagSet) {
 	fs.Var(&m.keys, "k", "")
-	fs.Var(&m.keys, "key", "vless:// key; repeat for failover")
+	fs.Var(&m.keys, "key", "share link (vless/vmess/trojan/ss/hysteria2/hysteria/tuic/anytls); repeat for failover")
+	fs.Var(&m.subs, "sub", "subscription URL (https://…) to fetch keys from; repeat for several")
 	fs.BoolVar(&m.noSave, "no-save", false, "do not persist the key")
 }
 func (m *keysModule) applyEnv(getenv func(string) string) {
+	if len(m.subs) == 0 {
+		if v := strings.TrimSpace(getenv(envSubs)); v != "" {
+			m.subs = append(m.subs, v)
+		}
+	}
 	if len(m.keys) > 0 {
 		return
 	}
@@ -66,6 +113,24 @@ func (m *keysModule) applyEnv(getenv func(string) string) {
 	}
 }
 func (m *keysModule) combined() string { return strings.Join(m.keys, "\n") }
+
+// subscriptions returns the subscription URLs given on the command line or in
+// the environment, trimmed and de-duplicated.
+func (m *keysModule) subscriptions() []string {
+	seen := make(map[string]bool, len(m.subs))
+	out := make([]string, 0, len(m.subs))
+	for _, raw := range m.subs {
+		for _, u := range strings.FieldsFunc(raw, func(r rune) bool {
+			return r == '\n' || r == '\r' || r == '\t' || r == ' ' || r == ';' || r == ','
+		}) {
+			if u = strings.TrimSpace(u); u != "" && !seen[u] {
+				seen[u] = true
+				out = append(out, u)
+			}
+		}
+	}
+	return out
+}
 
 // proxyModule: -p/--proxy, --vpn, --port, --headless, -l/--logs (feature: mode).
 type proxyModule struct {
@@ -191,28 +256,6 @@ func (m *controlModule) Bind(fs *flag.FlagSet) {
 	fs.BoolVar(&m.status, "status", false, "print the status of a running singctl instance")
 }
 
-// licenseModule: --license/--install (install token/file), --license-status
-// (+ --json for machine-readable output, used by the Swift GUI),
-// --license-remove, --email (contact address sent with --license/--install
-// for activation/re-activation).
-type licenseModule struct {
-	install string
-	status  bool
-	json    bool
-	remove  bool
-	email   string
-}
-
-func (m *licenseModule) Descriptor() feature.Descriptor { return license.FeatureDescriptor() }
-func (m *licenseModule) Bind(fs *flag.FlagSet) {
-	fs.StringVar(&m.install, "license", "", "install a license (token or path to a file) and exit")
-	fs.StringVar(&m.install, "install", "", "install a license (token or path to a file) and exit; alias for --license")
-	fs.BoolVar(&m.status, "license-status", false, "print license status and exit")
-	fs.BoolVar(&m.json, "json", false, "with --license-status, print machine-readable JSON instead of text")
-	fs.BoolVar(&m.remove, "license-remove", false, "remove the installed license and exit")
-	fs.StringVar(&m.email, "email", "", "contact email to register with --license/--install (used for device activation)")
-}
-
 // rootModule: global flags --version/-v, --man, --env-file.
 type rootModule struct {
 	version bool
@@ -257,30 +300,31 @@ type cli struct {
 	obs   obsModule
 	proc  procModule
 	ctl   controlModule
-	lic   licenseModule
 	root  rootModule
 }
 
 // buildRegistry wires the modules into a registry in help-display order.
-func (c *cli) buildRegistry() {
+func (c *cli) buildRegistry(protoReg *protocol.Registry) {
+	c.keys.reg = protoReg
 	c.reg = feature.New("singctl",
-		"VLESS proxy / VPN client on an embedded sing-box core",
+		"Proxy / VPN client on an embedded sing-box core",
 		"sudo singctl [flags]").
 		Add(&c.keys).
 		Add(&c.proxy).
 		Add(&c.obs).
 		Add(&c.proc).
 		Add(&c.ctl).
-		Add(&c.lic).
 		Add(&c.root).
 		Add(docModule{proclist.FeatureDescriptor()})
 }
 
 // parseCLI builds the registry, binds + parses flags, captures trailing argv and
-// validates. flag.ErrHelp is returned for -h/--help.
-func parseCLI(args []string, out io.Writer) (*cli, error) {
+// validates. flag.ErrHelp is returned for -h/--help. protoReg is the protocol
+// registry (injected from the composition root in main) that drives the
+// --key/--help text (see keysFeatureDescriptor).
+func parseCLI(args []string, out io.Writer, protoReg *protocol.Registry) (*cli, error) {
 	c := &cli{}
-	c.buildRegistry()
+	c.buildRegistry(protoReg)
 	fs := flag.NewFlagSet("singctl", flag.ContinueOnError)
 	fs.SetOutput(out)
 	c.reg.Bind(fs)

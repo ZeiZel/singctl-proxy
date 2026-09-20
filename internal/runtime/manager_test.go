@@ -3,7 +3,9 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"singctl/internal/core"
 )
@@ -329,3 +331,111 @@ func TestManager_ResumeProxy_NoopWhenNotSuspended(t *testing.T) {
 		t.Errorf("state = %v, want stopped (resume only from suspended)", m.State())
 	}
 }
+
+// TestManager_StartForwarder_TimesOutThenStopStillWorks is F2 item 4's core
+// regression test: a wedged forwarder start must not hang the caller forever,
+// and — because the manager no longer holds its lock across the slow
+// core.Start call — a subsequent Shutdown ("MODE off") must succeed
+// immediately instead of queuing behind the still-stuck goroutine.
+func TestManager_StartForwarder_TimesOutThenStopStillWorks(t *testing.T) {
+	ff := core.NewFakeFactory()
+	blocker := &blockingCore{} // stop == nil: Start never returns
+	factory := func(ctx context.Context, label string, cfg []byte) (core.Core, error) {
+		if label == "forwarder" {
+			return blocker, nil
+		}
+		return ff.Factory()(ctx, label, cfg)
+	}
+	b := &fakeBuilder{}
+	p := &fakeProber{iface: "en0"}
+	r := &fakeRoutes{}
+	m := NewManager(factory, b, p, r)
+	m.TransitionTimeout = 50 * time.Millisecond
+	ctx := context.Background()
+
+	if err := m.StartProxy(ctx); err != nil {
+		t.Fatalf("StartProxy: %v", err)
+	}
+
+	start := time.Now()
+	err := m.StartForwarder(ctx)
+	if err == nil {
+		t.Fatal("StartForwarder against a wedged forwarder core should return an error, not hang")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error = %q, want a timeout error", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("StartForwarder took %s, want roughly TransitionTimeout (50ms)", elapsed)
+	}
+
+	// The manager must be recoverable: a subsequent Stop (Shutdown, what MODE
+	// off drives) must not be wedged behind the still-blocked forwarder start.
+	done := make(chan error, 1)
+	go func() { done <- m.Shutdown(ctx) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Shutdown after a timed-out transition: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Shutdown hung behind the stuck forwarder start — the lock was held across the slow call")
+	}
+	if got := m.State(); got != StateStopped {
+		t.Errorf("state after Shutdown = %v, want stopped", got)
+	}
+
+	// Fully recoverable: a fresh StartProxy afterwards must still work.
+	if err := m.StartProxy(ctx); err != nil {
+		t.Fatalf("StartProxy after recovery: %v", err)
+	}
+	if got := m.State(); got != StateProxyOnly {
+		t.Errorf("state after post-recovery StartProxy = %v, want proxy-only", got)
+	}
+}
+
+// TestManager_StopForwarder_TimesOut covers the teardown half of item 4 (a
+// stuck Close during VPN -> off must also time out rather than hang).
+func TestManager_StopForwarder_TimesOut(t *testing.T) {
+	ff := core.NewFakeFactory()
+	factory := func(ctx context.Context, label string, cfg []byte) (core.Core, error) {
+		if label == "forwarder" {
+			return &closeBlockingCore{}, nil
+		}
+		return ff.Factory()(ctx, label, cfg)
+	}
+	b := &fakeBuilder{}
+	p := &fakeProber{iface: "en0"}
+	r := &fakeRoutes{}
+	m := NewManager(factory, b, p, r)
+	m.TransitionTimeout = 50 * time.Millisecond
+	ctx := context.Background()
+
+	if err := m.StartProxy(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.StartForwarder(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.StopForwarder(ctx); err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("StopForwarder against a wedged Close = %v, want a timeout error", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- m.Shutdown(ctx) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Shutdown after a timed-out teardown: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Shutdown hung behind the stuck forwarder teardown")
+	}
+}
+
+// closeBlockingCore starts instantly but blocks forever in Close (simulating
+// a wedged teardown rather than a wedged start).
+type closeBlockingCore struct{}
+
+func (c *closeBlockingCore) Start(ctx context.Context) error { return nil }
+func (c *closeBlockingCore) Close() error                    { select {} }

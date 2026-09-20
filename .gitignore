@@ -24,3 +24,9 @@ deploy/compose/.env
 
 # gomobile-built sing-box core (reproduce with `make libbox`; ~68MB, not committed)
 macos/Singctl/Libbox.xcframework/
+
+# Issued license tokens (secrets) — never commit
+licenses/
+
+# Local env with secrets — never commit
+.env

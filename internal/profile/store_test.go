@@ -91,59 +91,23 @@ func TestStore_Load_RoundTrip_AndMissing(t *testing.T) {
 	}
 }
 
-func TestLicenseState_RoundTrip_AndMissing(t *testing.T) {
+func TestAutostartMode_DefaultsToOffAndRoundTrips(t *testing.T) {
 	fs := newFakeFS()
 	s := NewStore(fs, "/home/u", 1000, 1000)
 
-	if got, err := s.LoadLicenseState(); err != nil || got != (LicenseState{}) {
-		t.Fatalf("missing state = (%+v,%v), want (zero value,nil)", got, err)
+	// F2 item 2: a fresh install (nothing ever saved) must default to "off",
+	// never re-derive an old --vpn flag or any other implicit mode.
+	got, err := s.LoadAutostartMode()
+	if err != nil || got != "off" {
+		t.Fatalf("fresh LoadAutostartMode = (%q,%v), want (\"off\",nil)", got, err)
 	}
 
-	want := LicenseState{ActivatedOnce: true, LastCheckUnix: 1_700_000_000, LastStatus: "active"}
-	if err := s.SaveLicenseState(want); err != nil {
-		t.Fatal(err)
+	if err := s.SaveAutostartMode("vpn"); err != nil {
+		t.Fatalf("SaveAutostartMode: %v", err)
 	}
-	got, err := s.LoadLicenseState()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Errorf("loaded %+v, want %+v", got, want)
-	}
-
-	wantPath := filepath.Join("/home/u", ".config", "singctl", "license-state.json")
-	var fileChowned bool
-	for _, c := range fs.chowns {
-		if c.name == wantPath {
-			fileChowned = true
-		}
-	}
-	if !fileChowned {
-		t.Error("license state file was not chowned back to the real user")
-	}
-}
-
-func TestRemoveLicense_DeletesBothFiles_AndIsIdempotent(t *testing.T) {
-	fs := newFakeFS()
-	s := NewStore(fs, "/home/u", 1000, 1000)
-	if err := s.SaveLicense("token-123"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SaveLicenseState(LicenseState{ActivatedOnce: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.RemoveLicense(); err != nil {
-		t.Fatalf("RemoveLicense: %v", err)
-	}
-	if tok, err := s.LoadLicense(); err != nil || tok != "" {
-		t.Errorf("license token after remove = (%q,%v), want (\"\",nil)", tok, err)
-	}
-	if got, err := s.LoadLicenseState(); err != nil || got != (LicenseState{}) {
-		t.Errorf("license state after remove = (%+v,%v), want zero value", got, err)
-	}
-	// Removing again (nothing left to delete) must not error.
-	if err := s.RemoveLicense(); err != nil {
-		t.Errorf("RemoveLicense on already-removed license: %v", err)
+	got, err = s.LoadAutostartMode()
+	if err != nil || got != "vpn" {
+		t.Fatalf("LoadAutostartMode after save = (%q,%v), want (\"vpn\",nil)", got, err)
 	}
 }
 

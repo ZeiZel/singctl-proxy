@@ -71,6 +71,16 @@ thin gomobile-friendly wrapper: `func BuildConfig(keysJSON, settingsJSON string)
 (string, error)`. No sing-box import leaks into them (only `mobile/` + Libbox link
 the core).
 
+**Exception: `type=xhttp` keys are not usable in this SKU.** singctl's XHTTP
+transport (`type=xhttp`, alias `type=splithttp`; see [`../PLAN.md`](../PLAN.md)
+§7) needs the custom `vless-xhttp` outbound registered by `internal/singboxext`
+into sing-box's outbound registry. This SKU links the stock, prebuilt
+`Libbox.xcframework`, which hardcodes sing-box's own registry and offers no way
+to inject a custom outbound type — so `BuildConfig` fails with an explicit error
+for a key with `type=xhttp`. The Developer-ID app and the CLI daemon, which build
+their own `internal/core/real.go` and pull in `internal/singboxext`, are
+unaffected.
+
 ## Entitlements & capabilities
 
 - Container app: `com.apple.security.app-sandbox = true`,
@@ -110,7 +120,7 @@ on a Mac.
 - [ ] `gomobile bind` → `Libbox.xcframework` in CI (macOS runner) or vendored.
 - [ ] Complete `PacketTunnelProvider.swift` (start/stop, packetFlow → Libbox tun).
 - [ ] SwiftUI container app: keys/mode/status/traffic + `NETunnelProviderManager`.
-- [ ] App Group plumbing (keys + settings + license) shared app ↔ appex.
+- [ ] App Group plumbing (keys + settings) shared app ↔ appex.
 - [ ] Request the Network Extensions capability from Apple.
 - [ ] Provisioning profiles (app + appex), App Store signing.
 - [ ] App Store Connect listing, privacy nutrition labels, review notes.

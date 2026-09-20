@@ -1,4 +1,4 @@
-// Command singctl runs a VLESS proxy on an embedded sing-box core and toggles
+// Command singctl runs a proxy on an embedded sing-box core and toggles
 // a system VPN (TUN) mode, while passively coexisting with Cisco Secure
 // Client (observe-only). It is driven entirely by flags: --headless/--daemon
 // run the proxy (foreground or detached); --status/--attach/--stop manage a
@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	_ "embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -35,7 +36,7 @@ import (
 	"singctl/internal/control"
 	"singctl/internal/core"
 	"singctl/internal/daemon"
-	"singctl/internal/license"
+	"singctl/internal/firewall"
 	"singctl/internal/monitor"
 	"singctl/internal/netext"
 	"singctl/internal/netstate"
@@ -44,9 +45,11 @@ import (
 	"singctl/internal/proclist"
 	"singctl/internal/procproxy"
 	"singctl/internal/profile"
+	"singctl/internal/protocol/all"
 	"singctl/internal/remote"
 	"singctl/internal/runtime"
 	"singctl/internal/singbox"
+	"singctl/internal/sub"
 	"singctl/internal/types"
 )
 
@@ -428,6 +431,22 @@ func registerControl(srv *control.Server, executor *app.Executor, stop func(), s
 	srv.Handle("KEYS-ADD", func(arg string) (string, error) {
 		return "OK", executor.AddLink(context.Background(), arg)
 	})
+	// KEYS-ADD-CONFIG carries a config-input key (a WireGuard INI file, so
+	// far the only one) as base64 (StdEncoding) of the raw text. The control
+	// protocol is one line per request (see control.HandlerFunc), and a
+	// WireGuard config is inherently multi-line, so it cannot travel as
+	// KEYS-ADD's plain argument — it would arrive truncated at the first
+	// newline with no error. Base64 needs no escaping rules and cannot
+	// collide with any other command's argument framing (notably
+	// SETTINGS-SET's JSON), which is why this is a new command rather than
+	// an escaping convention layered onto KEYS-ADD.
+	srv.Handle("KEYS-ADD-CONFIG", func(arg string) (string, error) {
+		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(arg))
+		if err != nil {
+			return "", fmt.Errorf("bad base64: %w", err)
+		}
+		return "OK", executor.AddLink(context.Background(), string(data))
+	})
 	srv.Handle("KEYS-REMOVE", func(arg string) (string, error) {
 		idx, err := strconv.Atoi(strings.TrimSpace(arg))
 		if err != nil {
@@ -442,6 +461,107 @@ func registerControl(srv *control.Server, executor *app.Executor, stop func(), s
 			return "", fmt.Errorf("bad index %q: %w", idxStr, err)
 		}
 		return "OK", executor.RenameLink(context.Background(), idx, name)
+	})
+	// SUB-*: subscriptions. Their servers are owned by the subscription, so the
+	// KEYS-* family deliberately refuses to rename or delete them individually
+	// (see internal/app/subscriptions.go) — these are the commands that manage
+	// them as a unit.
+	srv.Handle("SUB-LIST", func(string) (string, error) {
+		data, err := json.Marshal(executor.Subscriptions())
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	})
+	srv.Handle("SUB-ADD", func(arg string) (string, error) {
+		return "OK", executor.AddSubscription(context.Background(), arg)
+	})
+	srv.Handle("SUB-REMOVE", func(arg string) (string, error) {
+		return "OK", executor.RemoveSubscription(context.Background(), arg)
+	})
+	// PROXY-GROUP/PROXY-SELECT: manual selection within the multi-server
+	// failover group (see app.ProxyGroup/SelectProxy). PROXY-GROUP is a
+	// no-op (Available=false, no error) in single-server mode.
+	srv.Handle("PROXY-GROUP", func(string) (string, error) {
+		group, err := executor.ProxyGroup(context.Background())
+		if err != nil {
+			return "", err
+		}
+		data, _ := json.Marshal(group)
+		return string(data), nil
+	})
+	srv.Handle("PROXY-SELECT", func(arg string) (string, error) {
+		return "OK", executor.SelectProxy(context.Background(), strings.TrimSpace(arg))
+	})
+	// SYSPROXY-*: the macOS system-proxy (PAC) toggle — see internal/sysproxy.
+	// Applying requires root (real `networksetup` calls); the daemon has it,
+	// the GUI does not, which is why the GUI drives this over the control
+	// socket instead of shelling out itself.
+	srv.Handle("SYSPROXY-STATUS", func(string) (string, error) {
+		data, err := json.Marshal(executor.SysProxyStatus())
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	})
+	// SYSPROXY-SET's JSON body is unmarshaled ONTO the currently-applied
+	// config (not a zero value): the GUI's mode picker only ever sends
+	// `{"mode": "..."}` (see macos/Singctl/App/Core/Models.swift's
+	// SysProxySetRequest), and json.Unmarshal leaves fields absent from the
+	// payload untouched — so a mode-only request preserves
+	// host/port/service/Proxy/Direct/etc. from whatever's already live
+	// instead of zeroing them out (which would otherwise fail Validate, or
+	// silently drop the rule lists).
+	srv.Handle("SYSPROXY-SET", func(arg string) (string, error) {
+		cfg := executor.SysProxyConfig()
+		if err := json.Unmarshal([]byte(arg), &cfg); err != nil {
+			return "", fmt.Errorf("bad sysproxy config json: %w", err)
+		}
+		return "OK", executor.SysProxySet(cfg)
+	})
+	// SYSPROXY-CONFIG returns the INI rules format (sysproxy.Config.INI) —
+	// see internal/sysproxy/ini.go's doc comment.
+	srv.Handle("SYSPROXY-CONFIG", func(string) (string, error) {
+		return string(executor.SysProxyConfigINI()), nil
+	})
+	// SYSPROXY-IMPORT carries an INI Config (preferred — see
+	// internal/sysproxy/ini.go), a legacy YAML Config, OR a plain
+	// newline-separated domain list (see sysproxy.DecodeImport) as base64
+	// (StdEncoding) of the raw text — same one-line-per-request reasoning as
+	// KEYS-ADD-CONFIG above.
+	srv.Handle("SYSPROXY-IMPORT", func(arg string) (string, error) {
+		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(arg))
+		if err != nil {
+			return "", fmt.Errorf("bad base64: %w", err)
+		}
+		return "OK", executor.SysProxyImport(data)
+	})
+	// SYSPROXY-RECLAIM-PORT removes singctl's own legacy PAC LaunchAgent (see
+	// F1 in docs/v2-spec.md) — the standalone mac-proxy utility's (and
+	// singctl's own pre-2.0 `make pac-server` target's) com.singctl.pacserver
+	// LaunchAgent, which can hold the exact port singctl's in-process PAC
+	// server wants. Only ever runs on this explicit request, and only when
+	// the on-disk plist verifiably matches singctl's own legacy shape — never
+	// for a foreign process, even one occupying the same port. The GUI calls
+	// this from a button surfaced after a SYSPROXY-SET/-STATUS bind error
+	// names the conflict as singctl's own legacy agent.
+	srv.Handle("SYSPROXY-RECLAIM-PORT", func(string) (string, error) {
+		return "OK", executor.SysProxyReclaimPort()
+	})
+	srv.Handle("SUB-UPDATE", func(string) (string, error) {
+		// Bounded independently of the caller: a wedged panel must not hold the
+		// control socket open indefinitely.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		changed, err := executor.RefreshSubscriptions(ctx)
+		// A partial failure is not a failed command: some panels updated, and
+		// the ones that did not carry their own last_error, which SUB-LIST
+		// reports per subscription. Only a refresh that achieved nothing is
+		// surfaced as an error here.
+		if err != nil && changed == 0 {
+			return "", err
+		}
+		return strconv.Itoa(changed), nil
 	})
 	srv.Handle("CONSOLE-POLL", func(arg string) (string, error) {
 		since, _ := strconv.Atoi(strings.TrimSpace(arg))
@@ -578,6 +698,47 @@ func registerControl(srv *control.Server, executor *app.Executor, stop func(), s
 	srv.Handle("APP-REMOVE", func(arg string) (string, error) {
 		return "OK", executor.RemoveProxiedApp(context.Background(), strings.TrimSpace(arg))
 	})
+	// CONNECTIONS/CONNECTION-CLOSE: the live connection table with an
+	// explicit empty-state diagnosis (F6 items 1-3 in docs/v2-spec.md) and
+	// per-app/per-destination aggregates (F6 item 2), backed by the Clash
+	// API — see app.Executor.Connections/clashapi.Connections.
+	srv.Handle("CONNECTIONS", func(string) (string, error) {
+		data, err := json.Marshal(executor.Connections(context.Background()))
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	})
+	srv.Handle("CONNECTION-CLOSE", func(arg string) (string, error) {
+		return "OK", executor.CloseConnection(context.Background(), strings.TrimSpace(arg))
+	})
+	// FIREWALL-*: the minimal firewall (F6 item 5) — block/allow a
+	// destination domain/CIDR or a process, persisted and rendered into the
+	// generated sing-box config's route rules (internal/firewall,
+	// internal/singbox's firewallRouteRules). FIREWALL-ADD's JSON argument is
+	// a firewall.Rule; FIREWALL-REMOVE's plain argument is its id.
+	srv.Handle("FIREWALL-LIST", func(string) (string, error) {
+		data, err := json.Marshal(executor.FirewallList())
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	})
+	srv.Handle("FIREWALL-ADD", func(arg string) (string, error) {
+		var rule firewall.Rule
+		if err := json.Unmarshal([]byte(arg), &rule); err != nil {
+			return "", fmt.Errorf("bad firewall rule json: %w", err)
+		}
+		added, err := executor.FirewallAdd(context.Background(), rule)
+		if err != nil {
+			return "", err
+		}
+		data, _ := json.Marshal(added)
+		return string(data), nil
+	})
+	srv.Handle("FIREWALL-REMOVE", func(arg string) (string, error) {
+		return "OK", executor.FirewallRemove(context.Background(), strings.TrimSpace(arg))
+	})
 }
 
 // parsePID parses a decimal PID argument from a control command.
@@ -614,7 +775,16 @@ func requireRoot(goos string, euid int) error {
 }
 
 func main() {
-	c, err := parseCLI(os.Args[1:], os.Stderr)
+	// The protocol registry is the composition root's one wiring point (see
+	// docs/protocol-modules.md): every protocol module singctl supports is
+	// listed exactly once, in internal/protocol/all.Registry, and injected
+	// down from here — nothing below reaches for a package-level singleton.
+	// Registry() panics only on a wiring bug (a duplicate scheme/name), never
+	// on anything runtime/user input could trigger, so building it
+	// unconditionally before flag parsing is safe.
+	reg := all.Registry()
+
+	c, err := parseCLI(os.Args[1:], os.Stderr, reg)
 	if errors.Is(err, flag.ErrHelp) {
 		os.Exit(0)
 	}
@@ -636,18 +806,6 @@ func main() {
 	// Control commands target an already-running instance and need no root.
 	if c.ctl.attach || c.ctl.stop || c.ctl.status {
 		os.Exit(runControlCommand(c))
-	}
-
-	// License actions (install / status / remove) work without root and exit
-	// immediately.
-	if c.lic.install != "" {
-		os.Exit(runLicenseInstall(c.lic.install, c.lic.email))
-	}
-	if c.lic.status {
-		os.Exit(runLicenseStatus(c.lic.json))
-	}
-	if c.lic.remove {
-		os.Exit(runLicenseRemove())
 	}
 
 	// .env (explicit path, or ./.env if present) feeds SINGCTL_KEY/SINGCTL_PORT;
@@ -692,14 +850,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// License gate: starting our own cores requires a valid license (the daemon
-	// child re-enters main and is gated here too). Remote/attach paths above are
-	// unaffected — they drive an already-licensed running instance.
-	if err := enforceLicense(); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
-	}
-
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// A separate cancel lets the control socket (--stop from another tab) shut us
@@ -714,7 +864,8 @@ func main() {
 	routes := runtime.NewOSRouteController()
 
 	notes := make(chan any, 256) // large buffer absorbs chatty Electron console output; pushNonBlocking drops on backpressure
-	executor := app.NewExecutor(core.NewFactory(), prober, routes, notes)
+	executor := app.NewExecutor(core.NewFactory(), reg, prober, routes, notes)
+	defer executor.CloseLog()
 	executor.SetSocksPort(c.proxy.port)
 	executor.SetLaunchUser(resolveLaunchUser()) // drop proxied app launches to the real user (sudo)
 	clashAddr := c.obs.effectiveClashAPI()
@@ -770,6 +921,58 @@ func main() {
 		if l, err := store.Load(); err == nil {
 			savedLink = l
 		}
+		// Persisted autostart mode (F2 item 2): defaults to "off" for a fresh
+		// install or one from before F2 — the LaunchDaemon's plist no longer
+		// hardcodes --vpn (F2 item 1), so this is the only thing that decides
+		// what runHeadless enables when no --proxy/--vpn flag is given.
+		executor.SetAutostartSaver(store.SaveAutostartMode)
+		if am, err := store.LoadAutostartMode(); err == nil {
+			_ = executor.SetAutostartMode(am)
+		}
+
+		// Persisted system-proxy (PAC) config (F1b in docs/v2-spec.md): without
+		// this, a daemon restart leaves macOS pointed at a PAC URL from the
+		// previous run (dead now that pac_port defaults to an OS-assigned
+		// ephemeral port — see F1). Best-effort, same rule as the autostart mode
+		// above (F2 item 3): a load/parse/apply failure is only ever a warning —
+		// it must never stop the daemon from starting.
+		executor.SetSysProxySaver(store.SaveSysproxyConfig)
+		if data, err := store.LoadSysproxyConfig(); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: load persisted system-proxy config:", err)
+		} else if err := executor.RestoreSysProxyConfig(data); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: restore system-proxy config:", err)
+		}
+
+		// Persisted firewall rules (F6 item 5): rendered into the generated
+		// proxy config's route rules on every load/reload (see
+		// app.firewallConfigBuilder), same "load the cache now, no network/mode
+		// work yet" discipline as the subscription restore right below.
+		executor.SetFirewallSaver(store.SaveFirewallRules)
+		if rules, err := store.LoadFirewallRules(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		} else {
+			executor.RestoreFirewallRules(rules)
+		}
+
+		// Subscriptions. The cached server lists are restored WITHOUT fetching so
+		// the daemon comes up with the servers it had last time even when the
+		// panel is unreachable; the refresher brings them up to date shortly
+		// after. The fetcher falls back to our own local HTTP proxy when a
+		// direct request fails, because subscription hosts are exactly the kind
+		// of host this network blocks.
+		socksPort := c.proxy.port
+		if socksPort == 0 {
+			socksPort = 1080
+		}
+		executor.SetSubscriptionDeps(
+			sub.NewHTTPFetcher(nil, fmt.Sprintf("127.0.0.1:%d", socksPort+1)),
+			store.SaveSubscriptions,
+		)
+		if subs, err := store.LoadSubscriptions(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		} else {
+			executor.RestoreSubscriptions(subs)
+		}
 	} else {
 		fmt.Fprintln(os.Stderr, "warning: cannot resolve a config directory — attach/--stop and instance discovery are disabled")
 	}
@@ -778,6 +981,28 @@ func main() {
 	}
 	if c.proxy.verbose {
 		executor.SetLogLevel("info") // opt back into verbose per-connection logging
+	}
+
+	// --sub URLs are registered (and fetched once) before any mode starts. A
+	// failure here is a warning, not a fatal: the run may still be viable on
+	// manual keys or on previously cached subscription servers, and the
+	// "nothing to run" case is reported by runHeadless with a better message.
+	for _, u := range c.keys.subscriptions() {
+		known := false
+		for _, existing := range executor.Subscriptions() {
+			if existing.URL == u {
+				known = true
+				break
+			}
+		}
+		if known {
+			continue
+		}
+		addCtx, cancelAdd := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := executor.AddSubscription(addCtx, u); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: subscription %s: %v\n", u, err)
+		}
+		cancelAdd()
 	}
 
 	// flag/env key overrides the saved profile.
@@ -794,8 +1019,8 @@ func main() {
 	// Runs BEFORE advertising so the exiting parent never clobbers the child's
 	// instance.json / control socket. The child (SINGCTL_DAEMON_CHILD=1) skips this.
 	if c.proxy.daemon && !daemon.IsChild() {
-		if initialLink == "" {
-			fmt.Fprintln(os.Stderr, "error: --daemon needs a key (--key, $SINGCTL_KEY, or a saved profile)")
+		if initialLink == "" && len(executor.Subscriptions()) == 0 {
+			fmt.Fprintln(os.Stderr, "error: --daemon needs a key or a subscription (--key/--sub, $SINGCTL_KEY/$SINGCTL_SUB, or a saved profile)")
 			os.Exit(1)
 		}
 		if store != nil {
@@ -872,18 +1097,6 @@ func main() {
 	go mon.Run(ctx, ticker.C, events)
 	go executor.Loop(ctx, monOut)
 
-	// Daily license re-check while running: enforceLicense already gated startup
-	// (including first-activation); this catches a revocation/expiry that
-	// happens later without requiring a restart. No-op without a configured
-	// server (nothing to re-check against).
-	if license.Enabled() {
-		if base := license.ServerURL(); base != "" {
-			if claims, err := license.Check(loadLicenseToken(), time.Now()); err == nil {
-				go licenseRefreshLoop(ctx, store, base, claims.ID, cancelRun)
-			}
-		}
-	}
-
 	// Reaching here always means --headless is set: the daemon child always
 	// passes it (internal/daemon.BuildArgs), and the bare/no-flag case already
 	// returned above via printBareStatus.
@@ -893,35 +1106,89 @@ func main() {
 	}
 }
 
-// runHeadless drives the executor without a TUI: load the link, enable the
-// requested mode (proxy unless --vpn), print status notes to stdout and run
-// until SIGINT/SIGTERM. The notes channel must be drained here — the executor
-// blocks pushing into it otherwise.
-func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan any, link string, c *cli) error {
-	if link == "" {
-		return fmt.Errorf("headless mode needs a key: pass --key, set %s (or .env), or save a profile first", envKey)
+// requestedMode reports the mode explicitly requested on the command line
+// (--proxy/--vpn; parseCLI already rejects both together). explicit is false
+// when neither flag was given — the case for the installed LaunchDaemon since
+// F2 item 1 removed --vpn from its plist, and for the daemon's own re-exec of
+// itself in --daemon mode with neither flag either. runHeadless falls back to
+// the persisted autostart-mode setting in that case (F2 item 2).
+func requestedMode(c *cli) (mode string, explicit bool) {
+	switch {
+	case c.proxy.vpn:
+		return "vpn", true
+	case c.proxy.proxy:
+		return "proxy", true
+	default:
+		return "", false
 	}
-	if err := executor.LoadLink(ctx, link); err != nil {
-		return fmt.Errorf("load key: %w", err)
-	}
+}
 
-	mode := "PROXY"
-	enable := executor.EnableProxy
-	if c.proxy.vpn {
-		mode, enable = "VPN", executor.EnableVPN
-	}
-	if err := enable(ctx); err != nil {
+// reportModeResult prints the daemon's usual startup line on success; on
+// failure it reports the error and explicitly says the daemon is staying up
+// in "off" — it must NEVER be fatal (F2 item 3): that combination, together
+// with the installed LaunchDaemon's KeepAlive, is exactly what turned "VPN
+// fails to start" into an infinite restart loop.
+func reportModeResult(mode string, socksPort int, err error) {
+	if err != nil {
 		if strings.Contains(err.Error(), "address already in use") {
-			return fmt.Errorf("enable %s: %w — another instance is already running; use --attach/--status/--stop", strings.ToLower(mode), err)
+			fmt.Fprintf(os.Stderr, "error: enable %s: %v — another instance is already running; use --attach/--status/--stop. Staying up in off mode.\n", strings.ToLower(mode), err)
+			return
 		}
-		return fmt.Errorf("enable %s: %w", strings.ToLower(mode), err)
+		fmt.Fprintf(os.Stderr, "error: enable %s: %v — staying up in off mode; retry via MODE or the GUI\n", strings.ToLower(mode), err)
+		return
 	}
-	socks := c.proxy.port
+	socks := socksPort
 	if socks == 0 {
 		socks = 1080
 	}
 	fmt.Printf("singctl %s: %s mode up — socks 127.0.0.1:%d, http 127.0.0.1:%d (ctrl+c to stop)\n",
 		version, mode, socks, socks+1)
+}
+
+// runHeadless drives the executor without a TUI: load the link, enable the
+// requested (or persisted autostart) mode, print status notes to stdout and
+// run until SIGINT/SIGTERM. The notes channel must be drained here — the
+// executor blocks pushing into it otherwise.
+//
+// Per F2 (items 1-3), nothing here is fatal: a fresh install with no key yet,
+// a stale/corrupt saved link, and a mode that fails to start (the reported
+// "no physical interface detected" VPN failure) all leave the process running
+// — listening on the control socket for KEYS-ADD/MODE/SETTINGS-SET — rather
+// than exiting, which combined with the LaunchDaemon's KeepAlive is what
+// produced the restart loop this replaces.
+func runHeadless(ctx context.Context, executor *app.Executor, notes <-chan any, link string, c *cli) error {
+	switch {
+	case link != "":
+		if err := executor.LoadLink(ctx, link); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: load key: %v — starting with no key loaded; add one via KEYS-ADD or the GUI\n", err)
+		}
+	case len(executor.Subscriptions()) > 0:
+		// No manual keys, but subscriptions were restored from disk: run off
+		// their cached servers and let the refresher bring them up to date.
+		if err := executor.Reload(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: load subscription servers: %v — starting with no key loaded\n", err)
+		}
+	default:
+		fmt.Println("singctl: no key or subscription configured yet — waiting (add one via the GUI, --attach, or KEYS-ADD)")
+	}
+
+	if mode, explicit := requestedMode(c); explicit {
+		enable := executor.EnableProxy
+		label := "PROXY"
+		if mode == "vpn" {
+			enable, label = executor.EnableVPN, "VPN"
+		}
+		reportModeResult(label, c.proxy.port, enable(ctx))
+	} else if am := executor.AutostartMode(); am != "off" {
+		// The common case since F2 item 1: the LaunchDaemon starts with no
+		// mode at all, and this is what brings it up — best-effort, see
+		// Executor.ApplyAutostart's doc comment for why a failure here can
+		// never be allowed to exit the process.
+		reportModeResult(strings.ToUpper(am), c.proxy.port, executor.ApplyAutostart(ctx))
+	} else {
+		fmt.Println("singctl: starting in off mode (autostart is off) — enable proxy/vpn via the GUI, --attach, or MODE")
+	}
+	executor.StartSubscriptionRefresher(ctx)
 
 	// Route requested PIDs and/or launch a proxied command (best-effort; errors
 	// are reported but do not abort the running proxy).

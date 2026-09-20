@@ -5,16 +5,27 @@ import (
 	"net"
 	"net/url"
 
-	"singctl/internal/vless"
+	"singctl/internal/firewall"
+	"singctl/internal/protocol"
 )
 
 // Fixed policy/server constants mirroring the existing config.json semantics.
 const (
-	socksTag      = "socks-in"
-	httpTag       = "http-in"
-	tunTag        = "tun-in"
-	proxyTag      = "proxy"
-	directTag     = "direct"
+	socksTag = "socks-in"
+	httpTag  = "http-in"
+	tunTag   = "tun-in"
+	proxyTag = "proxy"
+	// autoTag is the urltest group. In multi-server mode "proxy" is a SELECTOR
+	// whose members are this group plus every individual server, so the user
+	// can pin one server by hand while automatic selection stays one click
+	// away. Everything downstream (route.final, the DNS detour) keeps
+	// referencing "proxy" and is unaffected by which member is active.
+	autoTag   = "auto"
+	directTag = "direct"
+	// blockTag is the "block" outbound firewall rules point at (F6 item 5).
+	// Emitted only when at least one rule blocks something — see
+	// firewallRouteRules.
+	blockTag      = "block"
 	socksOutTag   = "socks-out"
 	proxyDNSTag   = "proxy-dns"
 	fwdDNSTag     = "fwd-dns"
@@ -106,66 +117,108 @@ type ProxyOpts struct {
 	Ports     Ports         // local listen ports (zero = defaults)
 	ClashAPI  *ClashAPI     // non-nil enables the Clash API + process-search logging
 	URLTest   URLTestParams // failover group settings (used only with >1 server)
+	// Firewall is the persisted rule set from internal/firewall (F6 item 5).
+	// A nil/empty slice adds nothing at all to the generated config — no
+	// "block" outbound, no extra route rules — which is what keeps every
+	// existing golden file byte-identical (docs/v2-spec.md F6's byte-fidelity
+	// requirement).
+	Firewall []firewall.Rule
 }
 
-// GenerateProxyConfig builds the persistent PROXY instance on the default
-// ports (socks 1080 + http 2080). See GenerateProxyConfigOpts.
-func GenerateProxyConfig(p vless.ServerProfile, physIface string) (Config, error) {
-	return GenerateProxyConfigOpts(vless.SingleSet(p), ProxyOpts{PhysIface: physIface})
-}
-
-// GenerateProxyConfigPorts is the single-profile adapter with custom ports.
-func GenerateProxyConfigPorts(p vless.ServerProfile, physIface string, ports Ports) (Config, error) {
-	return GenerateProxyConfigOpts(vless.SingleSet(p), ProxyOpts{PhysIface: physIface, Ports: ports})
-}
-
-// vlessOutbound builds one VLESS outbound for profile p under the given tag.
-// physIface (VPN mode) binds its egress to the physical NIC.
-func vlessOutbound(p vless.ServerProfile, tag, physIface string) VLESSOutbound {
-	var tlsCfg *TLS
-	if p.Security == vless.SecurityTLS || p.Security == vless.SecurityReality {
-		tlsCfg = &TLS{Enabled: true, ServerName: p.TLS.ServerName, Insecure: p.TLS.Insecure}
-		if len(p.TLS.ALPN) > 0 {
-			tlsCfg.ALPN = p.TLS.ALPN
+// firewallRouteRules translates persisted firewall rules into sing-box route
+// rules pointing at the "block" (drop) or "direct" (bypass the tunnel)
+// outbound, plus the "block" outbound itself when at least one rule actually
+// blocks something. It is placed ahead of the private-IP/ru-domain rules (see
+// GenerateProxyConfigOpts) so a firewall decision always wins over the
+// default routing. A malformed rule (defensively — Executor.FirewallAdd
+// already validates before persisting) contributes no rule rather than
+// emitting one that would match everything.
+func firewallRouteRules(rules []firewall.Rule) (extraOutbounds []any, extraRules []RouteRule) {
+	needsBlock := false
+	for _, r := range rules {
+		rule := RouteRule{}
+		switch {
+		case r.Domain != "":
+			rule.DomainSuffix = []string{r.Domain}
+		case r.CIDR != "":
+			rule.IPCIDR = []string{r.CIDR}
+		case r.Process != "":
+			rule.ProcessName = []string{r.Process}
+		default:
+			continue
 		}
-		if p.TLS.Fingerprint != "" {
-			tlsCfg.UTLS = &UTLS{Enabled: true, Fingerprint: p.TLS.Fingerprint}
+		if r.Action == firewall.ActionBlock {
+			rule.Outbound = blockTag
+			needsBlock = true
+		} else {
+			rule.Outbound = directTag
 		}
-		if p.Reality.Enabled {
-			tlsCfg.Reality = &Reality{Enabled: true, PublicKey: p.Reality.PublicKey, ShortID: p.Reality.ShortID}
-		}
+		extraRules = append(extraRules, rule)
 	}
-
-	var transport *Transport
-	switch p.Transport.Type {
-	case vless.TransportGRPC:
-		transport = &Transport{Type: "grpc", ServiceName: p.Transport.ServiceName}
-	case vless.TransportWS:
-		transport = &Transport{Type: "ws", Path: p.Transport.Path}
-		if len(p.Transport.Host) > 0 {
-			transport.Headers = map[string]string{"Host": p.Transport.Host[0]}
-		}
-	case vless.TransportHTTP:
-		transport = &Transport{Type: "http", Path: p.Transport.Path}
-		if len(p.Transport.Host) > 0 {
-			transport.Host = p.Transport.Host
-		}
-	case vless.TransportTCP:
-		transport = nil
+	if needsBlock {
+		extraOutbounds = append(extraOutbounds, BlockOutbound{Type: "block", Tag: blockTag})
 	}
+	return extraOutbounds, extraRules
+}
 
-	return VLESSOutbound{
-		Type:           "vless",
+// renderNode looks up profile p's protocol module in reg, type-asserts it as
+// a Renderer (a module that does not implement Renderer is an engine-wiring
+// error, named in the returned error), and renders its sing-box node under
+// tag. It returns the node together with the module's declared Kind, so the
+// caller knows whether to place it in outbounds or endpoints.
+func renderNode(reg *protocol.Registry, p protocol.Profile, tag, physIface string) (any, protocol.Kind, error) {
+	m, ok := reg.Module(p.Protocol)
+	if !ok {
+		return nil, 0, fmt.Errorf("singbox: no protocol module registered for %q", p.Protocol)
+	}
+	renderer, ok := m.(Renderer)
+	if !ok {
+		return nil, 0, fmt.Errorf("singbox: protocol %q (%s) does not support the sing-box engine",
+			p.Protocol, m.Descriptor().Title)
+	}
+	node, err := renderer.RenderNode(p, RenderOpts{
 		Tag:            tag,
-		Server:         p.Host,
-		ServerPort:     int(p.Port),
-		UUID:           p.UUID,
-		Flow:           p.Flow,
-		ConnectTimeout: connectTimout,
-		TLS:            tlsCfg,
-		Transport:      transport,
 		BindInterface:  physIface,
+		ConnectTimeout: connectTimout,
+	})
+	if err != nil {
+		return nil, 0, err
 	}
+	return node, m.Descriptor().Kind, nil
+}
+
+// profileHosts renders p (under a throwaway tag, discarding the node) purely
+// to learn the dial host(s) it needs — used where a generator needs a
+// profile's host without emitting its outbound at all (GenerateForwarderConfigSet,
+// which relays everything to the persistent proxy instead of dialing servers
+// itself).
+func profileHosts(reg *protocol.Registry, p protocol.Profile) ([]string, error) {
+	node, _, err := renderNode(reg, p, "probe", "")
+	if err != nil {
+		return nil, err
+	}
+	return nodeHosts(node), nil
+}
+
+// placeNode appends node to *outbounds or *endpoints according to kind.
+func placeNode(outbounds, endpoints *[]any, kind protocol.Kind, node any) {
+	if kind == protocol.KindEndpoint {
+		*endpoints = append(*endpoints, node)
+		return
+	}
+	*outbounds = append(*outbounds, node)
+}
+
+// nonLiteralHosts returns the hosts in hosts that are domain names, not
+// literal IPs — the ones that actually need the bootstrap-DNS treatment.
+func nonLiteralHosts(hosts []string) []string {
+	var out []string
+	for _, h := range hosts {
+		if h != "" && net.ParseIP(h) == nil {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 // proxyServerTag is the per-server outbound tag in a multi-server set.
@@ -202,23 +255,32 @@ func dedupeHosts(hosts []string) []string {
 }
 
 // GenerateProxyConfigOpts builds the persistent PROXY instance from a set of one
-// or more servers. PhysIface is non-empty ONLY in VPN mode (decision D3): then
-// bind_interface/default_interface pin egress to the physical NIC so it escapes
-// our own TUN. In proxy-only mode PhysIface == "" and those fields are omitted,
-// so traffic follows the default route (through Cisco if active — D4). The PROXY
+// or more profiles, rendered through reg (the registry is injected, never a
+// package-level singleton — see docs/protocol-modules.md). PhysIface is
+// non-empty ONLY in VPN mode (decision D3): then bind_interface/
+// default_interface pin egress to the physical NIC so it escapes our own TUN.
+// In proxy-only mode PhysIface == "" and those fields are omitted, so traffic
+// follows the default route (through Cisco if active — D4). The PROXY
 // instance never contains a tun inbound.
 //
-// With one server the VLESS outbound is tagged "proxy" directly (byte-identical
-// to the historical config). With several, each server is tagged "proxy-0..N"
-// and a "proxy" urltest group latency-tests them and routes through the fastest
-// reachable one — so route.final ("proxy") and the DNS detour are unchanged.
-func GenerateProxyConfigOpts(set vless.ProfileSet, opts ProxyOpts) (Config, error) {
+// With one profile its node is tagged "proxy" directly (byte-identical to the
+// historical config). With several, each is tagged "proxy-0..N" and a "proxy"
+// urltest group latency-tests them and routes through the fastest reachable
+// one — so route.final ("proxy") and the DNS detour are unchanged. A profile
+// whose module declares KindEndpoint (WireGuard) lands in the sibling
+// "endpoints" array instead of "outbounds"; either way its tag joins the same
+// failover group.
+func GenerateProxyConfigOpts(reg *protocol.Registry, profiles []protocol.Profile, opts ProxyOpts) (Config, error) {
+	if len(profiles) == 0 {
+		return Config{}, fmt.Errorf("singbox: at least one profile is required")
+	}
 	ports := opts.Ports.withDefaults()
 
 	var outbounds []any
-	// bootHosts collects the VLESS server hostnames (when addressed by domain)
-	// and, in multi-server mode, the urltest probe host. These must be resolved
-	// by the bootstrap resolver (public DoH via "direct"), NOT by the system/
+	var endpoints []any
+	// bootHosts collects the server hostnames (when addressed by domain) and,
+	// in multi-server mode, the urltest probe host. These must be resolved by
+	// the bootstrap resolver (public DoH via "direct"), NOT by the system/
 	// corporate resolver and NOT through the proxy itself:
 	//   - Resolving a proxy server's own address through the proxy is a bootstrap
 	//     loop (in multi-server mode it lands the dial on the DoH IP 1.1.1.1 and
@@ -229,30 +291,45 @@ func GenerateProxyConfigOpts(set vless.ProfileSet, opts ProxyOpts) (Config, erro
 	// Routing them through "direct" (which rides the physical/default route where
 	// plain internet works) sidesteps both.
 	var bootHosts []string
-	if set.Multi() {
-		tags := make([]string, set.Len())
-		for i, p := range set.Profiles {
-			tag := proxyServerTag(i)
-			tags[i] = tag
-			outbounds = append(outbounds, vlessOutbound(p, tag, opts.PhysIface))
-			if net.ParseIP(p.Host) == nil {
-				bootHosts = append(bootHosts, p.Host)
-			}
+
+	multi := len(profiles) > 1
+	tags := make([]string, 0, len(profiles))
+	for i, p := range profiles {
+		tag := proxyTag
+		if multi {
+			tag = proxyServerTag(i)
+			tags = append(tags, tag)
 		}
+		node, kind, err := renderNode(reg, p, tag, opts.PhysIface)
+		if err != nil {
+			return Config{}, err
+		}
+		placeNode(&outbounds, &endpoints, kind, node)
+		bootHosts = append(bootHosts, nonLiteralHosts(nodeHosts(node))...)
+	}
+	if multi {
 		ut := opts.URLTest.withDefaults()
 		outbounds = append(outbounds, URLTestOutbound{
-			Type: "urltest", Tag: proxyTag, Outbounds: tags,
+			Type: "urltest", Tag: autoTag, Outbounds: tags,
 			URL: ut.URL, Interval: ut.Interval, Tolerance: ut.Tolerance,
 		})
+		// The selector is what "proxy" resolves to. Its default is the urltest
+		// group, so behaviour is unchanged until the user picks a server; the
+		// Clash API switches the active member live, without rebuilding the
+		// config or dropping the running proxy.
+		outbounds = append(outbounds, SelectorOutbound{
+			Type: "selector", Tag: proxyTag,
+			Outbounds: append([]string{autoTag}, tags...),
+			Default:   autoTag,
+		})
 		bootHosts = append(bootHosts, probeHost(ut.URL))
-	} else {
-		p := set.Primary()
-		outbounds = append(outbounds, vlessOutbound(p, proxyTag, opts.PhysIface))
-		if net.ParseIP(p.Host) == nil {
-			bootHosts = append(bootHosts, p.Host)
-		}
 	}
 	outbounds = append(outbounds, DirectOutbound{Type: "direct", Tag: directTag, BindInterface: opts.PhysIface})
+
+	// Firewall (F6 item 5): an empty rule set contributes nothing (nil, nil),
+	// which is what keeps every existing golden byte-identical.
+	fwOutbounds, fwRules := firewallRouteRules(opts.Firewall)
+	outbounds = append(outbounds, fwOutbounds...)
 
 	// Bootstrap DNS: resolve bootHosts via DoH 1.1.1.1 over "direct" so the
 	// server/probe hostnames never depend on the corporate resolver or the proxy.
@@ -272,11 +349,15 @@ func GenerateProxyConfigOpts(set vless.ProfileSet, opts ProxyOpts) (Config, erro
 		dnsRules = append(dnsRules, DNSRule{Domain: hosts, Server: bootDNSTag})
 	}
 
-	rules := []RouteRule{
-		{Action: "sniff", Timeout: "3s"},
-		{IPIsPrivate: true, Outbound: directTag},
-		{DomainRegex: ruDomainRegex, Outbound: directTag},
-	}
+	rules := make([]RouteRule, 0, 3+len(fwRules))
+	rules = append(rules, RouteRule{Action: "sniff", Timeout: "3s"})
+	// Firewall rules take priority over the default private-IP/ru-domain
+	// routing below: a block must win even for a .ru domain or a LAN address.
+	rules = append(rules, fwRules...)
+	rules = append(rules,
+		RouteRule{IPIsPrivate: true, Outbound: directTag},
+		RouteRule{DomainRegex: ruDomainRegex, Outbound: directTag},
+	)
 
 	var experimental *Experimental
 	if opts.ClashAPI != nil {
@@ -300,6 +381,7 @@ func GenerateProxyConfigOpts(set vless.ProfileSet, opts ProxyOpts) (Config, erro
 			HTTPInbound{Type: "http", Tag: httpTag, Listen: listenAddr, ListenPort: ports.HTTP},
 		},
 		Outbounds: outbounds,
+		Endpoints: endpoints,
 		Route: &Route{
 			DefaultInterface:      opts.PhysIface,
 			Rules:                 rules,
@@ -311,9 +393,10 @@ func GenerateProxyConfigOpts(set vless.ProfileSet, opts ProxyOpts) (Config, erro
 	return cfg, nil
 }
 
-// GenerateForwarderConfig builds the on-demand TUN-FORWARDER instance used in
-// VPN mode. It owns the system default route (auto_route) and relays everything
-// to the persistent proxy at 127.0.0.1:1080, where the proxy does the ru/private
+// GenerateForwarderConfigSet builds the on-demand TUN-FORWARDER instance used
+// in VPN mode, from a set of one or more profiles rendered through reg. It
+// owns the system default route (auto_route) and relays everything to the
+// persistent proxy at 127.0.0.1:1080, where the proxy does the ru/private
 // split via SNI sniff. Key behaviors (resolving PLAN open-q 8/9):
 //
 //   - DNS is hijacked at the TUN edge ({protocol:dns}→hijack-dns) and answered by
@@ -326,33 +409,34 @@ func GenerateProxyConfigOpts(set vless.ProfileSet, opts ProxyOpts) (Config, erro
 //     proxy, preserving mDNS/printers/router access.
 //   - auto_detect_interface keeps the forwarder's own dialer (direct + the DoH
 //     detour) off its TUN.
-//   - If the server host is a literal IP, a belt-and-suspenders ip_cidr→direct
-//     rule prevents any loop even if the proxy's bind were ineffective (R1).
-func GenerateForwarderConfig(p vless.ServerProfile) (Config, error) {
-	return GenerateForwarderConfigSet(vless.SingleSet(p), DefaultPorts())
-}
-
-// GenerateForwarderConfigPorts is the single-profile adapter with a custom port.
-func GenerateForwarderConfigPorts(p vless.ServerProfile, ports Ports) (Config, error) {
-	return GenerateForwarderConfigSet(vless.SingleSet(p), ports)
-}
-
-// GenerateForwarderConfigSet builds the on-demand TUN forwarder for a set of
-// servers. The proxy socks port is where the forwarder relays everything; each
-// server host that is a literal IP gets a belt-and-suspenders ip_cidr→direct
-// loop-guard (so traffic to any server never re-enters our TUN).
-func GenerateForwarderConfigSet(set vless.ProfileSet, ports Ports) (Config, error) {
+//   - Each profile's dial host is resolved (via a throwaway render — the
+//     forwarder never emits per-protocol outbounds itself) purely to add a
+//     belt-and-suspenders ip_cidr→direct rule when it is a literal IP, so
+//     traffic to it can never loop back through our own bind even if the
+//     proxy's bind were ineffective (R1).
+func GenerateForwarderConfigSet(reg *protocol.Registry, profiles []protocol.Profile, ports Ports) (Config, error) {
+	if len(profiles) == 0 {
+		return Config{}, fmt.Errorf("singbox: at least one profile is required")
+	}
 	ports = ports.withDefaults()
 	rules := []RouteRule{
 		{Action: "sniff", Timeout: "3s"},
 		{Inbound: []string{tunTag}, Protocol: "dns", Action: "hijack-dns"},
 		{IPIsPrivate: true, Outbound: directTag},
 	}
-	for _, p := range set.Profiles {
-		if ip := net.ParseIP(p.Host); ip != nil {
-			cidr := p.Host + "/32"
+	for _, p := range profiles {
+		hosts, err := profileHosts(reg, p)
+		if err != nil {
+			return Config{}, err
+		}
+		for _, h := range hosts {
+			ip := net.ParseIP(h)
+			if ip == nil {
+				continue
+			}
+			cidr := h + "/32"
 			if ip.To4() == nil {
-				cidr = p.Host + "/128"
+				cidr = h + "/128"
 			}
 			rules = append(rules, RouteRule{IPCIDR: []string{cidr}, Outbound: directTag})
 		}

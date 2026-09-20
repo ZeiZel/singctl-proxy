@@ -12,11 +12,14 @@
 #
 # Result: `singctl` becomes a normal command in /usr/local/bin (on macOS's default
 # PATH), runnable as `sudo singctl` (it needs root for the TUN device). The
-# LaunchDaemon runs the system VPN (singctl --headless --vpn) at boot; the key
-# comes from the saved profile, so save one once interactively first (docs/macos.md).
-# This is NOT per-process kernel interception (that needs a signed Network
-# Extension) — it is a system-wide VPN daemon managed via launchctl / --status /
-# --attach / --stop.
+# LaunchDaemon starts the daemon with NO mode (singctl --headless, off) at
+# boot; it then applies the persisted autostart-mode setting itself
+# (off/proxy/vpn, default off — see Settings), best-effort, so a failure to
+# start never brings the daemon down and never triggers a KeepAlive restart
+# loop. The key comes from the saved profile, so save one once interactively
+# first (docs/macos.md). This is NOT per-process kernel interception (that
+# needs a signed Network Extension) — it is a system-wide VPN daemon managed
+# via launchctl / --status / --attach / --stop.
 set -euo pipefail
 
 LABEL="com.singctl.proxy"
@@ -40,14 +43,47 @@ if [ "$(id -u)" != "0" ]; then
 	sudo -v || die "не удалось получить права sudo"
 fi
 
-if [ "${1:-install}" = "uninstall" ]; then
+# stop_and_remove — parity with packaging/macos/scripts/preinstall: leaves a
+# clean slate before a fresh binary/plist lands, whether that's a plain
+# `uninstall` or the replace-before-install step of a normal run. Never
+# touches ~/.config/singctl (keys, profile) or /var/log/singctl.log.
+stop_and_remove() {
 	echo "==> выгружаю ${LABEL}"
 	$SUDO launchctl bootout system "${PLIST_DST}" 2>/dev/null ||
 		$SUDO launchctl unload -w "${PLIST_DST}" 2>/dev/null || true
+
+	# Terminate any remaining singctl process, matched by its real installed
+	# binary path only (never a bare `pkill singctl`), so an unrelated process
+	# that happens to share the name is never touched. TERM first, then KILL
+	# only what survives a short bounded wait.
+	local pattern="^${BIN_DST}([[:space:]]|\$)"
+	local term_pids kill_pids
+	term_pids="$($SUDO pgrep -f "$pattern" 2>/dev/null || true)"
+	if [ -n "$term_pids" ]; then
+		echo "==> останавливаю запущенные процессы singctl: ${term_pids}"
+		# shellcheck disable=SC2086
+		$SUDO kill -TERM $term_pids >/dev/null 2>&1 || true
+		sleep 2
+		kill_pids="$($SUDO pgrep -f "$pattern" 2>/dev/null || true)"
+		if [ -n "$kill_pids" ]; then
+			echo "==> singctl всё ещё работает, посылаю SIGKILL: ${kill_pids}"
+			# shellcheck disable=SC2086
+			$SUDO kill -KILL $kill_pids >/dev/null 2>&1 || true
+		fi
+	fi
+
 	$SUDO rm -f "${PLIST_DST}" "${BIN_DST}"
+}
+
+if [ "${1:-install}" = "uninstall" ]; then
+	stop_and_remove
 	echo "==> singctl удалён (профиль ~/.config/singctl и /var/log/singctl.log сохранены)"
 	exit 0
 fi
+
+# Replace-before-install: same stop-and-remove as `uninstall`, so an upgrade
+# never layers a new daemon on top of an old one still running the old binary.
+stop_and_remove
 
 # install — the binary is built by the normal user (make build); only the copy
 # into the system paths needs sudo.
@@ -78,7 +114,6 @@ $SUDO tee "${PLIST_DST}" >/dev/null <<PLIST
     <array>
         <string>${BIN_DST}</string>
         <string>--headless</string>
-        <string>--vpn</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
@@ -103,7 +138,8 @@ PLIST
 $SUDO chown root:wheel "${PLIST_DST}"
 
 echo "==> загружаю ${LABEL}"
-$SUDO launchctl bootout system "${PLIST_DST}" 2>/dev/null || true
+# stop_and_remove already booted the old instance out above, so this is a
+# plain load of the freshly written plist (bootout here would be a no-op).
 $SUDO launchctl bootstrap system "${PLIST_DST}" 2>/dev/null ||
 	$SUDO launchctl load -w "${PLIST_DST}"
 
