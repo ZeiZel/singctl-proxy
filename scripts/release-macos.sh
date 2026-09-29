@@ -167,11 +167,13 @@ if pkgutil --expand-full "$PKG" "$EXPAND_DIR/pkg" >/dev/null 2>&1; then
 		check "build tag $tag" "$present" "yes"
 	done
 
-	# The rules file must actually be inside the package: it is the deliverable
-	# a user imports on a fresh machine and hands to colleagues, and shipping
-	# without it silently sends people back to the repository to find it.
-	shipped_rules="$(find "$EXPAND_DIR/pkg" -path '*usr/local/share/singctl/singctl-proxy-rules.ini' -type f 2>/dev/null | head -1)"
-	check "proxy rules shipped" "$([ -n "$shipped_rules" ] && echo yes || echo no)" "yes"
+	# Only the generic rules template ships (personal rules are user-owned and
+	# must never land in a package): the template must be present, and a
+	# personal singctl-proxy-rules.ini must not.
+	shipped_template="$(find "$EXPAND_DIR/pkg" -path '*usr/local/share/singctl/singctl-proxy-rules.example.ini' -type f 2>/dev/null | head -1)"
+	check "rules template shipped" "$([ -n "$shipped_template" ] && echo yes || echo no)" "yes"
+	shipped_personal="$(find "$EXPAND_DIR/pkg" -name 'singctl-proxy-rules.ini' -type f 2>/dev/null | head -1)"
+	check "personal rules not shipped" "$([ -z "$shipped_personal" ] && echo yes || echo no)" "yes"
 else
 	printf '  FAIL %-34s could not expand the package\n' "inspect .pkg contents"
 	fail=1

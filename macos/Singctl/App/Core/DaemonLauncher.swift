@@ -34,6 +34,10 @@ enum DaemonLauncherError: Error, LocalizedError, Equatable {
     /// requirement: cancelling a password prompt isn't a bug).
     case cancelled
     case scriptFailed(String)
+    /// launchd accepted the request but no live daemon advertised itself in
+    /// time — it is most likely exiting on startup and being restarted by
+    /// KeepAlive. Carries the most useful line from the daemon's log.
+    case didNotStart(String?)
 
     var errorDescription: String? {
         switch self {
@@ -43,6 +47,10 @@ enum DaemonLauncherError: Error, LocalizedError, Equatable {
             return "Cancelled."
         case .scriptFailed(let message):
             return message
+        case .didNotStart(let logLine?):
+            return "The daemon didn't start: \(logLine)"
+        case .didNotStart(nil):
+            return "The daemon didn't start — see \(DaemonLauncher.logPath)."
         }
     }
 }
@@ -55,6 +63,11 @@ enum DaemonLauncher {
     /// (scripts/install-macos.sh / `make install` writes the real, per-user-
     /// filled-in plist here).
     static let plistPath = "/Library/LaunchDaemons/com.singctl.proxy.plist"
+    static let label = "com.singctl.proxy"
+    /// StandardOutPath/StandardErrorPath of the installed plist.
+    static let logPath = "/var/log/singctl.log"
+    /// How long to wait for the started daemon to advertise instance.json.
+    static let startupTimeout: Duration = .seconds(8)
 
     /// Whether the LaunchDaemon plist exists at all — distinguishes "not
     /// installed" (point at the installer, offer nothing) from "installed
@@ -67,7 +80,9 @@ enum DaemonLauncher {
     /// Runs the privileged bootstrap. Throws `.notInstalled` immediately
     /// (without ever prompting) when the plist is missing; throws
     /// `.cancelled` when the user dismisses the prompt; throws
-    /// `.scriptFailed` for any other AppleScript/shell failure. The blocking
+    /// `.scriptFailed` for any other AppleScript/shell failure, and
+    /// `.didNotStart` when launchd ran the job but no live daemon showed up
+    /// within `startupTimeout`. The blocking
     /// `NSAppleScript` call runs off the main thread on a detached task —
     /// same pattern as `ControlClient.blockingRoundTrip` — since it
     /// synchronously waits on the user answering the system prompt.
@@ -76,17 +91,42 @@ enum DaemonLauncher {
         try await Task.detached(priority: .userInitiated) {
             try Self.runPrivileged()
         }.value
+        let deadline = ContinuousClock.now + startupTimeout
+        while ContinuousClock.now < deadline {
+            if InstanceDiscovery.liveInstance() != nil { return }
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        throw DaemonLauncherError.didNotStart(lastLogError())
     }
 
-    /// `launchctl bootstrap system …` is the modern (10.11+) way to load a
-    /// LaunchDaemon; `launchctl load -w …` is the legacy fallback the task
-    /// explicitly calls for, tried only when bootstrap itself fails (e.g.
-    /// already bootstrapped, or an unusual launchd that rejects the
-    /// subcommand). Both run inside the SAME privileged shell invocation
-    /// (`with administrator privileges` covers the whole string), so this is
-    /// one authorization prompt, not two.
+    /// The last `error:` line of the daemon log (or its last non-empty line),
+    /// so a crash-looping daemon explains itself in the UI instead of the
+    /// button silently doing nothing. Only the tail of the file is read.
+    static func lastLogError() -> String? {
+        guard let handle = FileHandle(forReadingAtPath: logPath) else { return nil }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size > 8192 ? size - 8192 : 0)
+        guard let data = try? handle.readToEnd(),
+              let text = String(data: data, encoding: .utf8) else { return nil }
+        let lines = text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let line = lines.last { $0.hasPrefix("error:") } ?? lines.last
+        return line.map { $0.hasPrefix("error: ") ? String($0.dropFirst(7)) : $0 }
+    }
+
+    /// `kickstart -k` (re)starts a job launchd already has loaded — the usual
+    /// case: the plist is bootstrapped at install and KeepAlive keeps it
+    /// loaded even while the process crash-loops or after it was killed. The
+    /// old `bootstrap || load -w` pair failed on a loaded job and then
+    /// "succeeded" with an "already loaded" warning, so the button did
+    /// nothing. `bootstrap` remains the fallback for a job that isn't loaded
+    /// (kickstart fails with "no such process"), and `enable` first clears a
+    /// disabled override left by `unload -w`. One privileged shell, one prompt.
     private static func runPrivileged() throws {
-        let shellCommand = "launchctl bootstrap system \(plistPath) || launchctl load -w \(plistPath)"
+        let shellCommand = "launchctl enable system/\(label); "
+            + "launchctl kickstart -k system/\(label) || launchctl bootstrap system \(plistPath)"
         let escaped = shellCommand.replacingOccurrences(of: "\"", with: "\\\"")
         let source = "do shell script \"\(escaped)\" with administrator privileges"
         guard let appleScript = NSAppleScript(source: source) else {
