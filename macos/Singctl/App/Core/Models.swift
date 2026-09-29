@@ -110,6 +110,18 @@ struct ProxyGroup: Codable, Equatable {
     static let empty = ProxyGroup(available: false, auto: true, selected: "", members: [])
 }
 
+/// Daemons up to 1.13.2 send `"members": null` in single-server mode; treat a
+/// missing or null list as empty. In an extension so the memberwise init stays.
+extension ProxyGroup {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        available = try c.decode(Bool.self, forKey: .available)
+        auto = try c.decode(Bool.self, forKey: .auto)
+        selected = try c.decode(String.self, forKey: .selected)
+        members = try c.decodeIfPresent([ProxyGroupMember].self, forKey: .members) ?? []
+    }
+}
+
 /// SETTINGS-GET/SET payload. PascalCase wire keys — matches the daemon's
 /// ui.Settings Go struct verbatim on both ends.
 struct Settings: Codable, Equatable {

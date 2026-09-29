@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1684,6 +1685,17 @@ type ProxyGroup struct {
 	Auto      bool          `json:"auto"`      // selector currently on "auto"
 	Selected  string        `json:"selected"`  // the EFFECTIVE server tag, resolved through auto
 	Members   []ProxyMember `json:"members"`
+}
+
+// MarshalJSON always emits members as an array: the early single-server
+// returns leave Members nil, and the GUI decodes `null` as a type error
+// ("Expected value of type Array<Any> but found null").
+func (g ProxyGroup) MarshalJSON() ([]byte, error) {
+	type wire ProxyGroup
+	if g.Members == nil {
+		g.Members = []ProxyMember{}
+	}
+	return json.Marshal(wire(g))
 }
 
 // ProxyMember is one server in the failover group.

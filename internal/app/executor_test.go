@@ -1151,3 +1151,15 @@ func TestExecutor_FirewallAdd_WhileRunning_TriggersExactlyOneReload(t *testing.T
 		t.Errorf("reloaded config after FirewallRemove still carries the removed rule:\n%s", built[len(built)-1].Config)
 	}
 }
+
+// Single-server mode returns ProxyGroup{Available: false} with nil Members;
+// the GUI rejects `"members": null`, so the wire form must be an array.
+func TestProxyGroup_MarshalsNilMembersAsArray(t *testing.T) {
+	data, err := json.Marshal(ProxyGroup{Available: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), `{"available":false,"auto":false,"selected":"","members":[]}`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
