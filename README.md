@@ -45,7 +45,8 @@ vless://00000000-0000-0000-0000-000000000000@example.com:443?type=grpc&security=
 `grpc` — транспорт VLESS поверх HTTP/2; `security=reality` задаётся тем же
 параметром, что и для остальных VLESS-транспортов. Поддержка транспорта в
 клиенте сама по себе не гарантирует совместимость параметров REALITY с
-конкретным сервером. Для
+конкретным сервером. Для gRPC параметры `mode=multi` и `authority` не
+поддерживаются и игнорируются. Для
 `type=xhttp` разбираются `path`, `host`, `mode` (`auto` / `packet-up` /
 `stream-up` / `stream-one`) и `extra` (полный JSON-блок `xhttpSettings` из
 панели), поверх TLS, REALITY или без шифрования:
