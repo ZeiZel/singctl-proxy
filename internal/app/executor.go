@@ -1704,6 +1704,7 @@ type ProxyMember struct {
 	Index int    `json:"index"` // 3 — its position in the loaded key list
 	Name  string `json:"name"`  // the key's display label, e.g. "France 🇫🇷"
 	Delay int    `json:"delay"` // ms; 0 = timeout/unknown
+	Error string `json:"error,omitempty"`
 }
 
 // proxyServerTag mirrors internal/singbox's own (unexported) helper of the
@@ -1794,6 +1795,7 @@ func (e *Executor) ProxyGroup(ctx context.Context) (ProxyGroup, error) {
 			Index: idx,
 			Name:  name,
 			Delay: proxies[tag].LastDelay(),
+			Error: proxies[tag].LastError(),
 		})
 	}
 	return ProxyGroup{Available: true, Auto: auto, Selected: selected, Members: members}, nil

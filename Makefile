@@ -31,7 +31,8 @@ MANPAGE := cmd/singctl/singctl.1
 SINGBOX_TAGS := singbox with_utls with_clash_api with_quic with_wireguard with_gvisor
 
 .PHONY: build build-macos build-windows build-all app-macos appstore libbox \
-	test test-integration tidy run lint clean install-man uninstall-man \
+	 test test-integration tidy run lint clean install-man uninstall-man \
+	test-reality-e2e \
 	install uninstall \
 	pkg-macos \
 	proxy-on proxy-off proxy-status proxy-pac pac-server
@@ -171,6 +172,17 @@ test-singbox-decode:
 XRAY_BIN ?=
 test-xhttp-e2e:
 	XRAY_BIN="$(XRAY_BIN)" $(GO) test -v -tags "integration $(SINGBOX_TAGS)" -run TestXHTTP_EndToEnd ./internal/core/
+
+# REALITY compatibility matrix against official Xray releases 26.7.11,
+# 26.7.28 and 26.9.9. Each variable is optional; supplied paths must exist.
+XRAY_BIN_26_7_11 ?=
+XRAY_BIN_26_7_28 ?=
+XRAY_BIN_26_9_9 ?=
+test-reality-e2e:
+	XRAY_BIN_26_7_11="$(XRAY_BIN_26_7_11)" \
+	XRAY_BIN_26_7_28="$(XRAY_BIN_26_7_28)" \
+	XRAY_BIN_26_9_9="$(XRAY_BIN_26_9_9)" \
+	$(GO) test -v -timeout 3m -tags "integration $(SINGBOX_TAGS)" -run '^TestREALITY' ./internal/core/
 
 # Live integration suite: root + a live machine (see PLAN.md §8 checklist).
 test-integration:

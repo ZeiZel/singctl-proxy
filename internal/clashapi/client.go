@@ -128,6 +128,7 @@ type ProxyState struct {
 type DelayHistory struct {
 	Time  time.Time `json:"time"`
 	Delay int       `json:"delay"` // ms; 0 means timed out / unreachable
+	Error string    `json:"error,omitempty"`
 }
 
 // LastDelay returns the most recent probe delay in ms (0 if none).
@@ -136,6 +137,13 @@ func (p ProxyState) LastDelay() int {
 		return 0
 	}
 	return p.History[len(p.History)-1].Delay
+}
+
+func (p ProxyState) LastError() string {
+	if len(p.History) == 0 {
+		return ""
+	}
+	return p.History[len(p.History)-1].Error
 }
 
 type proxiesResponse struct {

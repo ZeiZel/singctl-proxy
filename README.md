@@ -55,6 +55,16 @@ vless://00000000-0000-0000-0000-000000000000@example.com:443?type=grpc&security=
 vless://00000000-0000-0000-0000-000000000000@example.com:443?type=xhttp&security=reality&pbk=<pbk>&sid=<sid>&sni=www.microsoft.com&fp=chrome&path=%2Fxh&mode=auto#server
 ```
 
+Для REALITY можно явно задать версию клиента, которую sing-box записывает в
+ClientHello. Это помогает при серверах 3x-ui/Xray с заданным `minClientVer`:
+
+```
+vless://00000000-0000-0000-0000-000000000000@example.com:443?security=reality&pbk=<pbk>&sni=www.microsoft.com&fp=chrome&realityClientVersion=26.3.27#server
+```
+
+Формат — `major.minor.patch`, каждое число от 0 до 255. По умолчанию singctl
+использует `26.3.27`; параметр действует только при `security=reality`.
+
 Ключей может быть несколько — тогда sing-box строит urltest-группу и сам берёт
 самый быстрый доступный сервер (порядок ввода задаёт приоритет). Протоколы в
 одной группе смешивать можно.
@@ -96,23 +106,15 @@ Keys: добавить, обновить все, удалить, посмотр�
   `~/.config/singctl/subscriptions.json`, поэтому демон стартует с прошлыми
   серверами даже без сети.
 
-### Известное ограничение: REALITY и часть серверов
+### Совместимость REALITY
 
-Отдельные REALITY-серверы отвергают подключение с ошибкой
-`reality verification failed`, хотя тот же ключ работает в Xray-клиентах
-(v2rayTun, Happ). Это ограничение встроенного ядра, а не singctl: штатный
-`vless`-аутбаунд sing-box с теми же параметрами падает точно так же, без
-участия нашего кода.
-
-Причина, судя по исходникам: REALITY-клиент sing-box жёстко проставляет в
-аутентификатор версию клиента `1.8.1` и вырезает `X25519MLKEM768` из
-предлагаемых кривых и key share, тогда как Xray 26.x сообщает свою настоящую
-версию и постквантовый обмен сохраняет. Сервер, рассчитывающий на второе,
-нас не признаёт. В `sing-box 1.14.0-rc.5` этот код не изменился, поэтому
-обновление ядра проблему не решает.
-
-Смена `fp=` (chrome / firefox / safari / ios / randomized) не помогает —
-проверено. Большинство REALITY-серверов при этом работают нормально.
+При `fp=chrome` клиент предлагает `X25519MLKEM768` перед обычным `X25519`
+(перед ними может идти GREASE), что нужно новым Xray-core и сохраняет
+совместимость со старыми версиями. Версию в ClientHello можно задать через
+`realityClientVersion`; значение по умолчанию — `26.3.27`. Если Xray
+отказывает в REALITY-аутентификации, singctl показывает диагностику с
+подсказкой проверить `minClientVer`, SNI, public key и short ID вместо
+безличного `timeout`.
 
 Апстримный sing-box XHTTP не поддерживает — транспорт реализован в самом
 singctl (`internal/xhttp` + `internal/singboxext`). Ограничения и покрытие
@@ -196,6 +198,21 @@ go build -tags singbox ./...        # шиппинг-сборка с реаль�
 go test ./internal/singbox -update  # перегенерировать golden-конфиги (ревьюить дифф!)
 make test-singbox-decode            # реальное ядро принимает и стартует генерируемые конфиги
 make test-xhttp-e2e XRAY_BIN=<путь> # XHTTP против эталонного сервера Xray-core
+```
+
+Проверка совместимости REALITY с официальными Xray `26.7.11`, `26.7.28` и
+`26.9.9` (TCP, gRPC, XHTTP, default/явный `minClientVer` и диагностика Clash
+API):
+
+```sh
+make test-reality-e2e XRAY_BIN_26_7_11=<путь> XRAY_BIN_26_7_28=<путь> XRAY_BIN_26_9_9=<путь>
+```
+
+Изменённое ядро sing-box проверяется отдельно:
+
+```sh
+cd third_party/sing-box
+go test -race -tags with_utls ./common/tls ./transport/v2raygrpc ./transport/v2raygrpclite ./protocol/group ./experimental/clashapi
 ```
 
 `test-xhttp-e2e` поднимает настоящий `xray` локально и гоняет через него весь

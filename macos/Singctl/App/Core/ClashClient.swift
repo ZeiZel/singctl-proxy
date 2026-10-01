@@ -124,11 +124,11 @@ extension ClashClient {
             selected = group.now ?? ""
             for tag in all {
                 let member = proxies.proxies[tag]
-                rows.append(LatencyRow(tag: tag, delay: member?.lastDelay ?? 0, selected: tag == selected))
+                rows.append(LatencyRow(tag: tag, delay: member?.lastDelay ?? 0, selected: tag == selected, error: member?.history?.last?.error))
             }
         } else {
             selected = "proxy"
-            rows = [LatencyRow(tag: "proxy", delay: group.lastDelay, selected: true)]
+            rows = [LatencyRow(tag: "proxy", delay: group.lastDelay, selected: true, error: group.history?.last?.error)]
         }
         return Latency(selected: selected, rows: rows)
     }

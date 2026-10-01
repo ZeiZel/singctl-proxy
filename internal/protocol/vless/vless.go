@@ -27,18 +27,20 @@ import (
 // Sentinel errors returned (wrapped in *ParseError) by Parse. Callers match
 // them with errors.Is.
 var (
-	ErrNotVLESS              = errors.New("not a vless:// link")
-	ErrMissingUUID           = errors.New("missing UUID")
-	ErrInvalidUUID           = errors.New("invalid UUID")
-	ErrMissingHost           = errors.New("missing host")
-	ErrMissingPort           = errors.New("missing port")
-	ErrInvalidPort           = errors.New("invalid port")
-	ErrMissingRealityKey     = errors.New("reality selected but public key (pbk) is missing")
-	ErrUnsupportedTransport  = errors.New("unsupported transport type")
-	ErrUnsupportedSecurity   = errors.New("unsupported security type")
-	ErrUnsupportedEncryption = errors.New("unsupported encryption (only 'none' is supported)")
-	ErrUnsupportedXHTTPMode  = errors.New("unsupported xhttp mode")
-	ErrInvalidXHTTPExtra     = errors.New("invalid xhttp extra (must be valid JSON)")
+	ErrNotVLESS                            = errors.New("not a vless:// link")
+	ErrMissingUUID                         = errors.New("missing UUID")
+	ErrInvalidUUID                         = errors.New("invalid UUID")
+	ErrMissingHost                         = errors.New("missing host")
+	ErrMissingPort                         = errors.New("missing port")
+	ErrInvalidPort                         = errors.New("invalid port")
+	ErrMissingRealityKey                   = errors.New("reality selected but public key (pbk) is missing")
+	ErrUnsupportedTransport                = errors.New("unsupported transport type")
+	ErrUnsupportedSecurity                 = errors.New("unsupported security type")
+	ErrUnsupportedEncryption               = errors.New("unsupported encryption (only 'none' is supported)")
+	ErrUnsupportedXHTTPMode                = errors.New("unsupported xhttp mode")
+	ErrInvalidXHTTPExtra                   = errors.New("invalid xhttp extra (must be valid JSON)")
+	ErrInvalidRealityClientVersion         = errors.New("invalid REALITY client version (want major.minor.patch)")
+	ErrRealityClientVersionRequiresReality = errors.New("realityClientVersion requires security=reality")
 )
 
 // ParseError annotates a sentinel error with the offending field/value.
@@ -62,6 +64,20 @@ func parseErr(field, value string, err error) *ParseError {
 }
 
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+func validRealityClientVersion(value string) bool {
+	parts := strings.Split(value, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil || part == "" || n < 0 || n > 255 {
+			return false
+		}
+	}
+	return true
+}
 
 // SecurityType is the transport security layer of a VLESS outbound.
 type SecurityType string
@@ -96,9 +112,10 @@ type TLSParams struct {
 // RealityParams holds REALITY settings. Enabled is true only when
 // Security == SecurityReality.
 type RealityParams struct {
-	Enabled   bool
-	PublicKey string
-	ShortID   string
+	Enabled       bool
+	PublicKey     string
+	ShortID       string
+	ClientVersion string
 }
 
 // TransportParams holds stream-transport settings.
@@ -183,6 +200,13 @@ func (Module) Parse(raw string) (protocol.Profile, error) {
 	}
 
 	q := u.Query()
+	realityClientVersion := strings.TrimSpace(q.Get("realityClientVersion"))
+	if realityClientVersion != "" && !strings.EqualFold(strings.TrimSpace(q.Get("security")), string(SecurityReality)) {
+		return protocol.Profile{}, parseErr("realityClientVersion", realityClientVersion, ErrRealityClientVersionRequiresReality)
+	}
+	if realityClientVersion != "" && !validRealityClientVersion(realityClientVersion) {
+		return protocol.Profile{}, parseErr("realityClientVersion", realityClientVersion, ErrInvalidRealityClientVersion)
+	}
 
 	security := SecurityType(strings.ToLower(strings.TrimSpace(q.Get("security"))))
 	if security == "" {
@@ -242,7 +266,7 @@ func (Module) Parse(raw string) (protocol.Profile, error) {
 		if pbk == "" {
 			return protocol.Profile{}, parseErr("pbk", "", ErrMissingRealityKey)
 		}
-		params.Reality = RealityParams{Enabled: true, PublicKey: pbk, ShortID: q.Get("sid")}
+		params.Reality = RealityParams{Enabled: true, PublicKey: pbk, ShortID: q.Get("sid"), ClientVersion: realityClientVersion}
 	}
 
 	// mode/extra are xhttp-only; a non-xhttp link carrying a stray mode= must
@@ -361,7 +385,7 @@ func tlsCfg(sec SecurityType, tp TLSParams, rp RealityParams) *singbox.TLS {
 		tls.UTLS = &singbox.UTLS{Enabled: true, Fingerprint: tp.Fingerprint}
 	}
 	if rp.Enabled {
-		tls.Reality = &singbox.Reality{Enabled: true, PublicKey: rp.PublicKey, ShortID: rp.ShortID}
+		tls.Reality = &singbox.Reality{Enabled: true, PublicKey: rp.PublicKey, ShortID: rp.ShortID, ClientVersion: rp.ClientVersion}
 	}
 	return tls
 }

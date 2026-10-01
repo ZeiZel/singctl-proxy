@@ -245,7 +245,8 @@ private struct ProxyMemberRow: View {
     }
 
     private var delayLabel: String {
-        member.delay > 0 ? "\(member.delay) ms" : "timeout"
+        if let error = member.error, !error.isEmpty { return error }
+        return member.delay > 0 ? "\(member.delay) ms" : "timeout"
     }
 
     /// Thresholds follow the same bands as gui/frontend/src/entities/proxy/

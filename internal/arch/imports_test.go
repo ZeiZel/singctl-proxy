@@ -39,7 +39,11 @@ func goFiles(t *testing.T, root string) []string {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case "vendor", "testdata", ".git", "bin":
+			case "vendor", "testdata", ".git", "bin", "third_party":
+				// Nested external Go modules are dependency boundaries; their
+				// imports are governed by their own module, not singctl's
+				// architecture rules.
+
 				return filepath.SkipDir
 			}
 			return nil

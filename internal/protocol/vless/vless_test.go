@@ -1,6 +1,7 @@
 package vless
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -180,6 +181,8 @@ func TestParse_Errors(t *testing.T) {
 		{"port overflow", "vless://" + uuid + "@1.2.3.4:70000", ErrInvalidPort},
 		{"non-numeric port (rejected by url.Parse)", "vless://" + uuid + "@1.2.3.4:abc", ErrNotVLESS},
 		{"unsupported encryption", "vless://" + uuid + "@1.2.3.4:443?encryption=mlkem768x25519plus", ErrUnsupportedEncryption},
+		{"invalid reality client version", "vless://" + uuid + "@1.2.3.4:443?security=reality&pbk=k&realityClientVersion=26.7", ErrInvalidRealityClientVersion},
+		{"reality client version requires reality", "vless://" + uuid + "@1.2.3.4:443?security=tls&realityClientVersion=26.7.28", ErrRealityClientVersionRequiresReality},
 		{"wrong scheme", "trojan://" + uuid + "@1.2.3.4:443", ErrNotVLESS},
 	}
 
@@ -197,6 +200,12 @@ func TestParse_Errors(t *testing.T) {
 }
 
 func TestParse_FieldDetails(t *testing.T) {
+	t.Run("reality client version", func(t *testing.T) {
+		p := mustParse(t, "vless://"+uuid+"@1.2.3.4:443?security=reality&pbk=k&realityClientVersion=26.7.28")
+		if got := p.Params.(Params).Reality.ClientVersion; got != "26.7.28" {
+			t.Errorf("ClientVersion = %q, want 26.7.28", got)
+		}
+	})
 	t.Run("allowInsecure=1 sets Insecure", func(t *testing.T) {
 		p := mustParse(t, "vless://"+uuid+"@1.2.3.4:443?security=tls&allowInsecure=1")
 		if !p.Params.(Params).TLS.Insecure {
@@ -398,6 +407,21 @@ func TestRenderNode_XHTTP_MatchesGolden(t *testing.T) {
 		t.Fatalf("node = %#v, want XHTTPOutbound with type vless-xhttp", node)
 	}
 	assertMatchesGoldenOutbound(t, node, "../../singbox/testdata/proxy_xhttp_reality.golden.json", 0)
+}
+
+func TestRenderNode_RealityClientVersion(t *testing.T) {
+	p := mustParse(t, "vless://"+uuid+"@1.2.3.4:443?security=reality&pbk=k&realityClientVersion=26.7.28")
+	node, err := New().RenderNode(p, singbox.RenderOpts{Tag: "proxy"})
+	if err != nil {
+		t.Fatalf("RenderNode: %v", err)
+	}
+	data, err := json.Marshal(node)
+	if err != nil {
+		t.Fatalf("marshal node: %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"client_version":"26.7.28"`)) {
+		t.Fatalf("rendered REALITY node lacks client_version: %s", data)
+	}
 }
 
 func TestRenderNode_WrongParamsType(t *testing.T) {

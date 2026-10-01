@@ -82,16 +82,30 @@ final class DaemonBackend: Backend {
         if let idx = lat.rows.firstIndex(where: { $0.selected }), lat.rows[idx].delay <= 0 {
             let now = Date()
             if let lastProbe, now.timeIntervalSince(lastProbe) < probeInterval {
-                if let lastProbedDelay, lastProbedDelay > 0 {
+                if (lat.rows[idx].error ?? "").isEmpty,
+                   let lastProbedDelay, lastProbedDelay > 0 {
                     lat.rows[idx].delay = lastProbedDelay
                 }
             } else {
                 lastProbe = now
                 let testURL = await probeURL()
-                if let delay = try? await client.delay(tag: lat.rows[idx].tag, url: testURL, timeoutMs: 3000),
-                   delay > 0 {
-                    lastProbedDelay = delay
-                    lat.rows[idx].delay = delay
+                do {
+                    let delay = try await client.delay(tag: lat.rows[idx].tag, url: testURL, timeoutMs: 3000)
+                    if delay > 0 {
+                        lastProbedDelay = delay
+                        lat.rows[idx].delay = delay
+                        lat.rows[idx].error = nil
+                    }
+                } catch {
+                    lastProbedDelay = nil
+                    lat.rows[idx].delay = 0
+                    // sing-box records typed REALITY failures in proxy history;
+                    // refetch it so the UI can show the actionable server rejection.
+                    if let refreshed = try? await client.proxies(),
+                       let refreshedLat = ClashClient.latency(from: refreshed),
+                       let refreshedRow = refreshedLat.rows.first(where: { $0.tag == lat.rows[idx].tag }) {
+                        lat.rows[idx].error = refreshedRow.error
+                    }
                 }
             }
         }

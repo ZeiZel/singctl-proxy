@@ -53,3 +53,13 @@ func TestLatencyMsg_Missing(t *testing.T) {
 		t.Error("missing group should return ok=false")
 	}
 }
+
+func TestLatencyMsg_PreservesProbeError(t *testing.T) {
+	msg, ok := LatencyMsg(map[string]clashapi.ProxyState{
+		"proxy":   {All: []string{"proxy-0"}, Now: "proxy-0"},
+		"proxy-0": {History: []clashapi.DelayHistory{{Delay: 0, Error: "REALITY: server rejected client"}}},
+	})
+	if !ok || len(msg.Rows) != 1 || msg.Rows[0].Error != "REALITY: server rejected client" {
+		t.Fatalf("latency error was lost: ok=%v msg=%+v", ok, msg)
+	}
+}

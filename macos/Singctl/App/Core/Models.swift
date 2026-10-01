@@ -91,6 +91,7 @@ struct ProxyGroupMember: Codable, Equatable, Identifiable {
     var index: Int
     var name: String
     var delay: Int
+    var error: String? = nil
 
     var id: String { tag }
 }
@@ -352,6 +353,7 @@ struct ClashConnections: Codable, Equatable {
 struct ClashDelayHistory: Codable, Equatable {
     var time: String?
     var delay: Int
+    var error: String? = nil
 
     /// History entries may omit `time` in some sing-box versions; decode
     /// permissively (we only ever read the last entry's delay).
@@ -359,14 +361,16 @@ struct ClashDelayHistory: Codable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         time = try c.decodeIfPresent(String.self, forKey: .time)
         delay = try c.decodeIfPresent(Int.self, forKey: .delay) ?? 0
+        error = try c.decodeIfPresent(String.self, forKey: .error)
     }
 
-    init(time: String?, delay: Int) {
+    init(time: String?, delay: Int, error: String? = nil) {
         self.time = time
         self.delay = delay
+        self.error = error
     }
 
-    private enum CodingKeys: String, CodingKey { case time, delay }
+    private enum CodingKeys: String, CodingKey { case time, delay, error }
 }
 
 /// One proxy or group entry from GET /proxies. Mirrors clashapi.ProxyState.
@@ -405,6 +409,7 @@ struct LatencyRow: Codable, Equatable, Identifiable {
     var tag: String
     var delay: Int
     var selected: Bool
+    var error: String?
 
     var id: String { tag }
 }

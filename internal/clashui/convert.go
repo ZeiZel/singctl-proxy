@@ -41,12 +41,13 @@ func LatencyMsg(proxies map[string]clashapi.ProxyState) (notify.LatencyMsg, bool
 			msg.Rows = append(msg.Rows, notify.LatencyRow{
 				Tag:      tag,
 				Delay:    proxies[tag].LastDelay(),
+				Error:    proxies[tag].LastError(),
 				Selected: tag == group.Now,
 			})
 		}
 	} else { // single server
 		msg.Selected = "proxy"
-		msg.Rows = []notify.LatencyRow{{Tag: "proxy", Delay: group.LastDelay(), Selected: true}}
+		msg.Rows = []notify.LatencyRow{{Tag: "proxy", Delay: group.LastDelay(), Error: group.LastError(), Selected: true}}
 	}
 	return msg, true
 }

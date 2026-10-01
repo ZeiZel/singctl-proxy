@@ -165,6 +165,7 @@ type ProxyMember struct {
 	Index int    `json:"index"`
 	Name  string `json:"name"`
 	Delay int    `json:"delay"`
+	Error string `json:"error,omitempty"`
 }
 
 // ProxyGroup fetches the daemon's multi-server failover group (PROXY-GROUP).

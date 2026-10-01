@@ -90,6 +90,7 @@ type ConnectionsMsg struct {
 type LatencyRow struct {
 	Tag      string
 	Delay    int // ms; 0 means timed out / unknown
+	Error    string
 	Selected bool
 }
 

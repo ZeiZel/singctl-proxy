@@ -143,7 +143,8 @@ struct DashboardScreen: View {
         guard let row = store.latency.rows.first(where: { $0.selected }) else {
             return store.latency.selected.isEmpty ? "—" : store.latency.selected
         }
-        return row.delay > 0 ? "\(row.tag) · \(row.delay) ms" : "\(row.tag) · timeout"
+		if let error = row.error, !error.isEmpty { return "\(row.tag) · \(error)" }
+		return row.delay > 0 ? "\(row.tag) · \(row.delay) ms" : "\(row.tag) · timeout"
     }
 
     // MARK: - Stat grid

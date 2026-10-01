@@ -323,9 +323,10 @@ type UTLS struct {
 }
 
 type Reality struct {
-	Enabled   bool   `json:"enabled"`
-	PublicKey string `json:"public_key"`
-	ShortID   string `json:"short_id,omitempty"`
+	Enabled       bool   `json:"enabled"`
+	PublicKey     string `json:"public_key"`
+	ShortID       string `json:"short_id,omitempty"`
+	ClientVersion string `json:"client_version,omitempty"`
 }
 
 type Transport struct {
