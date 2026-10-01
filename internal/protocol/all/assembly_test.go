@@ -433,6 +433,17 @@ func TestGenerateProxy_WS_EmitsHostHeader(t *testing.T) {
 	}
 }
 
+func TestGenerateProxy_GRPC_EmitsServiceName(t *testing.T) {
+	const uuid = "4ce58870-27d3-489b-87a0-3109db4fb919"
+	out := proxyVLESS(t, "vless://"+uuid+"@1.2.3.4:443?type=grpc&serviceName=grpc-svc&security=tls&sni=example.com")
+	if out.Transport == nil || out.Transport.Type != "grpc" {
+		t.Fatalf("transport = %+v, want grpc", out.Transport)
+	}
+	if out.Transport.ServiceName != "grpc-svc" {
+		t.Errorf("service name = %q, want grpc-svc", out.Transport.ServiceName)
+	}
+}
+
 func TestGenerateProxy_HTTP_EmitsHostArray(t *testing.T) {
 	const uuid = "4ce58870-27d3-489b-87a0-3109db4fb919"
 	out := proxyVLESS(t, "vless://"+uuid+"@1.2.3.4:443?type=http&security=tls&host=a.example.com&path=%2Fp")

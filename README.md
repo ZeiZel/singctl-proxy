@@ -36,6 +36,16 @@
 
 Транспорты для VLESS/VMess/Trojan: `tcp`, `grpc`, `ws`, `http` и `xhttp` (он же
 устаревший `splithttp`) — последний нужен для обхода свежих блокировок РКН. Для
+gRPC-ссылок имя сервиса передаётся параметром `serviceName`:
+
+```
+vless://00000000-0000-0000-0000-000000000000@example.com:443?type=grpc&security=tls&sni=example.com&serviceName=my-service#grpc-server
+```
+
+`grpc` — транспорт VLESS поверх HTTP/2; `security=reality` задаётся тем же
+параметром, что и для остальных VLESS-транспортов. Поддержка транспорта в
+клиенте сама по себе не гарантирует совместимость параметров REALITY с
+конкретным сервером. Для
 `type=xhttp` разбираются `path`, `host`, `mode` (`auto` / `packet-up` /
 `stream-up` / `stream-one`) и `extra` (полный JSON-блок `xhttpSettings` из
 панели), поверх TLS, REALITY или без шифрования:

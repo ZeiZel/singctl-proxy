@@ -60,6 +60,8 @@ func TestDecodeOptions_AllProtocols(t *testing.T) {
 			"pbk=MLWbCmCus3crtCxy2QAuO1zp74nbDE1zMvO1azp-F0k&sid=4d04&sni=cursor.com&fp=chrome#vless"},
 		{"vless-ws-tls", "vless://" + testUUID + "@example.com:443?type=ws&security=tls&" +
 			"sni=example.com&host=cdn.example.com&path=%2Fws#vless-ws"},
+		{"vless-grpc-tls", "vless://" + testUUID + "@example.com:443?type=grpc&security=tls&" +
+			"sni=example.com&serviceName=grpc-svc#vless-grpc"},
 		{"vmess-tcp-tls", vmessLink(t, nil)},
 		{"vmess-ws", vmessLink(t, map[string]any{"net": "ws", "path": "/ws", "host": "cdn.example.com"})},
 		{"vmess-grpc", vmessLink(t, map[string]any{"net": "grpc", "path": "grpcsvc"})},
