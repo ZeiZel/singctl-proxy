@@ -49,15 +49,15 @@ Mac (обе архитектуры — clang кросс-ассемблирует
 Полный релиз собирается одной командой:
 
 ```sh
-make release-macos RELEASE_VERSION=1.5.0
+make release-macos RELEASE_VERSION=1.15.0
 ```
 
 Это стамповка версии → `make build VERSION=` → `make app-macos` → `make
 pkg-macos PKG_VERSION=` → проверка результата. На выходе:
 
 ```
-dist/singctl-1.5.0.pkg
-dist/singctl-1.5.0.dmg
+dist/singctl-1.15.0.pkg
+dist/singctl-1.15.0.dmg
 ```
 
 ### Предпосылки
@@ -105,11 +105,12 @@ describe`, которая в неотмеченном или грязном де
 Любой провал — скрипт падает с «verification failed — do NOT ship these
 artifacts».
 
-### Нотаризация
+### Нотаризация (опционально)
 
-Запускается только если задан `NOTARY_PROFILE` (keychain-профиль `xcrun
-notarytool`). Без него артефакты подписаны, но не нотаризованы — Gatekeeper
-будет ругаться при запуске на других машинах. Создать профиль один раз:
+Локальный релиз 1.15.0 выпускается с подписью Developer ID без нотаризации.
+Нотаризация запускается только если задан `NOTARY_PROFILE` (keychain-профиль
+`xcrun notarytool`) либо полный набор `AC_*`. Без этих переменных шаг
+пропускается. Создать профиль можно один раз:
 
 ```sh
 xcrun notarytool store-credentials <имя-профиля> \
@@ -122,7 +123,7 @@ xcrun notarytool store-credentials <имя-профиля> \
 есть установка сама по себе ЗАПУСКАЕТ демон. Поставить без автозапуска:
 
 ```sh
-sudo installer -pkg dist/singctl-1.5.0.pkg -target /
+sudo installer -pkg dist/singctl-1.15.0.pkg -target /
 sudo launchctl bootout system /Library/LaunchDaemons/com.singctl.proxy.plist
 ```
 
@@ -180,10 +181,18 @@ productsign: error: Failed to sign the product.
 чужих машинах, для локальной установки не мешает):
 
 ```sh
-make release-macos RELEASE_VERSION=1.5.0 RELEASE_ARGS=--unsigned-installer
+make release-macos RELEASE_VERSION=1.15.0 RELEASE_ARGS=--unsigned-installer
 ```
 
 Флаги комбинируются: `RELEASE_ARGS="--skip-app --unsigned-installer"`.
+
+### Публикация на GitHub
+
+Публичный origin проекта — `https://github.com/ZeiZel/singctl-proxy`. После
+локальной проверки артефактов создай тег `v1.15.0`, отправь его в GitHub и
+прикрепи `dist/singctl-1.15.0.pkg`, `dist/singctl-1.15.0.dmg` и контрольные
+суммы к GitHub Release. GitLab pipeline остаётся дополнительной проверкой и
+зеркальным местом хранения; он не публикует GitHub Release.
 
 ### Пересобрать без `.app`
 
@@ -191,7 +200,7 @@ make release-macos RELEASE_VERSION=1.5.0 RELEASE_ARGS=--unsigned-installer
 пропустить:
 
 ```sh
-make release-macos RELEASE_VERSION=1.5.0 RELEASE_ARGS=--skip-app
+make release-macos RELEASE_VERSION=1.15.0 RELEASE_ARGS=--skip-app
 ```
 
 ## CLI-флаги

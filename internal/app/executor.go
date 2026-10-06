@@ -119,8 +119,9 @@ type Executor struct {
 	// controller's target set stays in sync with it.
 	store *appStore
 
-	pollMu     sync.Mutex
-	pollCancel context.CancelFunc
+	pollMu         sync.Mutex
+	pollCancel     context.CancelFunc
+	watchdogCancel context.CancelFunc
 
 	// coexistMu guards the Cisco-coexistence display state: the last observed
 	// Cisco/physical-iface snapshot and the current coexistence mode. It is read
@@ -139,8 +140,12 @@ type Executor struct {
 	netDiagPhys string // last logged PhysicalIface
 	netDiagDef  string // last logged DefaultRouteIface
 
-	listerOnce sync.Once
-	lister     proclist.Lister
+	listerOnce  sync.Once
+	lister      proclist.Lister
+	appCacheMu  sync.Mutex
+	appCacheAt  time.Time
+	appCache    []Application
+	appIdentity map[int]string
 
 	// fwMu guards the persisted firewall rule set (F6 item 5 in
 	// docs/v2-spec.md). Independent of cfgMu/mu/subMu, like every other
@@ -418,6 +423,7 @@ func (e *Executor) applyEffective(ctx context.Context) error {
 		return err
 	}
 	e.stopPoller()
+	e.stopWatchdog()
 	if old := e.manager(); old != nil {
 		_ = old.Shutdown(ctx)
 	}
@@ -746,12 +752,14 @@ func (e *Executor) EnableProxy(ctx context.Context) error {
 			return err
 		}
 		e.startPoller()
+		e.startWatchdog()
 		return nil
 	}
 	if err := mgr.StartProxy(ctx); err != nil { // off/suspended -> proxy (idempotent)
 		return err
 	}
 	e.startPoller()
+	e.startWatchdog()
 	return nil
 }
 
@@ -768,6 +776,7 @@ func (e *Executor) EnableVPN(ctx context.Context) error {
 		return err
 	}
 	e.startPoller()
+	e.startWatchdog()
 	return nil
 }
 
@@ -775,6 +784,7 @@ func (e *Executor) EnableVPN(ctx context.Context) error {
 // user can re-enable a mode.
 func (e *Executor) Stop(ctx context.Context) error {
 	e.stopPoller()
+	e.stopWatchdog()
 	defer e.flushLog()
 	mgr := e.manager()
 	if mgr == nil {
@@ -846,6 +856,52 @@ func (e *Executor) stopPoller() {
 	if e.pollCancel != nil {
 		e.pollCancel()
 		e.pollCancel = nil
+	}
+}
+
+func (e *Executor) startWatchdog() {
+	e.pollMu.Lock()
+	defer e.pollMu.Unlock()
+	if e.watchdogCancel != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	e.watchdogCancel = cancel
+	w := NewWatchdog(func(ctx context.Context) (HealthSample, error) {
+		sample, err := SelfHealthSample(ctx, nil)
+		if err != nil {
+			return HealthSample{}, err
+		}
+		e.cfgMu.Lock()
+		addr, secret := e.clashAddr, e.clashSecret
+		e.cfgMu.Unlock()
+		if addr != "" {
+			snapshot, err := clashapi.NewClient(addr, secret).TrafficSnapshot(ctx)
+			if err != nil {
+				return HealthSample{}, err
+			}
+			sample.TrackerCount = snapshot.Active
+		}
+		return sample, nil
+	}, WatchdogConfig{
+		Interval:       time.Minute,
+		SustainedFor:   15 * time.Minute,
+		Logger:         func(message string) { e.appendLog(message) },
+		CooldownFile:   defaultWatchdogCooldownFile(),
+		Cooldown:       time.Hour,
+		GoroutineLimit: 10000,
+		FileDescLimit:  8192,
+		TrackerLimit:   100000,
+	})
+	go w.Run(ctx)
+}
+
+func (e *Executor) stopWatchdog() {
+	e.pollMu.Lock()
+	defer e.pollMu.Unlock()
+	if e.watchdogCancel != nil {
+		e.watchdogCancel()
+		e.watchdogCancel = nil
 	}
 }
 
@@ -1055,7 +1111,7 @@ func (e *Executor) PushDisplay(ctx context.Context, ns types.NetState) {
 	}
 	// netext.Available is cheap off darwin (no exec) and TTL-cached on darwin, so
 	// calling it on every poll (this is the monitor's per-tick callback) is fine.
-	e.push(ctx, notify.NetStateMsg{Cisco: ns.CiscoActive, PhysIface: ns.PhysicalIface, Bypass: bypass, NetextAvailable: netext.Available()})
+	e.push(ctx, notify.NetStateMsg{Cisco: ns.CiscoActive, PhysIface: ns.PhysicalIface, Bypass: bypass, NetextAvailable: netext.Cached()})
 }
 
 // ProxyBoundToPhysical reports whether the proxy is running in proxy-only mode
@@ -1374,14 +1430,38 @@ type Application struct {
 // ListApplications enumerates running applications for the Apps tab's whole-app
 // picker, grouped by bundle ID.
 func (e *Executor) ListApplications(ctx context.Context) ([]Application, error) {
+	e.appCacheMu.Lock()
+	if time.Since(e.appCacheAt) < 30*time.Second && e.appCache != nil {
+		valid := true
+		for pid, token := range e.appIdentity {
+			if current, ok := processIdentity(pid); !ok || current != token {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			out := cloneApplications(e.appCache)
+			e.appCacheMu.Unlock()
+			return out, nil
+		}
+	}
+	e.appCacheMu.Unlock()
 	rows, err := e.listProcRows(ctx)
 	if err != nil {
 		return nil, err
 	}
 	byID := map[string]*Application{}
 	var order []string
+	identities := make(map[int]string)
+	cacheable := true
 	for _, row := range rows {
-		id := bundleIDForPID(row.PID)
+		id, token, verified := resolveApplicationPID(row.PID, bundleIDForPID, processIdentity)
+		if !verified {
+			cacheable = false
+		} else {
+			identities[row.PID] = token
+		}
+
 		if id == "" {
 			continue
 		}
@@ -1400,7 +1480,50 @@ func (e *Executor) ListApplications(ctx context.Context) ([]Application, error) 
 	sort.Slice(out, func(i, j int) bool {
 		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 	})
+	e.appCacheMu.Lock()
+	if cacheable {
+		e.appCacheAt = time.Now()
+		e.appCache = cloneApplications(out)
+		e.appIdentity = identities
+	} else {
+		e.appCacheAt = time.Time{}
+		e.appCache = nil
+		e.appIdentity = nil
+	}
+	e.appCacheMu.Unlock()
 	return out, nil
+}
+
+// resolveApplicationPID brackets potentially slow bundle resolution with process
+// identity reads. A reused PID is discarded; unverified output cannot be cached.
+func resolveApplicationPID(pid int, resolve func(int) string, identify func(int) (string, bool)) (string, string, bool) {
+	before, beforeOK := identify(pid)
+	id := resolve(pid)
+	after, afterOK := identify(pid)
+	if beforeOK && (!afterOK || before != after) {
+		return "", "", false
+	}
+	if !beforeOK || !afterOK {
+		return id, "", false
+	}
+	return id, before, true
+}
+
+func cloneApplications(in []Application) []Application {
+	out := make([]Application, len(in))
+	for i := range in {
+		out[i] = in[i]
+		out[i].PIDs = append([]int(nil), in[i].PIDs...)
+	}
+	return out
+}
+
+func (e *Executor) invalidateAppCache() {
+	e.appCacheMu.Lock()
+	e.appCacheAt = time.Time{}
+	e.appCache = nil
+	e.appIdentity = nil
+	e.appCacheMu.Unlock()
 }
 
 // listProcRows lazily builds the process lister (shared with ListProcesses) and
@@ -1471,6 +1594,7 @@ func (e *Executor) RouteApp(ctx context.Context, bundleID string) error {
 	if err := e.store.Upsert(bundleID, name, true); err != nil {
 		return err
 	}
+	e.invalidateAppCache()
 	return e.RecomputeAppTargets()
 }
 
@@ -1490,6 +1614,7 @@ func (e *Executor) UnrouteApp(ctx context.Context, bundleID string) error {
 			firstErr = err
 		}
 	}
+	e.invalidateAppCache()
 	return firstErr
 }
 

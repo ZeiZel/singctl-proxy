@@ -46,3 +46,8 @@ func (d *Debouncer) Observe(raw policy.CiscoState) (committed policy.CiscoState,
 
 // Committed returns the current committed state.
 func (d *Debouncer) Committed() policy.CiscoState { return d.committed }
+
+// Pending reports whether a second observation is required to commit a flip.
+func (d *Debouncer) Pending() bool {
+	return d.committed != policy.CiscoUnknown && d.pending != d.committed
+}

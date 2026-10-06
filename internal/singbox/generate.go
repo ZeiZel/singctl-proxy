@@ -57,11 +57,6 @@ var tunAddress = []string{"198.18.0.1/30", "fdfe:dcba:9876::1/126"}
 
 func ptrLog() *Log { return &Log{Level: "info", Timestamp: true} }
 
-// processProbePath is an impossible process path used only to make sing-box turn
-// on process-search (so /connections reports the source process) without
-// changing any real routing decision — the rule can never match.
-const processProbePath = "/singctl/__process_probe_never_matches__"
-
 // Default urltest probe settings for the multi-server failover group.
 const (
 	defaultURLTestURL       = "https://www.gstatic.com/generate_204"
@@ -362,8 +357,6 @@ func GenerateProxyConfigOpts(reg *protocol.Registry, profiles []protocol.Profile
 	var experimental *Experimental
 	if opts.ClashAPI != nil {
 		experimental = &Experimental{CacheFile: &CacheFile{Enabled: false}, ClashAPI: opts.ClashAPI}
-		// Enable process-search so /connections reports the client process.
-		rules = append(rules, RouteRule{ProcessPath: []string{processProbePath}, Outbound: proxyTag})
 	} else {
 		experimental = &Experimental{CacheFile: &CacheFile{Enabled: false}}
 	}

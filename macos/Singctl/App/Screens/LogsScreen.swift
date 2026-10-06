@@ -307,6 +307,10 @@ final class LogsModel: ObservableObject {
     private var nextID = 0
     private var previousID = -1
     private var lastConsoleID = 0
+    /// Hidden windows still drain the reader, but retain the incoming batch
+    /// without publishing it. This keeps the actor's file cursors current and
+    /// avoids losing the lines that arrive during an occlusion pause.
+    private var pendingHiddenLines: [LogsIncomingLine] = []
     private let reader = LogsTailReader()
     private weak var store: LiveStore?
 
@@ -364,17 +368,20 @@ final class LogsModel: ObservableObject {
     private func tick() async {
         var batch = await reader.poll()
         if let store {
-            for line in store.console where line.id > lastConsoleID {
-                lastConsoleID = line.id
-                let app = line.app.isEmpty ? "?" : line.app
-                batch.append(LogsIncomingLine(
-                    source: .console,
-                    text: "[\(app):\(line.pid)|\(line.stream)] \(line.text)",
-                    date: Date()
-                ))
-            }
+            batch.append(contentsOf: consoleBatch(from: store.console))
         }
         guard !Task.isCancelled else { return }
+        if let store, !store.windowVisible {
+            pendingHiddenLines.append(contentsOf: batch)
+            if pendingHiddenLines.count > hardLineCeiling {
+                pendingHiddenLines.removeFirst(pendingHiddenLines.count - hardLineCeiling)
+            }
+            return
+        }
+        if !pendingHiddenLines.isEmpty {
+            batch.insert(contentsOf: pendingHiddenLines, at: 0)
+            pendingHiddenLines.removeAll(keepingCapacity: true)
+        }
         publish(batch)
     }
 
@@ -390,6 +397,58 @@ final class LogsModel: ObservableObject {
         lines.append(contentsOf: fresh)
         if lines.count > maxLines {
             lines.removeFirst(lines.count - maxLines)
+        }
+    }
+
+    #if SCREENSHOT_HARNESS
+    /// In-memory input seam for semantic checks. It exercises the same hidden
+    /// retention and publish path as the real reader without opening files or
+    /// OSLogStore.
+    func attachForHarness(store: LiveStore) { self.store = store }
+
+    func ingestForHarness(_ texts: [String]) {
+        let batch = texts.enumerated().map { index, text in
+            LogsIncomingLine(source: .app, text: text, date: Date(timeIntervalSince1970: TimeInterval(index)))
+        }
+        if let store, store.windowVisible, !pendingHiddenLines.isEmpty {
+            let pending = pendingHiddenLines
+            pendingHiddenLines.removeAll(keepingCapacity: true)
+            publish(pending)
+        }
+        guard let store, !store.windowVisible else {
+            publish(batch)
+            return
+        }
+        pendingHiddenLines.append(contentsOf: batch)
+        if pendingHiddenLines.count > hardLineCeiling {
+            pendingHiddenLines.removeFirst(pendingHiddenLines.count - hardLineCeiling)
+        }
+    }
+
+    func drainStoreConsoleForHarness() {
+        let batch = consoleBatch(from: store?.console ?? [])
+        guard !batch.isEmpty else { return }
+        if let store, !store.windowVisible {
+            pendingHiddenLines.append(contentsOf: batch)
+        } else {
+            publish(pendingHiddenLines + batch)
+            pendingHiddenLines.removeAll(keepingCapacity: true)
+        }
+    }
+
+    var lineCountForHarness: Int { lines.count }
+    #endif
+
+    private func consoleBatch(from lines: [ConsoleLine]) -> [LogsIncomingLine] {
+        lines.compactMap { line in
+            guard line.id > lastConsoleID else { return nil }
+            lastConsoleID = line.id
+            let app = line.app.isEmpty ? "?" : line.app
+            return LogsIncomingLine(
+                source: .console,
+                text: "[\(app):\(line.pid)|\(line.stream)] \(line.text)",
+                date: Date()
+            )
         }
     }
 

@@ -12,11 +12,11 @@ import (
 // pickPhysical) is a non-tunnel interface with an IP gateway — so it ignores
 // Cisco's global primary even when Cisco owns the unscoped default route.
 type NetProber struct {
-	det     *netstate.Detector
+	det     netstate.ObservationSource
 	timeout time.Duration
 }
 
-func NewNetProber(det *netstate.Detector) *NetProber {
+func NewNetProber(det netstate.ObservationSource) *NetProber {
 	return &NetProber{det: det, timeout: 3 * time.Second}
 }
 

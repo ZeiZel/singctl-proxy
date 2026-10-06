@@ -743,8 +743,8 @@ func TestExecutor_TrafficSnapshot(t *testing.T) {
 	}
 	// Point at a stub Clash API returning running totals.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/connections" {
-			_, _ = w.Write([]byte(`{"downloadTotal":4096,"uploadTotal":1024,"connections":[]}`))
+		if r.URL.Path == "/traffic" {
+			_, _ = w.Write([]byte(`{"up":1024,"down":4096}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)

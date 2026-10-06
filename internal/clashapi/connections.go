@@ -200,6 +200,7 @@ func Connections(ctx context.Context, client *Client, modeRunning, apiEnabled bo
 	if err != nil {
 		return Payload{State: StateAPIUnreachable, Detail: fmt.Sprintf("%s: %v", client.BaseURL, err)}
 	}
+	client.enrichOwners(ctx, conns)
 	rows := BuildRows(conns)
 	if len(rows) == 0 {
 		return Payload{State: StateIdle, Rows: rows}

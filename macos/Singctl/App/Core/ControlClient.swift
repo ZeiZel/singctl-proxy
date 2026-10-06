@@ -46,6 +46,7 @@ actor ControlClient {
     /// connDeadline (15s — MODE/SETTINGS-SET can trigger a live core reload).
     private let connectTimeout: Int32 = 3
     private let ioTimeout: Int32 = 15
+    private var endpointCache: InstanceDiscovery.Endpoint?
 
     // MARK: - Status / lifecycle
 
@@ -340,18 +341,33 @@ actor ControlClient {
     /// Sends "VERB[ ARG]\n" over a fresh AF_UNIX connection and returns the
     /// trimmed reply, throwing .serverError for an "ERR " reply.
     private func roundTrip(_ verb: String, _ arg: String? = nil) async throws -> String {
-        guard let endpoint = InstanceDiscovery.currentEndpoint() else {
+        let endpoint: InstanceDiscovery.Endpoint?
+        if let cached = endpointCache, InstanceDiscovery.isAlive(cached.pid) {
+            endpoint = cached
+        } else {
+            endpoint = InstanceDiscovery.currentEndpoint()
+            endpointCache = endpoint
+        }
+        guard let endpoint else {
             throw ControlClientError.noDaemon
         }
         let socketPath = endpoint.controlSocket
         let connectTimeout = self.connectTimeout
         let ioTimeout = self.ioTimeout
-        let raw = try await Task.detached(priority: .userInitiated) {
-            try Self.blockingRoundTrip(
-                socketPath: socketPath, verb: verb, arg: arg,
-                connectTimeout: connectTimeout, ioTimeout: ioTimeout
-            )
-        }.value
+        let raw: String
+        do {
+            raw = try await Task.detached(priority: .userInitiated) {
+                try Self.blockingRoundTrip(
+                    socketPath: socketPath, verb: verb, arg: arg,
+                    connectTimeout: connectTimeout, ioTimeout: ioTimeout
+                )
+            }.value
+        } catch {
+            // A live PID can still have rotated its socket during restart;
+            // invalidate once so the next request resolves the new endpoint.
+            endpointCache = nil
+            throw error
+        }
         var reply = raw
         while reply.hasSuffix("\n") || reply.hasSuffix("\r") {
             reply.removeLast()

@@ -40,6 +40,8 @@ type Manager struct {
 	downloadTotal atomic.Int64
 
 	connections             compatible.Map[uuid.UUID, Tracker]
+	activeConnections       atomic.Int64
+	connectionsAccess       sync.Mutex
 	closedConnectionsAccess sync.Mutex
 	closedConnections       list.List[TrackerMetadata]
 	memory                  uint64
@@ -57,7 +59,14 @@ func (m *Manager) SetEventHook(subscriber *observable.Subscriber[ConnectionEvent
 
 func (m *Manager) Join(c Tracker) {
 	metadata := c.Metadata()
+	m.connectionsAccess.Lock()
+	if _, loaded := m.connections.Load(metadata.ID); loaded {
+		m.connectionsAccess.Unlock()
+		return
+	}
 	m.connections.Store(metadata.ID, c)
+	m.activeConnections.Add(1)
+	m.connectionsAccess.Unlock()
 	if m.eventSubscriber != nil {
 		m.eventSubscriber.Emit(ConnectionEvent{
 			Type:     ConnectionEventNew,
@@ -69,7 +78,12 @@ func (m *Manager) Join(c Tracker) {
 
 func (m *Manager) Leave(c Tracker) {
 	metadata := c.Metadata()
+	m.connectionsAccess.Lock()
 	_, loaded := m.connections.LoadAndDelete(metadata.ID)
+	if loaded {
+		m.activeConnections.Add(-1)
+	}
+	m.connectionsAccess.Unlock()
 	if loaded {
 		closedAt := time.Now()
 		metadata.ClosedAt = closedAt
@@ -104,8 +118,12 @@ func (m *Manager) Total() (up int64, down int64) {
 }
 
 func (m *Manager) ConnectionsLen() int {
-	return m.connections.Len()
+	return int(m.activeConnections.Load())
 }
+
+// ActiveConnectionsCount returns the current tracker count without walking the
+// connection map or allocating a snapshot.
+func (m *Manager) ActiveConnectionsCount() int { return int(m.activeConnections.Load()) }
 
 func (m *Manager) Connections() []*TrackerMetadata {
 	var connections []*TrackerMetadata

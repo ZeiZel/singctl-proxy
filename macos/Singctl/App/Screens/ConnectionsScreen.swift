@@ -36,6 +36,7 @@ import SwiftUI
 import Network
 
 struct ConnectionsScreen: View {
+    @EnvironmentObject private var store: LiveStore
     @Environment(\.backend) private var backend
 
     // MARK: - Live connections
@@ -518,11 +519,13 @@ struct ConnectionsScreen: View {
     // MARK: - Shared 4s refresh (mirrors AppsScreen.refreshLoop())
 
     private func refreshLoop() async {
-        await refreshAll()
         while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            if Task.isCancelled { break }
+            guard store.windowVisible else {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                continue
+            }
             await refreshAll()
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
         }
     }
 

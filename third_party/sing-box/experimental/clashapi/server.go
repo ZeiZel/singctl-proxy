@@ -299,8 +299,9 @@ func hello(redirect bool) func(w http.ResponseWriter, r *http.Request) {
 }
 
 type Traffic struct {
-	Up   int64 `json:"up"`
-	Down int64 `json:"down"`
+	Up     int64 `json:"up"`
+	Down   int64 `json:"down"`
+	Active int   `json:"active,omitempty"`
 }
 
 func traffic(ctx context.Context, trafficManager *trafficontrol.Manager) func(w http.ResponseWriter, r *http.Request) {
@@ -318,6 +319,11 @@ func traffic(ctx context.Context, trafficManager *trafficontrol.Manager) func(w 
 		if conn == nil {
 			w.Header().Set("Content-Type", "application/json")
 			render.Status(r, http.StatusOK)
+			if r.URL.Query().Get("once") == "1" {
+				upload, download := trafficManager.Total()
+				_ = json.NewEncoder(w).Encode(Traffic{Up: upload, Down: download, Active: trafficManager.ActiveConnectionsCount()})
+				return
+			}
 		}
 
 		tick := time.NewTicker(time.Second)

@@ -24,7 +24,9 @@ test:go:
   script:
     - go vet ./...
     - go test ./...
-    - go build ./cmd/singctl
+    - (cd third_party/sing-box && go test ./transport/v2raygrpclite)
+    - make build
+    - make test-singbox-decode
 release:macos:
   stage: release
   tags: [macos]

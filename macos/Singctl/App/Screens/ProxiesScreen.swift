@@ -15,6 +15,7 @@
 import SwiftUI
 
 struct ProxiesScreen: View {
+    @EnvironmentObject private var store: LiveStore
     @Environment(\.backend) private var backend
 
     @State private var group: ProxyGroup = .empty
@@ -135,11 +136,13 @@ struct ProxiesScreen: View {
     // MARK: - Actions
 
     private func refreshLoop() async {
-        await load()
         while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: Self.refreshInterval)
-            if Task.isCancelled { break }
+            guard store.windowVisible else {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                continue
+            }
             await load()
+            try? await Task.sleep(nanoseconds: Self.refreshInterval)
         }
     }
 

@@ -27,7 +27,12 @@ final class DaemonBackend: Backend {
     /// concurrently), so plain (non-actor-isolated) storage is safe here.
     private var lastProbe: Date?
     private var lastProbedDelay: Int?
-    private let probeInterval: TimeInterval = 10
+    private var probeFailureCount = 0
+    private var probeRetryAfter = Date.distantPast
+    // A single-server /delay probe is useful feedback, but unlike urltest
+    // groups it has no reason to run at the live status cadence. Keep a
+    // failed or successful probe out of the hot path for 30 seconds.
+    private let probeInterval: TimeInterval = 30
 
     // MARK: - Status / lifecycle
 
@@ -36,6 +41,7 @@ final class DaemonBackend: Backend {
     }
 
     func setMode(_ mode: String) async throws {
+        resetLatencyProbe()
         try await control.setMode(mode)
     }
 
@@ -81,7 +87,7 @@ final class DaemonBackend: Backend {
 
         if let idx = lat.rows.firstIndex(where: { $0.selected }), lat.rows[idx].delay <= 0 {
             let now = Date()
-            if let lastProbe, now.timeIntervalSince(lastProbe) < probeInterval {
+            if now < probeRetryAfter {
                 if (lat.rows[idx].error ?? "").isEmpty,
                    let lastProbedDelay, lastProbedDelay > 0 {
                     lat.rows[idx].delay = lastProbedDelay
@@ -93,11 +99,16 @@ final class DaemonBackend: Backend {
                     let delay = try await client.delay(tag: lat.rows[idx].tag, url: testURL, timeoutMs: 3000)
                     if delay > 0 {
                         lastProbedDelay = delay
+                        probeFailureCount = 0
+                        probeRetryAfter = now.addingTimeInterval(probeInterval)
                         lat.rows[idx].delay = delay
                         lat.rows[idx].error = nil
                     }
                 } catch {
                     lastProbedDelay = nil
+                    probeFailureCount = min(probeFailureCount + 1, 4)
+                    let backoff = min(300.0, probeInterval * pow(2.0, Double(probeFailureCount - 1)))
+                    probeRetryAfter = now.addingTimeInterval(backoff)
                     lat.rows[idx].delay = 0
                     // sing-box records typed REALITY failures in proxy history;
                     // refetch it so the UI can show the actionable server rejection.
@@ -111,6 +122,13 @@ final class DaemonBackend: Backend {
         }
 
         return lat
+    }
+
+    private func resetLatencyProbe() {
+        lastProbe = nil
+        lastProbedDelay = nil
+        probeFailureCount = 0
+        probeRetryAfter = .distantPast
     }
 
     /// The URL to actively probe with, mirroring Settings.URLTestURL when
@@ -152,6 +170,7 @@ final class DaemonBackend: Backend {
     }
 
     func proxySelect(_ tag: String) async throws {
+        resetLatencyProbe()
         try await control.proxySelect(tag)
     }
 
@@ -162,18 +181,22 @@ final class DaemonBackend: Backend {
     }
 
     func keysAdd(_ link: String) async throws {
+        resetLatencyProbe()
         try await control.keysAdd(link)
     }
 
     func keysAddConfig(_ config: String) async throws {
+        resetLatencyProbe()
         try await control.keysAddConfig(config)
     }
 
     func keysRemove(_ index: Int) async throws {
+        resetLatencyProbe()
         try await control.keysRemove(index)
     }
 
     func keysRename(_ index: Int, _ name: String) async throws {
+        resetLatencyProbe()
         try await control.keysRename(index, name)
     }
 
@@ -184,15 +207,18 @@ final class DaemonBackend: Backend {
     }
 
     func subAdd(_ url: String) async throws {
+        resetLatencyProbe()
         try await control.subAdd(url)
     }
 
     func subRemove(_ url: String) async throws {
+        resetLatencyProbe()
         try await control.subRemove(url)
     }
 
     func subUpdate() async throws -> Int {
-        try await control.subUpdate()
+        resetLatencyProbe()
+        return try await control.subUpdate()
     }
 
     // MARK: - Settings

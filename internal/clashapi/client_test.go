@@ -48,6 +48,8 @@ func newTestServerWithSelect(t *testing.T, secret string, sel *lastSelect) (*Cli
 		switch {
 		case r.URL.Path == "/connections":
 			_, _ = w.Write([]byte(connectionsJSON))
+		case r.URL.Path == "/traffic":
+			_, _ = w.Write([]byte(`{"up":50,"down":100,"active":7}`))
 		case r.URL.Path == "/proxies":
 			_, _ = w.Write([]byte(proxiesJSON))
 		case strings.HasPrefix(r.URL.Path, "/proxies/") && strings.HasSuffix(r.URL.Path, "/delay"):
@@ -113,6 +115,18 @@ func TestTraffic(t *testing.T) {
 	}
 	if up != 50 || down != 100 {
 		t.Errorf("Traffic() = up %d down %d, want up 50 down 100", up, down)
+	}
+}
+
+func TestTrafficSnapshotIncludesActiveCount(t *testing.T) {
+	c, srv := newTestServer(t, "")
+	defer srv.Close()
+	s, err := c.TrafficSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Active != 7 {
+		t.Fatalf("active = %d, want 7", s.Active)
 	}
 }
 

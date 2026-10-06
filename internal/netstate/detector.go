@@ -10,7 +10,7 @@ import (
 // decision D7). A tunnel carrying such an address is ours, not Cisco.
 const OurTunAddrPrefix = "198.18.0."
 
-// Detector produces a passive NetState snapshot from read-only OS commands.
+// Detector produces a passive NetState snapshot from a read-only source.
 type Detector struct {
 	run           CommandRunner
 	ourAddrPrefix string
@@ -21,7 +21,7 @@ func New(run CommandRunner) *Detector {
 	return &Detector{run: run, ourAddrPrefix: OurTunAddrPrefix}
 }
 
-// Observe gathers ifconfig / route / netstat / ps and derives a NetState. It is
+// Observe gathers interface and route state and derives a NetState. It is
 // strictly read-only and never touches Cisco. A missing default route (route
 // command failing) is tolerated — it just yields an empty DefaultRouteIface.
 func (d *Detector) Observe(ctx context.Context) (types.NetState, error) {
@@ -33,9 +33,9 @@ func (d *Detector) Observe(ctx context.Context) (types.NetState, error) {
 	if err != nil {
 		return types.NetState{}, err
 	}
-	// route/ps are best-effort; failures don't abort the snapshot.
+	// The route command is best-effort for the legacy command-backed detector;
+	// production Darwin wiring uses NewKernel and does not execute it.
 	rtOut, _ := d.run.Run(ctx, "route", "-n", "get", "default")
-	psOut, _ := d.run.Run(ctx, "ps", "-axo", "pid,comm")
 
 	ifaces := ParseIfconfig(ifOut)
 	defIface := ParseRouteGetDefault(rtOut)
@@ -61,11 +61,10 @@ func (d *Detector) Observe(ctx context.Context) (types.NetState, error) {
 	}
 
 	return types.NetState{
-		DefaultRouteIface:   defIface,
-		PhysicalIface:       pickPhysical(defaults),
-		Tunnels:             tunnels,
-		CiscoProcessPresent: parseCiscoProcs(psOut),
-		CiscoActive:         ciscoActive,
-		CiscoOwnsDefault:    ciscoOwnsDefault,
+		DefaultRouteIface: defIface,
+		PhysicalIface:     pickPhysical(defaults),
+		Tunnels:           tunnels,
+		CiscoActive:       ciscoActive,
+		CiscoOwnsDefault:  ciscoOwnsDefault,
 	}, nil
 }

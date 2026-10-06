@@ -64,7 +64,9 @@ func TestPoller_EnrichesAndLogsOnce(t *testing.T) {
 }
 
 func TestPoller_ResolverFillsEmptyProcess(t *testing.T) {
+	lookups := 0
 	p := &Poller{Resolve: func(port int) string {
+		lookups++
 		if port == 54321 {
 			return "filled"
 		}
@@ -74,5 +76,26 @@ func TestPoller_ResolverFillsEmptyProcess(t *testing.T) {
 	p.enrich(conns)
 	if conns[0].Metadata.Process != "filled" {
 		t.Errorf("enrich should fill empty process, got %q", conns[0].Metadata.Process)
+	}
+	conns[0].Metadata.Process = ""
+	p.enrich(conns)
+	if lookups != 1 {
+		t.Errorf("cached resolver called %d times, want 1", lookups)
+	}
+}
+
+func TestPoller_SkipsUnboundedProcessEnrichment(t *testing.T) {
+	lookups := 0
+	p := &Poller{
+		MaxEnrichConnections: 1,
+		Resolve: func(int) string {
+			lookups++
+			return "filled"
+		},
+	}
+	conns := []Connection{{Metadata: Metadata{SourcePort: "1"}}, {Metadata: Metadata{SourcePort: "2"}}}
+	p.enrich(conns)
+	if lookups != 0 {
+		t.Fatalf("large connection table triggered %d process lookups", lookups)
 	}
 }

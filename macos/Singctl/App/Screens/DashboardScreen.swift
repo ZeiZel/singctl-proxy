@@ -18,6 +18,7 @@ struct DashboardScreen: View {
 
     @State private var isApplyingMode = false
     @State private var modeError: String?
+    @State private var modeResyncToken = 0
 
     /// F6 item 3's fix: the traffic empty state used to say "Enable the
     /// Clash API in Settings" purely from `store.trafficSamples.isEmpty`,
@@ -90,7 +91,7 @@ struct DashboardScreen: View {
     private var modeSection: some View {
         Card(title: "Mode") {
             VStack(alignment: .leading, spacing: Spacing.md) {
-                SegmentedControl(options: modeOptions, selection: modeBinding, disabled: isApplyingMode)
+                SegmentedControl(options: modeOptions, selection: modeBinding, disabled: isApplyingMode, resyncToken: modeResyncToken)
 
                 if let modeError {
                     Text(modeError).font(.appBody).foregroundStyle(Color.sDanger)
@@ -122,7 +123,10 @@ struct DashboardScreen: View {
         // VPN mode reroutes ALL system traffic, not just proxy-aware apps —
         // ask first, unless the user turned that confirmation off in
         // Settings → General (see AppPreferences.swift).
-        if mode == "vpn", !AppPreferences.shared.confirmVPNSwitch() { return }
+        if mode == "vpn", !AppPreferences.shared.confirmVPNSwitch() {
+            modeResyncToken = SegmentedControl<String>.nextResyncToken(after: modeResyncToken)
+            return
+        }
         isApplyingMode = true
         modeError = nil
         let optimisticChange = store.optimisticallySetMode(mode)
@@ -132,6 +136,7 @@ struct DashboardScreen: View {
                 try await backend.setMode(mode)
                 store.refreshAfterMutation()
             } catch {
+                modeResyncToken = SegmentedControl<String>.nextResyncToken(after: modeResyncToken)
                 store.restoreOptimisticStatus(optimisticChange)
                 store.refreshAfterMutation()
                 modeError = error.localizedDescription
@@ -171,7 +176,10 @@ struct DashboardScreen: View {
 
     private var trafficSection: some View {
         Card(title: "Traffic") {
-            Badge(text: "\(store.connections.count) active connections", tone: .accent)
+            Badge(
+                text: store.trafficSamples.isEmpty ? "No traffic sample yet" : "Live traffic",
+                tone: .accent
+            )
         } content: {
             if store.trafficSamples.isEmpty {
                 trafficEmptyState
@@ -216,6 +224,17 @@ struct DashboardScreen: View {
     /// the full row/aggregate payload ConnectionsScreen renders.
     private func connectionsStatePollLoop() async {
         while !Task.isCancelled {
+            guard store.windowVisible else {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                continue
+            }
+            // Once TRAFFIC has produced samples, the dashboard already has a
+            // positive live signal and does not need to fetch the full
+            // CONNECTIONS payload just to render its empty state.
+            if !store.trafficSamples.isEmpty {
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                continue
+            }
             do {
                 connectionsState = try await backend.connectionsDetail()
                 connectionsStateError = nil

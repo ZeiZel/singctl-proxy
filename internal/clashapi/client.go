@@ -104,15 +104,29 @@ func (c *Client) Connections(ctx context.Context) ([]Connection, error) {
 	return resp.Connections, nil
 }
 
-// Traffic fetches the cumulative upload/download byte counters from
-// /connections. A client samples these over time and charts the per-second
-// deltas (the Clash API reports running totals, not rates).
+// Traffic fetches cumulative upload/download counters from the cheap one-shot
+// traffic endpoint, avoiding serialization of the full connection table.
 func (c *Client) Traffic(ctx context.Context) (up, down int64, err error) {
-	var resp connectionsResponse
-	if err := c.getJSON(ctx, "/connections", &resp); err != nil {
-		return 0, 0, err
+	s, err := c.TrafficSnapshot(ctx)
+	return s.Up, s.Down, err
+}
+
+type TrafficSnapshot struct {
+	Up     int64 `json:"up"`
+	Down   int64 `json:"down"`
+	Active int   `json:"active"`
+}
+
+func (c *Client) TrafficSnapshot(ctx context.Context) (TrafficSnapshot, error) {
+	var resp struct {
+		Up     int64 `json:"up"`
+		Down   int64 `json:"down"`
+		Active int   `json:"active"`
 	}
-	return resp.UploadTotal, resp.DownloadTotal, nil
+	if err := c.getJSON(ctx, "/traffic?once=1", &resp); err != nil {
+		return TrafficSnapshot{}, err
+	}
+	return TrafficSnapshot{Up: resp.Up, Down: resp.Down, Active: resp.Active}, nil
 }
 
 // ProxyState is one entry from GET /proxies (a server or a group).

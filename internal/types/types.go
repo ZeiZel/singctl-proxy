@@ -14,9 +14,6 @@ type NetState struct {
 	PhysicalIface string
 	// Tunnels lists tunnel interfaces (utun/ppp/ipsec) currently present.
 	Tunnels []TunnelIface
-	// CiscoProcessPresent is corroborating evidence only (the daemon runs even
-	// when disconnected); it is NOT used as the source of truth.
-	CiscoProcessPresent bool
 	// CiscoActive is the verdict: a foreign tunnel (not ours) is up and carrying
 	// traffic, i.e. Cisco is connected.
 	CiscoActive bool

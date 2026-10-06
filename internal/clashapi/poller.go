@@ -26,7 +26,19 @@ type Poller struct {
 	Client   *Client
 	Interval time.Duration
 	Resolve  func(srcPort int) string // optional process-name fallback
-	Sink     Sink
+	// MaxEnrichConnections bounds process lookup work. Large connection tables
+	// remain useful to the dashboard, but resolving every source port makes the
+	// poll interval grow with traffic volume.
+	MaxEnrichConnections int
+	// LargeConnectionsInterval slows full table refreshes when traffic is high.
+	LargeConnectionsInterval time.Duration
+	resolveCache             map[string]resolveResult
+	Sink                     Sink
+}
+
+type resolveResult struct {
+	name string
+	at   time.Time
 }
 
 // Run polls until ctx is cancelled. It does a first poll immediately so the UI
@@ -37,37 +49,56 @@ func (p *Poller) Run(ctx context.Context) {
 		interval = time.Second
 	}
 	seen := make(map[string]bool)
+	lastLarge := time.Time{}
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
-	p.poll(ctx, seen)
+	p.poll(ctx, seen, &lastLarge)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			p.poll(ctx, seen)
+			p.poll(ctx, seen, &lastLarge)
 		}
 	}
 }
 
-func (p *Poller) poll(ctx context.Context, seen map[string]bool) {
-	conns, err := p.Client.Connections(ctx)
-	if err == nil {
-		p.enrich(conns)
-		if p.Sink.LogLine != nil {
-			for _, c := range conns {
-				if c.ID != "" && seen[c.ID] {
-					continue
-				}
-				if c.ID != "" {
-					seen[c.ID] = true
-				}
-				p.Sink.LogLine(FormatLine(time.Now(), c))
-			}
-			pruneSeen(seen, conns)
+func (p *Poller) poll(ctx context.Context, seen map[string]bool, lastLarge *time.Time) {
+	limit := p.enrichLimit()
+	skipConnections := false
+	if snapshot, err := p.Client.TrafficSnapshot(ctx); err == nil && snapshot.Active > limit {
+		if lastLarge.IsZero() || time.Since(*lastLarge) >= p.largeConnectionsInterval() {
+			*lastLarge = time.Now()
 		}
-		if p.Sink.Connections != nil {
-			p.Sink.Connections(conns)
+		skipConnections = true
+	}
+	if !skipConnections {
+		conns, err := p.Client.Connections(ctx)
+		if err == nil {
+			largeInterval := p.largeConnectionsInterval()
+			if len(conns) > limit && !lastLarge.IsZero() && time.Since(*lastLarge) < largeInterval {
+				conns = nil
+			} else if len(conns) > limit {
+				*lastLarge = time.Now()
+			}
+			if conns != nil {
+				p.enrich(conns)
+				if p.Sink.LogLine != nil {
+					for _, c := range conns {
+						if c.ID != "" && seen[c.ID] {
+							continue
+						}
+						if c.ID != "" {
+							seen[c.ID] = true
+						}
+						p.Sink.LogLine(FormatLine(time.Now(), c))
+					}
+					pruneSeen(seen, conns)
+				}
+				if p.Sink.Connections != nil {
+					p.Sink.Connections(conns)
+				}
+			}
 		}
 	}
 	if p.Sink.Proxies != nil {
@@ -77,20 +108,56 @@ func (p *Poller) poll(ctx context.Context, seen map[string]bool) {
 	}
 }
 
+func (p *Poller) largeConnectionsInterval() time.Duration {
+	if p.LargeConnectionsInterval > 0 {
+		return p.LargeConnectionsInterval
+	}
+	return 10 * time.Second
+}
+
+func (p *Poller) enrichLimit() int {
+	if p.MaxEnrichConnections > 0 {
+		return p.MaxEnrichConnections
+	}
+	return 256
+}
+
 // enrich fills empty process names using the Resolve fallback keyed on the
 // connection's source port.
 func (p *Poller) enrich(conns []Connection) {
 	if p.Resolve == nil {
 		return
 	}
+	if len(conns) > p.enrichLimit() {
+		return
+	}
+	if p.resolveCache == nil {
+		p.resolveCache = make(map[string]resolveResult)
+	}
 	for i := range conns {
 		if conns[i].Metadata.Process != "" {
 			continue
 		}
-		if name := p.Resolve(conns[i].Metadata.SourcePortNum()); name != "" {
+		port := conns[i].Metadata.SourcePortNum()
+		key := resolveKey(conns[i].Metadata)
+		cached, ok := p.resolveCache[key]
+		if ok && time.Since(cached.at) < 30*time.Second {
+			conns[i].Metadata.Process = cached.name
+			continue
+		}
+		name := p.Resolve(port)
+		if len(p.resolveCache) >= 1024 {
+			p.resolveCache = make(map[string]resolveResult)
+		}
+		p.resolveCache[key] = resolveResult{name: name, at: time.Now()}
+		if name != "" {
 			conns[i].Metadata.Process = name
 		}
 	}
+}
+
+func resolveKey(m Metadata) string {
+	return m.Network + "|" + m.SourceIP + "|" + m.SourcePort + "|" + m.DestinationIP + "|" + m.DestinationPort + "|" + m.Host
 }
 
 // pruneSeen drops IDs no longer present so the dedup map cannot grow unbounded.

@@ -108,15 +108,15 @@ func TestMarshalStability_Deterministic(t *testing.T) {
 	}
 }
 
-func TestClashAPI_AddsProcessProbeRule(t *testing.T) {
+func TestClashAPI_DoesNotEnableProcessSearch(t *testing.T) {
 	cfg, err := singbox.GenerateProxyConfigOpts(testReg, []protocol.Profile{mustParse(t, realLink)}, singbox.ProxyOpts{
 		ClashAPI: &singbox.ClashAPI{ExternalController: "127.0.0.1:9090"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(marshal(t, cfg)), `"process_path"`) {
-		t.Error("Clash API config must add the process-probe route rule to enable process search")
+	if strings.Contains(string(marshal(t, cfg)), `"process_path"`) {
+		t.Error("Clash API config must not enable process search on every connection")
 	}
 }
 

@@ -11,6 +11,10 @@ import SwiftUI
 @main
 struct SingctlPreviewMain {
     static func main() {
+        if CommandLine.arguments.contains("--energy-checks") {
+            runEnergyChecks()
+            return
+        }
         let options = CaptureOptions(arguments: Array(CommandLine.arguments.dropFirst()))
         let backend = DemoBackend()
         let store = LiveStore.previewSnapshot(
@@ -78,6 +82,94 @@ struct SingctlPreviewMain {
             fputs("SingctlPreview: \(error.localizedDescription)\n", stderr)
             exit(1)
         }
+    }
+
+    @MainActor
+    private static func runEnergyChecks() {
+        let backend = DemoBackend()
+        var consoleBatchNumber = 2
+        let store = LiveStore(backend: backend, consoleProvider: { _ in
+            defer { consoleBatchNumber += 1 }
+            guard consoleBatchNumber < 2 else { return [] }
+            let firstID = consoleBatchNumber == 0 ? 1 : 2_002
+            let count = consoleBatchNumber == 0 ? 2_001 : 1
+            return (0..<count).map { offset in
+                let id = firstID + offset
+                return ConsoleLine(id: id, pid: 7, app: "fake", stream: "stdout", text: "line \(id)")
+            }
+        })
+        var notifications = 0
+        let cancellable = store.objectWillChange.sink { notifications += 1 }
+        store.setWindowVisible(false)
+        store.resetDueTimesForHarness()
+        Task { @MainActor in
+            await store.pollOnceForHarness()
+            precondition(backend.trafficCalls == 0 && backend.connectionsCalls == 0)
+
+            backend.suspendLatency = true
+            store.setWindowVisible(true)
+            store.resetDueTimesForHarness()
+            let visibleBaselineNotifications = notifications
+            let pending = Task { @MainActor in await store.pollOnceForHarness() }
+            while backend.latencyCalls == 0 || backend.trafficCalls == 0 { await Task.yield() }
+            precondition(notifications > visibleBaselineNotifications && store.totalUp > 0)
+            backend.resumeLatency()
+            await pending.value
+            await Task.yield()
+
+            backend.suspendLatency = false
+            // Resume establishes a fresh counter baseline; the following
+            // cycle then exercises the unchanged-counter zero-rate sample.
+            store.setWindowVisible(false)
+            store.setWindowVisible(true)
+            store.resetDueTimesForHarness()
+            await store.pollOnceForHarness()
+            let sampleCount = store.trafficSamples.count
+            store.resetDueTimesForHarness()
+            await store.pollOnceForHarness()
+            precondition(store.trafficSamples.count == sampleCount + 1)
+            precondition(store.trafficSamples.last?.up == 0 && store.trafficSamples.last?.down == 0)
+
+            store.setWindowVisible(false)
+            consoleBatchNumber = 0
+            let logs = LogsModel()
+            logs.attachForHarness(store: store)
+            store.resetDueTimesForHarness()
+            await store.pollOnceForHarness()
+            logs.drainStoreConsoleForHarness()
+            precondition(logs.lineCountForHarness == 0)
+            store.setWindowVisible(true)
+            store.resetDueTimesForHarness()
+            await store.pollOnceForHarness()
+            logs.drainStoreConsoleForHarness()
+            precondition(logs.lineCountForHarness == 2_002)
+            logs.drainStoreConsoleForHarness()
+            precondition(logs.lineCountForHarness == 2_002)
+
+            let token = SegmentedControl<String>.nextResyncToken(after: 4)
+            precondition(token == 5)
+            let options = [SegmentedOption("off", "Off"), SegmentedOption("proxy", "Proxy")]
+            precondition(!SegmentedControl<String>.snapshotsEqual(
+                oldOptions: options, oldSelection: "off", oldDisabled: false, oldResyncToken: 0,
+                newOptions: options, newSelection: "proxy", newDisabled: false, newResyncToken: 0
+            ))
+            precondition(!SegmentedControl<String>.snapshotsEqual(
+                oldOptions: options, oldSelection: "off", oldDisabled: false, oldResyncToken: 0,
+                newOptions: options, newSelection: "off", newDisabled: false, newResyncToken: token
+            ))
+            var externalSelection = "off"
+            var setterValue: String?
+            let binding = Binding<String>(
+                get: { externalSelection },
+                set: { value in externalSelection = value; setterValue = value }
+            )
+            binding.wrappedValue = "proxy"
+            precondition(externalSelection == "proxy" && setterValue == "proxy")
+            _ = cancellable
+            print("Energy semantic checks passed")
+            exit(0)
+        }
+        RunLoop.main.run()
     }
 }
 
@@ -225,12 +317,34 @@ private final class DemoBackend: Backend {
         urlTestTolerance: 50, saveProfile: true, autostartMode: "proxy"
     )
 
+    private(set) var trafficCalls = 0
+    private(set) var connectionsCalls = 0
+    private(set) var latencyCalls = 0
+    var suspendLatency = false
+    private var latencyContinuation: CheckedContinuation<Latency, Never>?
+
     func status() async throws -> DaemonStatus { Self.status }
     func setMode(_ mode: String) async throws {}
     func stop() async throws {}
-    func traffic() async throws -> Traffic { Traffic(up: 4_821_540_864, down: 18_704_842_752) }
-    func latency() async throws -> Latency { Self.latency }
-    func connections() async throws -> ClashConnections { Self.connections }
+    func traffic() async throws -> Traffic {
+        trafficCalls += 1
+        return Traffic(up: 4_821_540_864, down: 18_704_842_752)
+    }
+    func latency() async throws -> Latency {
+        latencyCalls += 1
+        if suspendLatency {
+            return await withCheckedContinuation { latencyContinuation = $0 }
+        }
+        return Self.latency
+    }
+    func resumeLatency() {
+        latencyContinuation?.resume(returning: Self.latency)
+        latencyContinuation = nil
+    }
+    func connections() async throws -> ClashConnections {
+        connectionsCalls += 1
+        return Self.connections
+    }
     func connectionsDetail() async throws -> ConnectionsPayload {
         didReadConnectionsDetail = true
         return ConnectionsPayload(state: .active, rows: [], apps: [], dests: [], detail: nil)

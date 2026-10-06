@@ -63,6 +63,7 @@ func TestTargetSet(t *testing.T) {
 // Available is false and mutations are inert. BundleID is unresolved.
 func TestNewController_Platform(t *testing.T) {
 	c := New("127.0.0.1", 1080)
+	isolateController(t, c)
 	if err := c.AddTarget("com.x"); err != nil {
 		t.Errorf("AddTarget should not error: %v", err)
 	}

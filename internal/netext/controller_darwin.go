@@ -3,6 +3,7 @@
 package netext
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -25,26 +26,83 @@ const Supported = true
 const availTTL = 5 * time.Second
 
 var (
-	availMu    sync.Mutex
-	availAt    time.Time
-	availCache bool
+	availMu         sync.Mutex
+	availAt         time.Time
+	availCache      bool
+	availFlight     chan struct{}
+	availGeneration uint64
+	extensionProbe  = probeExtension
 )
 
 // Available is the free-function form of darwinController.Available: probes
 // (with a short cache) whether the extension is installed AND approved.
 func Available() bool {
 	availMu.Lock()
-	defer availMu.Unlock()
 	if time.Since(availAt) < availTTL {
-		return availCache
+		v := availCache
+		availMu.Unlock()
+		return v
 	}
-	availCache = probeExtension()
-	availAt = time.Now()
-	return availCache
+	if availFlight != nil {
+		flight := availFlight
+		availMu.Unlock()
+		<-flight
+		availMu.Lock()
+		v := availCache
+		availMu.Unlock()
+		return v
+	}
+	flight := make(chan struct{})
+	generation := availGeneration
+	availFlight = flight
+	availMu.Unlock()
+	v := extensionProbe()
+	availMu.Lock()
+	availCache, availFlight = v, nil
+	if generation == availGeneration {
+		availAt = time.Now()
+	}
+	close(flight)
+	availMu.Unlock()
+	return v
+}
+
+// Cached returns the last extension probe without starting an external
+// command. Display paths use this accessor so rendering never launches a
+// process or waits for the probe.
+func Cached() bool {
+	availMu.Lock()
+	v := availCache
+	availMu.Unlock()
+	return v
+}
+
+// Invalidate causes the next Available call to refresh the approval state.
+func Invalidate() {
+	availMu.Lock()
+	availAt = time.Time{}
+	availGeneration++
+	availMu.Unlock()
+}
+
+func RefreshLoop(ctx context.Context) {
+	Available()
+	ticker := time.NewTicker(availTTL)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			Available()
+		}
+	}
 }
 
 func probeExtension() bool {
-	out, err := exec.Command("systemextensionsctl", "list").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "systemextensionsctl", "list").Output()
 	if err != nil {
 		return false
 	}

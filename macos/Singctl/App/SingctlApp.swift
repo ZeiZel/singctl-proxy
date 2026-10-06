@@ -96,7 +96,7 @@ struct SingctlApp: App {
 /// right after this delegate is constructed (see `SingctlApp.init()`) so
 /// this never creates its own instances.
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     var store: LiveStore!
     var backend: Backend!
 
@@ -104,9 +104,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover?
     private var prefsCancellable: AnyCancellable?
     private let log = OSLog(subsystem: "com.singctl.proxy", category: "tray")
+    private var windowObservers: [NSObjectProtocol] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         CrashReporter.shared.start()
+        installWindowVisibilityTracking()
 
         // Observed (not read once): Settings' General group can flip "show
         // menu-bar item" live, and `$showMenuBarItem` emits its current
@@ -230,6 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func makePopover() -> NSPopover {
         let popover = NSPopover()
         popover.behavior = .transient
+        popover.delegate = self
         popover.contentViewController = NSHostingController(
             rootView: MenuBarContentView()
                 .environmentObject(store!)
@@ -237,6 +240,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .appTheme()
         )
         return popover
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        guard let popover = notification.object as? NSPopover, popover === self.popover else { return }
+        // Transient popovers can close without passing through togglePopover.
+        // Release the hosting controller in both paths so its SwiftUI tree
+        // does not remain a second live consumer of LiveStore.
+        popover.contentViewController = nil
+        self.popover = nil
+    }
+
+    private func installWindowVisibilityTracking() {
+        let center = NotificationCenter.default
+        let names: [Notification.Name] = [
+            NSWindow.didChangeOcclusionStateNotification,
+            NSWindow.didMiniaturizeNotification,
+            NSWindow.didDeminiaturizeNotification,
+            NSWindow.didResignKeyNotification,
+            NSWindow.didBecomeKeyNotification,
+            NSApplication.didHideNotification,
+            NSApplication.didUnhideNotification,
+        ]
+        windowObservers = names.map { name in
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.updateWindowVisibility()
+                }
+            }
+        }
+        DispatchQueue.main.async { [weak self] in self?.updateWindowVisibility() }
+    }
+
+    private func updateWindowVisibility() {
+        let visible = NSApp.windows.contains { window in
+            window !== popover?.contentViewController?.view.window
+                && window.isVisible
+                && !window.isMiniaturized
+                && window.occlusionState.contains(.visible)
+        }
+        store?.setWindowVisible(visible)
+    }
+
+    deinit {
+        for observer in windowObservers { NotificationCenter.default.removeObserver(observer) }
     }
 }
 
@@ -415,6 +462,7 @@ private struct MenuBarContentView: View {
 
     @State private var isApplyingMode = false
     @State private var modeError: String?
+    @State private var modeResyncToken = 0
 
     #if !APPSTORE
     @State private var isStartingDaemon = false
@@ -453,7 +501,7 @@ private struct MenuBarContentView: View {
 
             VStack(alignment: .leading, spacing: Spacing.xs) {
                 Text("MODE").font(.appCaption).foregroundStyle(Color.sTextDim)
-                SegmentedControl(options: modeOptions, selection: modeBinding, disabled: isApplyingMode)
+                SegmentedControl(options: modeOptions, selection: modeBinding, disabled: isApplyingMode, resyncToken: modeResyncToken)
                 if let modeError {
                     Text(modeError).font(.appCaption).foregroundStyle(Color.sDanger)
                 }
@@ -475,7 +523,10 @@ private struct MenuBarContentView: View {
     }
 
     private func applyMode(_ mode: String) {
-        if mode == "vpn", !AppPreferences.shared.confirmVPNSwitch() { return }
+        if mode == "vpn", !AppPreferences.shared.confirmVPNSwitch() {
+            modeResyncToken = SegmentedControl<String>.nextResyncToken(after: modeResyncToken)
+            return
+        }
         isApplyingMode = true
         modeError = nil
         os_log("tray popover: applying mode %{public}@", log: log, type: .info, mode)
@@ -486,6 +537,7 @@ private struct MenuBarContentView: View {
                 try await backend.setMode(mode)
                 store.refreshAfterMutation()
             } catch {
+                modeResyncToken = SegmentedControl<String>.nextResyncToken(after: modeResyncToken)
                 store.restoreOptimisticStatus(optimisticChange)
                 store.refreshAfterMutation()
                 os_log(

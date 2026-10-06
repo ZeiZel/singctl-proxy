@@ -5,7 +5,15 @@
 // table-testable on captured fixtures.
 package netstate
 
-import "context"
+import (
+	"context"
+	"singctl/internal/types"
+)
+
+// ObservationSource is the narrow observation seam shared by the monitor and runtime.
+type ObservationSource interface {
+	Observe(context.Context) (types.NetState, error)
+}
 
 // CommandRunner runs a read-only OS command and returns its stdout. The real
 // implementation (osreal_darwin.go) maps logical names to absolute paths and

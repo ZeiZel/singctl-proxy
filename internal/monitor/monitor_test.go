@@ -187,3 +187,149 @@ func TestMonitor_Run_StopsOnContextCancel(t *testing.T) {
 		t.Fatal("Run did not stop after context cancel")
 	}
 }
+
+func TestMonitor_Run_ClosedEventChannelDoesNotSpin(t *testing.T) {
+	out := make(chan Event, 8)
+	det := &mockDetector{}
+	det.set(types.NetState{PhysicalIface: "en0"})
+	events := make(chan struct{})
+	close(events)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
+	defer cancel()
+	if err := New(det, 1, modeFunc(policy.ModeProxy), nil, out).Run(ctx, nil, events); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Run error = %v, want deadline exceeded", err)
+	}
+}
+
+func TestMonitor_Run_MinimumPollSpacing(t *testing.T) {
+	type timedDetector struct {
+		mu    sync.Mutex
+		times []time.Time
+	}
+	var d timedDetector
+	det := detectorFunc(func(context.Context) (types.NetState, error) {
+		d.mu.Lock()
+		d.times = append(d.times, time.Now())
+		d.mu.Unlock()
+		return types.NetState{PhysicalIface: "en0"}, nil
+	})
+	tick := make(chan time.Time, 10)
+	for i := 0; i < cap(tick); i++ {
+		tick <- time.Now()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 130*time.Millisecond)
+	defer cancel()
+	_ = New(det, 1, modeFunc(policy.ModeProxy), nil, make(chan Event, 1)).Run(ctx, tick, nil)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for i := 1; i < len(d.times); i++ {
+		if gap := d.times[i].Sub(d.times[i-1]); gap < 45*time.Millisecond {
+			t.Fatalf("poll gap %s is below 50ms floor", gap)
+		}
+	}
+}
+
+type detectorFunc func(context.Context) (types.NetState, error)
+
+func (f detectorFunc) Observe(ctx context.Context) (types.NetState, error) { return f(ctx) }
+
+func TestMonitorRunConfirmsEventWithoutTicker(t *testing.T) {
+	det := &mockDetector{}
+	det.set(types.NetState{PhysicalIface: "en0"})
+	out := make(chan Event, 8)
+	events := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	observed := make(chan struct{}, 8)
+	m := New(det, 2, modeFunc(policy.ModeVPN), nil, out)
+	m.onPoll = func(types.NetState) { observed <- struct{}{} }
+	done := make(chan struct{})
+	go func() { m.Run(ctx, nil, events); close(done) }()
+	<-observed
+	det.set(types.NetState{CiscoActive: true, PhysicalIface: "en0"})
+	events <- struct{}{}
+	select {
+	case e := <-out:
+		if !hasAction(e, policy.ActFailClosed) {
+			t.Fatalf("actions=%v", e.Decision.Actions)
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("missing event confirmation")
+	}
+	cancel()
+	<-done
+}
+
+func TestMonitorRunRejectsThirtyMillisecondBlip(t *testing.T) {
+	det := &mockDetector{}
+	det.set(types.NetState{PhysicalIface: "en0"})
+	out := make(chan Event, 8)
+	events := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	observed := make(chan struct{}, 8)
+	m := New(det, 2, modeFunc(policy.ModeVPN), nil, out)
+	m.onPoll = func(types.NetState) { observed <- struct{}{} }
+	done := make(chan struct{})
+	go func() { m.Run(ctx, nil, events); close(done) }()
+	<-observed
+	det.set(types.NetState{CiscoActive: true, PhysicalIface: "en0"})
+	events <- struct{}{}
+	<-observed // start the blip at the first observed Active sample
+	time.Sleep(30 * time.Millisecond)
+	det.set(types.NetState{PhysicalIface: "en0"})
+	events <- struct{}{}
+	time.Sleep(130 * time.Millisecond)
+	cancel()
+	<-done
+	if len(out) != 0 {
+		t.Fatalf("brief blip emitted %d events", len(out))
+	}
+}
+
+func TestMonitorRunPendingErrorsBackOff(t *testing.T) {
+	calls := 0
+	det := detectorFunc(func(context.Context) (types.NetState, error) {
+		calls++
+		if calls == 1 {
+			return types.NetState{PhysicalIface: "en0"}, nil
+		}
+		if calls == 2 {
+			return types.NetState{CiscoActive: true, PhysicalIface: "en0"}, nil
+		}
+		return types.NetState{}, errors.New("temporary")
+	})
+	events := make(chan struct{}, 1)
+	events <- struct{}{}
+	ctx, cancel := context.WithTimeout(context.Background(), 450*time.Millisecond)
+	defer cancel()
+	New(det, 2, modeFunc(policy.ModeVPN), nil, make(chan Event, 8)).Run(ctx, nil, events)
+	if calls > 5 || calls < 4 {
+		t.Fatalf("pending error retry count=%d", calls)
+	}
+}
+
+func TestMonitorRunSpacingAcrossTickerAndEvents(t *testing.T) {
+	times := []time.Time{}
+	det := detectorFunc(func(context.Context) (types.NetState, error) {
+		times = append(times, time.Now())
+		return types.NetState{PhysicalIface: "en0"}, nil
+	})
+	tick := make(chan time.Time, 4)
+	events := make(chan struct{}, 4)
+	for i := 0; i < 4; i++ {
+		tick <- time.Now()
+		events <- struct{}{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Millisecond)
+	defer cancel()
+	New(det, 2, modeFunc(policy.ModeVPN), nil, make(chan Event, 8)).Run(ctx, tick, events)
+	if len(times) < 3 {
+		t.Fatalf("insufficient polls: %d", len(times))
+	}
+	for i := 1; i < len(times); i++ {
+		if gap := times[i].Sub(times[i-1]); gap < 45*time.Millisecond {
+			t.Fatalf("tick/event gap=%s", gap)
+		}
+	}
+}

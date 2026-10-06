@@ -27,6 +27,8 @@ var defaultClientHeader = http.Header{
 	"TE":           []string{"trailers"},
 }
 
+const responseHeaderTimeout = 30 * time.Second
+
 type Client struct {
 	ctx        context.Context
 	serverAddr M.Socksaddr
@@ -79,6 +81,8 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	pipeInReader, pipeInWriter := io.Pipe()
+	requestCtx, cancel := context.WithCancel(ctx)
+	headerTimer := time.AfterFunc(responseHeaderTimeout, cancel)
 	request := &http.Request{
 		Method: http.MethodPost,
 		Body:   pipeInReader,
@@ -86,10 +90,11 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		Header: defaultClientHeader,
 		Host:   c.host,
 	}
-	request = request.WithContext(ctx)
-	conn := newLateGunConn(pipeInWriter)
+	request = request.WithContext(requestCtx)
+	conn := newLateGunConn(pipeInWriter, pipeInReader, cancel)
 	go func() {
 		response, err := c.transport.RoundTrip(request)
+		headerTimer.Stop()
 		if err != nil {
 			_ = pipeInReader.CloseWithError(err)
 			conn.setup(nil, err)

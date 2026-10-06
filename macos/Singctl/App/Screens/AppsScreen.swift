@@ -63,7 +63,7 @@ struct AppsScreen: View {
         .padding(Spacing.lg)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .searchable(text: $installedSearch, prompt: "Filter installed apps")
-        .task { await loadInstalledApps() }
+        .task { await loadInstalledAppsWhenVisible() }
         .task { await refreshLoop() }
     }
 
@@ -244,6 +244,14 @@ struct AppsScreen: View {
         installedError = nil
         installedApps = await InstalledApps.scan()
         isLoadingInstalled = false
+    }
+
+    private func loadInstalledAppsWhenVisible() async {
+        while !Task.isCancelled && !store.windowVisible {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        guard !Task.isCancelled else { return }
+        await loadInstalledApps()
     }
 
     private func launchInstalled(_ app: InstalledApp) {
@@ -466,11 +474,13 @@ struct AppsScreen: View {
     // MARK: - Shared 4s refresh
 
     private func refreshLoop() async {
-        await refreshLists()
         while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            if Task.isCancelled { break }
+            guard store.windowVisible else {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                continue
+            }
             await refreshLists()
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
         }
     }
 

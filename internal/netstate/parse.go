@@ -81,19 +81,6 @@ func ParseNetstatDefaults(out []byte) []RouteRow {
 	return rows
 }
 
-// parseCiscoProcs reports whether the process list shows Cisco Secure Client
-// components. Corroborating evidence only (the daemon runs even when
-// disconnected).
-func parseCiscoProcs(out []byte) bool {
-	s := strings.ToLower(string(out))
-	for _, marker := range []string{"vpnagentd", "cisco secure client", "acsockext", "com.cisco", "anyconnect"} {
-		if strings.Contains(s, marker) {
-			return true
-		}
-	}
-	return false
-}
-
 // isTunnelName reports whether an interface name is a tunnel device.
 func isTunnelName(name string) bool {
 	for _, p := range []string{"utun", "ppp", "ipsec", "tun"} {

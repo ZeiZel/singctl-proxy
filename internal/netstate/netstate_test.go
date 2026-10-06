@@ -34,11 +34,6 @@ default            192.168.1.1        UGScIg                en0
 127                127.0.0.1          UCS                   lo0
 `
 
-const psCisco = `  534 vpnagentd
-  569 com.cisco.anyconnect.macos.acsockext
- 1963 Cisco Secure Client
-`
-
 const ifconfigNoCisco = `en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
 	inet 192.168.1.148 netmask 0xffffff00 broadcast 192.168.1.255
 utun0: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1500
@@ -55,10 +50,6 @@ Internet:
 Destination        Gateway            Flags               Netif Expire
 default            192.168.1.1        UGScg                 en0
 127                127.0.0.1          UCS                   lo0
-`
-
-const psNoCisco = `  100 launchd
-  200 Finder
 `
 
 // our forwarder TUN up (198.18.0.1), no Cisco.
@@ -82,16 +73,13 @@ const ifconfigBoth = ifconfigCisco + `utun5: flags=80d1<UP,POINTOPOINT,RUNNING,N
 	inet 198.18.0.1 --> 198.18.0.1 netmask 0xfffffffc
 `
 
-type scenario struct {
-	ifconfig, route, netstat, ps string
-}
+type scenario struct{ ifconfig, route, netstat string }
 
 func runnerFor(s scenario) CommandRunner {
 	return fakeRunner{out: map[string][]byte{
 		"ifconfig":             []byte(s.ifconfig),
 		"route -n get default": []byte(s.route),
 		"netstat -rn -f inet":  []byte(s.netstat),
-		"ps -axo pid,comm":     []byte(s.ps),
 	}}
 }
 
@@ -116,7 +104,7 @@ func (f fakeRunner) Run(_ context.Context, name string, args ...string) ([]byte,
 // --- Observe scenarios ---
 
 func TestObserve_CiscoConnected(t *testing.T) {
-	ns, err := New(runnerFor(scenario{ifconfigCisco, routeDefaultCisco, netstatCisco, psCisco})).Observe(context.Background())
+	ns, err := New(runnerFor(scenario{ifconfigCisco, routeDefaultCisco, netstatCisco})).Observe(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,9 +120,6 @@ func TestObserve_CiscoConnected(t *testing.T) {
 	if ns.PhysicalIface != "en0" {
 		t.Errorf("PhysicalIface = %q, want en0", ns.PhysicalIface)
 	}
-	if !ns.CiscoProcessPresent {
-		t.Error("want CiscoProcessPresent=true")
-	}
 }
 
 // TestObserve_CiscoSplitTunnel is the user's real setup: Cisco is connected
@@ -142,7 +127,7 @@ func TestObserve_CiscoConnected(t *testing.T) {
 // CiscoActive must be true, CiscoOwnsDefault false — so the policy will NOT bind
 // the proxy to the physical NIC.
 func TestObserve_CiscoSplitTunnel(t *testing.T) {
-	ns, err := New(runnerFor(scenario{ifconfigCisco, routeDefaultNoCisco, netstatNoCisco, psCisco})).Observe(context.Background())
+	ns, err := New(runnerFor(scenario{ifconfigCisco, routeDefaultNoCisco, netstatNoCisco})).Observe(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +143,7 @@ func TestObserve_CiscoSplitTunnel(t *testing.T) {
 }
 
 func TestObserve_NoCisco(t *testing.T) {
-	ns, err := New(runnerFor(scenario{ifconfigNoCisco, routeDefaultNoCisco, netstatNoCisco, psNoCisco})).Observe(context.Background())
+	ns, err := New(runnerFor(scenario{ifconfigNoCisco, routeDefaultNoCisco, netstatNoCisco})).Observe(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,13 +153,10 @@ func TestObserve_NoCisco(t *testing.T) {
 	if ns.DefaultRouteIface != "en0" || ns.PhysicalIface != "en0" {
 		t.Errorf("ifaces = default %q phys %q, want en0/en0", ns.DefaultRouteIface, ns.PhysicalIface)
 	}
-	if ns.CiscoProcessPresent {
-		t.Error("want CiscoProcessPresent=false")
-	}
 }
 
 func TestObserve_OurTunUp_NotCisco(t *testing.T) {
-	ns, err := New(runnerFor(scenario{ifconfigOurTun, routeDefaultOurTun, netstatOurTun, psNoCisco})).Observe(context.Background())
+	ns, err := New(runnerFor(scenario{ifconfigOurTun, routeDefaultOurTun, netstatOurTun})).Observe(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +178,7 @@ func TestObserve_OurTunUp_NotCisco(t *testing.T) {
 }
 
 func TestObserve_OurTunAndCiscoBoth(t *testing.T) {
-	ns, err := New(runnerFor(scenario{ifconfigBoth, routeDefaultCisco, netstatCisco, psCisco})).Observe(context.Background())
+	ns, err := New(runnerFor(scenario{ifconfigBoth, routeDefaultCisco, netstatCisco})).Observe(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,14 +252,5 @@ func TestClassifyTunnels(t *testing.T) {
 	}
 	if !foreignActive {
 		t.Error("expected a foreign active tunnel (utun4)")
-	}
-}
-
-func TestParseCiscoProcs(t *testing.T) {
-	if !parseCiscoProcs([]byte(psCisco)) {
-		t.Error("want true for Cisco process list")
-	}
-	if parseCiscoProcs([]byte(psNoCisco)) {
-		t.Error("want false for non-Cisco process list")
 	}
 }

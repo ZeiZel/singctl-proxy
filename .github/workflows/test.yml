@@ -1,0 +1,40 @@
+name: Go tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go vet ./...
+      - run: go test ./...
+      - run: make build
+      - run: make test-singbox-decode
+      - name: Test vendored grpc-lite transport
+        working-directory: third_party/sing-box
+        run: go test -race ./transport/v2raygrpclite ./experimental/clashapi/trafficontrol
+
+      - name: Darwin kernel, monitor, owner and cache regressions
+        run: go test -race ./internal/netstate ./internal/monitor ./internal/netext ./internal/clashapi ./internal/app
+
+  vendor-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: third_party/sing-box/go.mod
+          cache: true
+      - name: Vendored transport and tracker regressions
+        working-directory: third_party/sing-box
+        run: go test -race ./transport/v2raygrpclite ./experimental/clashapi/trafficontrol

@@ -86,12 +86,6 @@
           "^([\\w\\-\\.]+\\.)?xn--d1acj3b$"
         ],
         "outbound": "direct"
-      },
-      {
-        "process_path": [
-          "/singctl/__process_probe_never_matches__"
-        ],
-        "outbound": "proxy"
       }
     ],
     "final": "proxy",

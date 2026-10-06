@@ -394,7 +394,7 @@ func registerControl(srv *control.Server, executor *app.Executor, stop func(), s
 		data, _ := json.Marshal(control.Status{
 			PID: os.Getpid(), Mode: executor.StateLabel(), StartedAt: startedAt,
 			CiscoActive: cisco, ProxyBypass: bypass, PhysIface: phys,
-			NetextSupported: netext.Supported, NetextAvailable: netext.Available(),
+			NetextSupported: netext.Supported, NetextAvailable: netext.Cached(),
 		})
 		return string(data), nil
 	})
@@ -661,9 +661,11 @@ func registerControl(srv *control.Server, executor *app.Executor, stop func(), s
 		return string(data), nil
 	})
 	srv.Handle("APP-ROUTE", func(arg string) (string, error) {
+		netext.Invalidate()
 		return "OK", executor.RouteApp(context.Background(), strings.TrimSpace(arg))
 	})
 	srv.Handle("APP-UNROUTE", func(arg string) (string, error) {
+		netext.Invalidate()
 		return "OK", executor.UnrouteApp(context.Background(), strings.TrimSpace(arg))
 	})
 	// APP-LIST-PROXIED/APP-LAUNCH/APP-SET-ENABLED/APP-REMOVE back the GUI's
@@ -679,6 +681,7 @@ func registerControl(srv *control.Server, executor *app.Executor, stop func(), s
 		return string(data), nil
 	})
 	srv.Handle("APP-LAUNCH", func(arg string) (string, error) {
+		netext.Invalidate()
 		pid, err := executor.LaunchProxiedApp(context.Background(), arg)
 		if err != nil {
 			return "", err
@@ -686,6 +689,7 @@ func registerControl(srv *control.Server, executor *app.Executor, stop func(), s
 		return strconv.Itoa(pid), nil
 	})
 	srv.Handle("APP-SET-ENABLED", func(arg string) (string, error) {
+		netext.Invalidate()
 		var req struct {
 			BundleID string `json:"bundleID"`
 			Enabled  bool   `json:"enabled"`
@@ -696,6 +700,7 @@ func registerControl(srv *control.Server, executor *app.Executor, stop func(), s
 		return "OK", executor.SetProxiedAppEnabled(req.BundleID, req.Enabled)
 	})
 	srv.Handle("APP-REMOVE", func(arg string) (string, error) {
+		netext.Invalidate()
 		return "OK", executor.RemoveProxiedApp(context.Background(), strings.TrimSpace(arg))
 	})
 	// CONNECTIONS/CONNECTION-CLOSE: the live connection table with an
@@ -856,10 +861,11 @@ func main() {
 	// down via the same path as a signal.
 	ctx, cancelRun := context.WithCancel(sigCtx)
 	defer cancelRun()
+	go netext.RefreshLoop(ctx)
 	startedAt := time.Now().Format("2006-01-02 15:04:05")
 
 	// Read-only passive detector + physical-interface prober + orphan cleanup.
-	detector := netstate.New(netstate.NewOSRunner())
+	detector := netstate.NewKernel()
 	prober := runtime.NewNetProber(detector)
 	routes := runtime.NewOSRouteController()
 

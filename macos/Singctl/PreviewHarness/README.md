@@ -14,6 +14,19 @@ xcodebuild -project Singctl.xcodeproj -scheme SingctlPreview -configuration Debu
 /tmp/singctl-dark-preview-build/Build/Products/Debug/SingctlPreview --screen dashboard --output ../../docs/images/singctl-swiftui-dashboard.png
 ```
 
+Run the production-source energy harness from the same build product:
+
+```sh
+/tmp/singctl-dark-preview-build/Build/Products/Debug/SingctlPreview --energy-checks
+```
+
+The harness uses an in-memory `Backend` and the real `LiveStore`,
+`LogsModel`, and segmented-control implementation. It checks hidden-window
+backend gating, publication before a suspended latency request, zero-rate
+samples, retention and draining of more than 2,000 hidden console lines, and
+rejected picker resynchronisation. It does not access a daemon, control
+socket, network, or proxy settings.
+
 The default and README hero appearance is dark. Pass `--appearance light`
 explicitly for a Light capture. For visual QA, choose `--screen settings` or
 `--width narrow`; point `--output` at `/tmp/` to keep the checked-in hero

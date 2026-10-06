@@ -28,6 +28,11 @@ enum ClashClientError: Error, LocalizedError {
 /// "http://127.0.0.1:9090"; secret may be empty. Stateless/Sendable — safe to
 /// share or recreate per call.
 struct ClashClient: Sendable {
+    private static let sharedSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 5
+        return URLSession(configuration: config)
+    }()
     let baseURL: String
     let secret: String
     private let session: URLSession
@@ -37,9 +42,7 @@ struct ClashClient: Sendable {
     init(externalController: String, secret: String) {
         self.baseURL = "http://" + externalController
         self.secret = secret
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 5
-        self.session = URLSession(configuration: config)
+        self.session = Self.sharedSession
     }
 
     /// GET /connections: cumulative totals plus the live connection table.

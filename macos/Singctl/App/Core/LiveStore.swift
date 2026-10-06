@@ -60,38 +60,50 @@ final class LiveStore: ObservableObject {
 
     // MARK: - Published state
 
-    @Published private(set) var status: DaemonStatus = .empty
-    @Published private(set) var daemonRunning: Bool = false
+    private(set) var status: DaemonStatus = .empty
+    private(set) var daemonRunning: Bool = false
 
     /// Rolling window of per-second (up, down) byte rates, most-recent last.
-    @Published private(set) var trafficSamples: [(up: Double, down: Double)] = []
-    @Published private(set) var totalUp: Int64 = 0
-    @Published private(set) var totalDown: Int64 = 0
+    private(set) var trafficSamples: [(up: Double, down: Double)] = []
+    private(set) var totalUp: Int64 = 0
+    private(set) var totalDown: Int64 = 0
 
-    @Published private(set) var connections: [ConnRow] = []
-    @Published private(set) var latency: Latency = .empty
+    private(set) var connections: [ConnRow] = []
+    private(set) var latency: Latency = .empty
 
     /// Rolling window of the last maxConsoleLines captured stdout/stderr lines.
     /// Only ever populated in the Developer-ID build (see tick() below).
-    @Published private(set) var console: [ConsoleLine] = []
+    private(set) var console: [ConsoleLine] = []
 
     // MARK: - Tuning
 
     /// Active-mode traffic is sampled every five seconds, making this a
     /// five-minute rolling chart rather than the previous two-minute window.
     private let maxTrafficSamples = 60
-    private let maxConsoleLines = 500
+    /// LogsModel owns the visible 500-line presentation window. LiveStore
+    /// keeps a larger source ring so a delayed consumer can drain lines that
+    /// arrived during an occlusion pause without racing the next poll.
+    private let maxConsoleLines = 20_000
 
     // MARK: - Internals
 
     private let backend: Backend
+    #if !APPSTORE
+    private let consoleProvider: ((Int) async throws -> [ConsoleLine])?
+    #endif
     private var loopTask: Task<Void, Never>?
     private var pollInFlight = false
     private var pollRequested = false
     private var statusGeneration = 0
+    /// Status remains live while the main window is hidden; screen-sized
+    /// telemetry pauses until AppKit reports the window visible again.
+    private(set) var windowVisible = true
+    #if !APPSTORE
+    private var hiddenConsole: [ConsoleLine] = []
+    private let hiddenConsoleCeiling = 20_000
+    #endif
 
     private var nextTrafficPoll = Date.distantPast
-    private var nextConnectionsPoll = Date.distantPast
     private var nextLatencyPoll = Date.distantPast
 
     private var lastUp: Int64 = 0
@@ -121,7 +133,10 @@ final class LiveStore: ObservableObject {
     /// previews) get a working instance; `SingctlApp` passes its one shared
     /// `Backend` explicitly so LiveStore and the injected `\.backend`
     /// environment value are the same object.
-    init(backend: Backend? = nil) {
+    init(backend: Backend? = nil, consoleProvider: ((Int) async throws -> [ConsoleLine])? = nil) {
+        #if !APPSTORE
+        self.consoleProvider = consoleProvider
+        #endif
         #if APPSTORE
         self.backend = backend ?? TunnelBackend()
         #else
@@ -177,6 +192,32 @@ final class LiveStore: ObservableObject {
         loopTask = nil
     }
 
+    /// Reset the traffic baseline after an occlusion pause so the next rate
+    /// sample never spans the time the window was hidden.
+    func setWindowVisible(_ visible: Bool) {
+        guard windowVisible != visible else { return }
+        windowVisible = visible
+        guard visible else { return }
+        #if !APPSTORE
+        if !hiddenConsole.isEmpty {
+            console.append(contentsOf: hiddenConsole)
+            hiddenConsole.removeAll(keepingCapacity: true)
+        }
+        #endif
+        trafficSamples.removeAll(keepingCapacity: true)
+        haveLastTraffic = false
+        lastTrafficSampleAt = nil
+        nextTrafficPoll = .distantPast
+        nextLatencyPoll = .distantPast
+        objectWillChange.send()
+        #if SCREENSHOT_HARNESS
+        // The harness drives explicit poll cycles so it can assert ordering
+        // around suspended requests without a concurrent refresh task.
+        #else
+        refreshAfterMutation()
+        #endif
+    }
+
     /// Updates the visible mode immediately. Call this before `setMode`; on
     /// success call `refreshAfterMutation()`, and on failure pass the token to
     /// `restoreOptimisticStatus(_:)`.
@@ -185,6 +226,7 @@ final class LiveStore: ObservableObject {
         statusGeneration += 1 // discard an older in-flight STATUS response
         let change = OptimisticStatusChange(previousStatus: status, generation: statusGeneration)
         status.mode = mode
+        objectWillChange.send()
         return change
     }
 
@@ -193,6 +235,7 @@ final class LiveStore: ObservableObject {
         guard change.generation == statusGeneration else { return }
         statusGeneration += 1
         status = change.previousStatus
+        objectWillChange.send()
     }
 
     /// Schedules an authoritative STATUS read without waiting for the next
@@ -230,18 +273,40 @@ final class LiveStore: ObservableObject {
     /// remains current. The rest is due-time based and best-effort; see
     /// `LivePollingCadence` for the active/idle/offline schedule.
     private func tick() async {
+        let oldStatus = status
+        let oldDaemonRunning = daemonRunning
+        let oldSamples = trafficSamples
+        let oldTotalUp = totalUp
+        let oldTotalDown = totalDown
+        let oldLatency = latency
+        let oldConsole = console
+        var publishedBeforeLatency = false
+        defer {
+            let samplesChanged = oldSamples.count != trafficSamples.count
+                || zip(oldSamples, trafficSamples).contains { $0.up != $1.up || $0.down != $1.down }
+            let nonLatencyChanged = oldStatus != status || oldDaemonRunning != daemonRunning || samplesChanged
+                || oldTotalUp != totalUp || oldTotalDown != totalDown
+                || oldConsole != console
+            if nonLatencyChanged && !publishedBeforeLatency {
+                objectWillChange.send()
+            } else if latency != oldLatency {
+                // One notification per serialized poll cycle, even when the
+                // latency request finishes after the main telemetry snapshot.
+                objectWillChange.send()
+            }
+        }
         let statusRequestGeneration = statusGeneration
         do {
             let fetchedStatus = try await backend.status()
             // Do not allow a STATUS reply that began before an optimistic
             // mode action to make the segmented control jump backwards.
             guard statusRequestGeneration == statusGeneration else { return }
-            status = fetchedStatus
-            daemonRunning = true
+            if status != fetchedStatus { status = fetchedStatus }
+            if !daemonRunning { daemonRunning = true }
         } catch {
             // No live daemon/tunnel (or it vanished between polls): report
             // absent, keep the last snapshot.
-            daemonRunning = false
+            if daemonRunning { daemonRunning = false }
             haveLastTraffic = false
             lastTrafficSampleAt = nil
             return
@@ -256,17 +321,35 @@ final class LiveStore: ObservableObject {
         // mutation, instead of making the UI process it every status tick.
         if now >= nextConsolePoll {
             nextConsolePoll = now.addingTimeInterval(cadence.console)
-            if let lines = try? await control.consolePoll(since: lastConsoleID), !lines.isEmpty {
-                for line in lines where line.id > lastConsoleID {
-                    lastConsoleID = line.id
-                }
-                console.append(contentsOf: lines)
-                if console.count > maxConsoleLines {
-                    console.removeFirst(console.count - maxConsoleLines)
+            let lines: [ConsoleLine]?
+            if let consoleProvider {
+                lines = try? await consoleProvider(lastConsoleID)
+            } else {
+                lines = try? await control.consolePoll(since: lastConsoleID)
+            }
+            if let lines, !lines.isEmpty {
+                let freshLines = lines.filter { $0.id > lastConsoleID }
+                if !freshLines.isEmpty {
+                    lastConsoleID = freshLines.map(\.id).max() ?? lastConsoleID
+                    if windowVisible {
+                        console.append(contentsOf: freshLines)
+                        if console.count > maxConsoleLines {
+                            console.removeFirst(console.count - maxConsoleLines)
+                        }
+                    } else {
+                        hiddenConsole.append(contentsOf: freshLines)
+                        if hiddenConsole.count > hiddenConsoleCeiling {
+                            hiddenConsole.removeFirst(hiddenConsole.count - hiddenConsoleCeiling)
+                        }
+                    }
                 }
             }
         }
         #endif
+
+        // Keep console collection alive for LogsScreen while the window is
+        // hidden, but stop the expensive screen telemetry.
+        guard windowVisible else { return }
 
         // Cumulative byte counters -> per-second rate, guarded against counter
         // resets (e.g. a live core reload restarts the counters). Rate uses
@@ -285,25 +368,43 @@ final class LiveStore: ObservableObject {
                 }
                 lastUp = traffic.up
                 lastDown = traffic.down
+                if totalUp != traffic.up { totalUp = traffic.up }
+                if totalDown != traffic.down { totalDown = traffic.down }
                 lastTrafficSampleAt = now
                 haveLastTraffic = true
             }
         }
 
-        if now >= nextConnectionsPoll {
-            nextConnectionsPoll = now.addingTimeInterval(cadence.connections)
-            if let conns = try? await backend.connections() {
-                connections = conns.connRows
-                totalUp = conns.uploadTotal
-                totalDown = conns.downloadTotal
-            }
+        // Make status, traffic, and connection changes available immediately;
+        // a slow singleton latency probe must not hold up the dashboard.
+        let samplesChanged = oldSamples.count != trafficSamples.count
+            || zip(oldSamples, trafficSamples).contains { $0.up != $1.up || $0.down != $1.down }
+        if oldStatus != status || oldDaemonRunning != daemonRunning || samplesChanged
+            || oldTotalUp != totalUp || oldTotalDown != totalDown
+            || oldConsole != console {
+            objectWillChange.send()
+            publishedBeforeLatency = true
         }
 
         if now >= nextLatencyPoll {
             nextLatencyPoll = now.addingTimeInterval(cadence.latency)
             if let lat = try? await backend.latency() {
-                latency = lat
+                if latency != lat { latency = lat }
             }
         }
     }
+
+    #if SCREENSHOT_HARNESS
+    /// Drives one real production poll cycle for the in-memory harness. It is
+    /// excluded from shipping targets and never discovers a daemon itself.
+    func pollOnceForHarness() async { await poll() }
+
+    func resetDueTimesForHarness() {
+        nextTrafficPoll = .distantPast
+        nextLatencyPoll = .distantPast
+        #if !APPSTORE
+        nextConsolePoll = .distantPast
+        #endif
+    }
+    #endif
 }
