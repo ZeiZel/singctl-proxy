@@ -16,53 +16,130 @@ import (
 // reload. Pure net/http — no os/exec, so it needs no darwin-only file and no
 // entry in internal/arch/imports_test.go's exec allowlist.
 type pacServer struct {
-	mu   sync.Mutex
-	srv  *http.Server
-	port int
+	mu      sync.Mutex
+	srv     *http.Server
+	port    int
+	content *pacContent
+}
+
+type pacContent struct {
+	mu   sync.RWMutex
 	body []byte
 }
 
-func newPACServer() *pacServer { return &pacServer{} }
+type pacCandidate struct {
+	srv     *http.Server
+	port    int
+	content *pacContent
+}
 
-// ensure starts the server if it isn't running yet, or restarts it if the
-// caller asked for a different fixed port than the one it's currently bound
-// to. port == 0 lets the OS assign one (used by tests) and, once a server is
-// already up, is treated as "keep whatever's running" rather than rebinding a
-// fresh ephemeral port on every call.
-func (p *pacServer) ensure(port int) error {
+// pacListen is a variable solely so lifecycle tests can model a bind conflict
+// on the legacy port without relying on that real port being free on the test
+// host. Production always uses net.Listen.
+var pacListen = net.Listen
+
+func newPACServer() *pacServer { return &pacServer{content: &pacContent{}} }
+
+// prepare binds a candidate server without changing the currently committed
+// listener. The caller commits it only after NetworkSetup accepts the new
+// URL, or aborts it on any failure.
+func (p *pacServer) prepare(port int, body []byte) (*pacCandidate, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.srv != nil && (port == 0 || p.port == port) {
-		return nil
+		return nil, nil
 	}
-	if p.srv != nil {
-		_ = p.srv.Close()
-		p.srv = nil
-	}
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+
+	// Bind the replacement before retiring the current listener. A failed
+	// rebind (for example, an imported config pinning a port held by another
+	// process) must leave the currently applied PAC alive. Closing the old
+	// listener first would turn a rejected Apply into a broken system proxy.
+	ln, err := pacListen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
-		return fmt.Errorf("sysproxy: pac server listen on %d: %w", port, err)
+		return nil, fmt.Errorf("sysproxy: pac server listen on %d: %w", port, err)
 	}
+	content := &pacContent{body: append([]byte(nil), body...)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/proxy.pac", func(w http.ResponseWriter, r *http.Request) {
-		p.mu.Lock()
-		body := p.body
-		p.mu.Unlock()
+		content.mu.RLock()
+		servedBody := append([]byte(nil), content.body...)
+		content.mu.RUnlock()
 		w.Header().Set("Content-Type", "application/x-ns-proxy-autoconfig")
-		_, _ = w.Write(body)
+		_, _ = w.Write(servedBody)
 	})
 	srv := &http.Server{Handler: mux}
-	p.srv = srv
-	p.port = ln.Addr().(*net.TCPAddr).Port
 	go func() { _ = srv.Serve(ln) }()
+	return &pacCandidate{srv: srv, port: ln.Addr().(*net.TCPAddr).Port, content: content}, nil
+}
+
+// ensure retains the legacy internal helper semantics for package tests and
+// callers that only need to make the current server listen. Manager.Apply
+// uses prepare/commit so NetworkSetup failures can roll back safely.
+func (p *pacServer) ensure(port int) error {
+	body := p.bodySnapshot()
+	c, err := p.prepare(port, body)
+	if err != nil {
+		return err
+	}
+	p.commit(c, body)
 	return nil
+}
+
+func (p *pacServer) bodySnapshot() []byte {
+	p.mu.Lock()
+	content := p.content
+	p.mu.Unlock()
+	if content == nil {
+		return nil
+	}
+	content.mu.RLock()
+	defer content.mu.RUnlock()
+	return append([]byte(nil), content.body...)
+}
+
+func (p *pacServer) candidateURL(c *pacCandidate) string {
+	if c != nil {
+		return fmt.Sprintf("http://127.0.0.1:%d/proxy.pac", c.port)
+	}
+	return p.url()
+}
+
+func (p *pacServer) commit(c *pacCandidate, body []byte) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if c != nil {
+		old := p.srv
+		p.srv, p.port = c.srv, c.port
+		p.content = c.content
+		if old != nil {
+			_ = old.Close()
+		}
+	}
+	if p.content == nil {
+		p.content = &pacContent{}
+	}
+	p.content.mu.Lock()
+	p.content.body = append(p.content.body[:0], body...)
+	p.content.mu.Unlock()
+}
+
+func (p *pacServer) abort(c *pacCandidate) {
+	if c != nil {
+		_ = c.srv.Close()
+	}
 }
 
 // setBody replaces the PAC content served at /proxy.pac.
 func (p *pacServer) setBody(body []byte) {
 	p.mu.Lock()
-	p.body = body
+	if p.content == nil {
+		p.content = &pacContent{}
+	}
+	content := p.content
 	p.mu.Unlock()
+	content.mu.Lock()
+	content.body = append(content.body[:0], body...)
+	content.mu.Unlock()
 }
 
 // url returns the PAC's http:// URL, or "" if the server has never started

@@ -46,8 +46,16 @@ actor ControlClient {
     /// connDeadline (15s — MODE/SETTINGS-SET can trigger a live core reload).
     private let connectTimeout: Int32 = 3
     private let ioTimeout: Int32 = 15
-    private var endpointCache: InstanceDiscovery.Endpoint?
+    private let endpointProvider: () -> InstanceDiscovery.Endpoint?
+    private let transportOverride: ((InstanceDiscovery.Endpoint, String, String?) throws -> String)?
 
+    init(
+        endpointProvider: @escaping () -> InstanceDiscovery.Endpoint? = { InstanceDiscovery.currentEndpoint() },
+        transportOverride: ((InstanceDiscovery.Endpoint, String, String?) throws -> String)? = nil
+    ) {
+        self.endpointProvider = endpointProvider
+        self.transportOverride = transportOverride
+    }
     // MARK: - Status / lifecycle
 
     func status() async throws -> DaemonStatus {
@@ -341,32 +349,33 @@ actor ControlClient {
     /// Sends "VERB[ ARG]\n" over a fresh AF_UNIX connection and returns the
     /// trimmed reply, throwing .serverError for an "ERR " reply.
     private func roundTrip(_ verb: String, _ arg: String? = nil) async throws -> String {
-        let endpoint: InstanceDiscovery.Endpoint?
-        if let cached = endpointCache, InstanceDiscovery.isAlive(cached.pid) {
-            endpoint = cached
-        } else {
-            endpoint = InstanceDiscovery.currentEndpoint()
-            endpointCache = endpoint
-        }
-        guard let endpoint else {
+        // Always read the advertisement. The daemon's PID can remain alive
+        // while launchd replaces its socket/secret during an upgrade, so a
+        // PID-only cache can strand the GUI on the retired endpoint.
+        guard var endpoint = endpointProvider() else {
             throw ControlClientError.noDaemon
         }
-        let socketPath = endpoint.controlSocket
         let connectTimeout = self.connectTimeout
         let ioTimeout = self.ioTimeout
-        let raw: String
+        var raw: String
         do {
-            raw = try await Task.detached(priority: .userInitiated) {
-                try Self.blockingRoundTrip(
-                    socketPath: socketPath, verb: verb, arg: arg,
-                    connectTimeout: connectTimeout, ioTimeout: ioTimeout
-                )
-            }.value
+            raw = try await roundTrip(
+                endpoint: endpoint, verb: verb, arg: arg,
+                connectTimeout: connectTimeout, ioTimeout: ioTimeout
+            )
         } catch {
-            // A live PID can still have rotated its socket during restart;
-            // invalidate once so the next request resolves the new endpoint.
-            endpointCache = nil
-            throw error
+            // STATUS is idempotent, so it may be retried against a newly
+            // advertised daemon during the install/launchd hand-off. Do not
+            // replay mutations after a lost reply: the old daemon may have
+            // applied them before its socket disappeared.
+            guard verb == "STATUS",
+                  let replacement = endpointProvider(),
+                  !endpoint.isSameDaemon(as: replacement) else { throw error }
+            endpoint = replacement
+            raw = try await roundTrip(
+                endpoint: endpoint, verb: verb, arg: arg,
+                connectTimeout: connectTimeout, ioTimeout: ioTimeout
+            )
         }
         var reply = raw
         while reply.hasSuffix("\n") || reply.hasSuffix("\r") {
@@ -376,6 +385,21 @@ actor ControlClient {
             throw ControlClientError.serverError(String(reply.dropFirst("ERR ".count)))
         }
         return reply
+    }
+
+    private func roundTrip(
+        endpoint: InstanceDiscovery.Endpoint, verb: String, arg: String?,
+        connectTimeout: Int32, ioTimeout: Int32
+    ) async throws -> String {
+        if let transportOverride {
+            return try transportOverride(endpoint, verb, arg)
+        }
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.blockingRoundTrip(
+                socketPath: endpoint.controlSocket, verb: verb, arg: arg,
+                connectTimeout: connectTimeout, ioTimeout: ioTimeout
+            )
+        }.value
     }
 
     /// Blocking POSIX socket implementation, run off the actor on a detached

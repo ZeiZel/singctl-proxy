@@ -29,6 +29,7 @@ final class DaemonBackend: Backend {
     private var lastProbedDelay: Int?
     private var probeFailureCount = 0
     private var probeRetryAfter = Date.distantPast
+    private var daemonIdentity: String?
     // A single-server /delay probe is useful feedback, but unlike urltest
     // groups it has no reason to run at the live status cadence. Keep a
     // failed or successful probe out of the hot path for 30 seconds.
@@ -37,7 +38,13 @@ final class DaemonBackend: Backend {
     // MARK: - Status / lifecycle
 
     func status() async throws -> DaemonStatus {
-        try await control.status()
+        let fetched = try await control.status()
+        let identity = fetched.pid > 0 ? "\(fetched.pid):\(fetched.startedAt)" : nil
+        if daemonIdentity != nil && identity != daemonIdentity {
+            resetLatencyProbe()
+        }
+        daemonIdentity = identity
+        return fetched
     }
 
     func setMode(_ mode: String) async throws {

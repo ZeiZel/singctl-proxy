@@ -90,6 +90,14 @@ enum InstanceDiscovery {
         let startedAt: String
 
         var clashEnabled: Bool { !clashAPIAddr.isEmpty }
+
+        /// Identifies the advertised daemon instance independently of the
+        /// socket details. A reinstall can replace the socket while the old
+        /// PID is still observable during launchd hand-off, so PID alone is
+        /// not a sufficient cache key.
+        func isSameDaemon(as other: Endpoint) -> Bool {
+            pid == other.pid && startedAt == other.startedAt
+        }
     }
 
     static func currentEndpoint() -> Endpoint? {

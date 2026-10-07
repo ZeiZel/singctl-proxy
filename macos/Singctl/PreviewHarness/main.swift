@@ -86,6 +86,17 @@ struct SingctlPreviewMain {
 
     @MainActor
     private static func runEnergyChecks() {
+        let endpoint = InstanceDiscovery.Endpoint(
+            controlSocket: "/tmp/singctl-old.sock", clashAPIAddr: "127.0.0.1:9090",
+            clashSecret: "old", pid: 42, mode: "proxy", startedAt: "2026-10-07T10:00:00Z"
+        )
+        let replacement = InstanceDiscovery.Endpoint(
+            controlSocket: "/tmp/singctl-new.sock", clashAPIAddr: "127.0.0.1:9091",
+            clashSecret: "new", pid: 42, mode: "proxy", startedAt: "2026-10-07T10:00:01Z"
+        )
+        precondition(!endpoint.isSameDaemon(as: replacement))
+        precondition(LivePollingCadence.forDaemon(running: false, mode: "off").status == 3)
+
         let backend = DemoBackend()
         var consoleBatchNumber = 2
         let store = LiveStore(backend: backend, consoleProvider: { _ in
@@ -145,6 +156,34 @@ struct SingctlPreviewMain {
             precondition(logs.lineCountForHarness == 2_002)
             logs.drainStoreConsoleForHarness()
             precondition(logs.lineCountForHarness == 2_002)
+
+            let restartBackend = DemoBackend()
+            var restartSince: [Int] = []
+            var restartBatch = 0
+            let restartStore = LiveStore(backend: restartBackend, consoleProvider: { since in
+                restartSince.append(since)
+                restartBatch += 1
+                return restartBatch == 1
+                    ? [ConsoleLine(id: 2_002, pid: 7, app: "old", stream: "stdout", text: "old session")]
+                    : [ConsoleLine(id: 1, pid: 8, app: "new", stream: "stdout", text: "new session")]
+            })
+            let restartLogs = LogsModel()
+            restartLogs.attachForHarness(store: restartStore)
+            restartStore.resetDueTimesForHarness()
+            await restartStore.pollOnceForHarness()
+            restartLogs.drainStoreConsoleForHarness()
+            precondition(restartLogs.lineCountForHarness == 1)
+            // Replacement while continuously online must reset the cursor.
+            restartBackend.currentStatus = DaemonStatus(
+                pid: 8, mode: "proxy", startedAt: "2026-09-21T09:00:00Z",
+                ciscoActive: false, proxyBypass: false, physIface: "en0",
+                netextSupported: true, netextAvailable: true
+            )
+            restartStore.resetDueTimesForHarness()
+            await restartStore.pollOnceForHarness()
+            restartLogs.drainStoreConsoleForHarness()
+            precondition(restartLogs.lineCountForHarness == 2)
+            precondition(restartSince == [0, 0])
 
             let token = SegmentedControl<String>.nextResyncToken(after: 4)
             precondition(token == 5)
@@ -292,6 +331,7 @@ private final class DemoBackend: Backend {
         ciscoActive: false, proxyBypass: false, physIface: "en0",
         netextSupported: true, netextAvailable: true
     )
+    var currentStatus: DaemonStatus = DemoBackend.status
     static let latency = Latency(selected: "Stockholm", rows: [
         LatencyRow(tag: "Stockholm", delay: 42, selected: true),
         LatencyRow(tag: "Helsinki", delay: 56, selected: false),
@@ -323,7 +363,7 @@ private final class DemoBackend: Backend {
     var suspendLatency = false
     private var latencyContinuation: CheckedContinuation<Latency, Never>?
 
-    func status() async throws -> DaemonStatus { Self.status }
+    func status() async throws -> DaemonStatus { currentStatus }
     func setMode(_ mode: String) async throws {}
     func stop() async throws {}
     func traffic() async throws -> Traffic {
