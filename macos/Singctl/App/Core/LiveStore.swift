@@ -32,9 +32,9 @@ struct LivePollingCadence: Equatable {
     static func forDaemon(running: Bool, mode: String) -> Self {
         guard running else {
             #if APPSTORE
-            return Self(status: 15, traffic: 30, connections: 30, latency: 60)
+            return Self(status: 3, traffic: 30, connections: 30, latency: 60)
             #else
-            return Self(status: 15, traffic: 30, connections: 30, latency: 60, console: 15)
+            return Self(status: 3, traffic: 30, connections: 30, latency: 60, console: 15)
             #endif
         }
 
@@ -62,6 +62,9 @@ final class LiveStore: ObservableObject {
 
     private(set) var status: DaemonStatus = .empty
     private(set) var daemonRunning: Bool = false
+    /// Increments whenever a new daemon session is observed. Console line IDs
+    /// are local to a daemon process and can restart at zero after install.
+    private(set) var consoleGeneration = 0
 
     /// Rolling window of per-second (up, down) byte rates, most-recent last.
     private(set) var trafficSamples: [(up: Double, down: Double)] = []
@@ -95,6 +98,9 @@ final class LiveStore: ObservableObject {
     private var pollInFlight = false
     private var pollRequested = false
     private var statusGeneration = 0
+    #if !APPSTORE
+    private var daemonIdentity: String?
+    #endif
     /// Status remains live while the main window is hidden; screen-sized
     /// telemetry pauses until AppKit reports the window visible again.
     private(set) var windowVisible = true
@@ -301,12 +307,41 @@ final class LiveStore: ObservableObject {
             // Do not allow a STATUS reply that began before an optimistic
             // mode action to make the segmented control jump backwards.
             guard statusRequestGeneration == statusGeneration else { return }
+            #if !APPSTORE
+            let fetchedIdentity = fetchedStatus.pid > 0
+                ? "\(fetchedStatus.pid):\(fetchedStatus.startedAt)" : nil
+            let sessionChanged = daemonIdentity != nil && fetchedIdentity != daemonIdentity
+            daemonIdentity = fetchedIdentity
+            if sessionChanged {
+                consoleGeneration += 1
+                lastConsoleID = 0
+                console.removeAll(keepingCapacity: true)
+                hiddenConsole.removeAll(keepingCapacity: true)
+                trafficSamples.removeAll(keepingCapacity: true)
+                haveLastTraffic = false
+                lastTrafficSampleAt = nil
+                latency = .empty
+                nextTrafficPoll = .distantPast
+                nextLatencyPoll = .distantPast
+                nextConsolePoll = .distantPast
+            }
+            #endif
             if status != fetchedStatus { status = fetchedStatus }
-            if !daemonRunning { daemonRunning = true }
+            if !daemonRunning {
+                daemonRunning = true
+                #if APPSTORE
+                consoleGeneration += 1
+                #endif
+            }
         } catch {
             // No live daemon/tunnel (or it vanished between polls): report
             // absent, keep the last snapshot.
             if daemonRunning { daemonRunning = false }
+            #if !APPSTORE
+            // Keep the last identity through a transient timeout. A new
+            // session is recognized only after a successful STATUS advertises
+            // a different PID/start timestamp.
+            #endif
             haveLastTraffic = false
             lastTrafficSampleAt = nil
             return
@@ -406,5 +441,6 @@ final class LiveStore: ObservableObject {
         nextConsolePoll = .distantPast
         #endif
     }
+
     #endif
 }

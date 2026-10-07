@@ -2,10 +2,15 @@ package sysproxy
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -21,6 +26,26 @@ type fakeNetworkSetup struct {
 	autoEnabled   map[string]bool
 	webEnabled    map[string]bool
 	bypassDomains map[string][]string
+}
+
+type failingNetworkSetup struct {
+	*fakeNetworkSetup
+	failAuto   bool
+	failBypass bool
+}
+
+func (f *failingNetworkSetup) SetAutoProxyURL(service, url string) error {
+	if f.failAuto {
+		return errors.New("injected SetAutoProxyURL failure")
+	}
+	return f.fakeNetworkSetup.SetAutoProxyURL(service, url)
+}
+
+func (f *failingNetworkSetup) SetBypassDomains(service string, domains []string) error {
+	if f.failBypass {
+		return errors.New("injected SetBypassDomains failure")
+	}
+	return f.fakeNetworkSetup.SetBypassDomains(service, domains)
 }
 
 func newFakeNetworkSetup() *fakeNetworkSetup {
@@ -204,6 +229,23 @@ func TestManager_Apply_Include_SetsAutoProxyURLToPACServer(t *testing.T) {
 	}
 	if status.DomainCount != 2 {
 		t.Errorf("Status().DomainCount = %d, want 2", status.DomainCount)
+	}
+	updated := testIncludeConfig()
+	updated.Proxy = []string{"updated.example"}
+	if err := m.Apply(updated); err != nil {
+		t.Fatalf("Apply(updated include): %v", err)
+	}
+	if got := m.Status().PACURL; got != status.PACURL {
+		t.Errorf("same-port update changed PAC URL from %q to %q", status.PACURL, got)
+	}
+	resp, err := http.Get(status.PACURL)
+	if err != nil {
+		t.Fatalf("GET updated PAC: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if !strings.Contains(string(body), "updated.example") {
+		t.Errorf("updated PAC body does not contain new rule: %q", string(body))
 	}
 }
 
@@ -511,6 +553,224 @@ func TestManager_Apply_PinnedPortOccupied_ErrorNamesHolder(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "4242") || !strings.Contains(err.Error(), "/usr/bin/python3") {
 		t.Errorf("Apply error = %q, want it to name the holder's pid (4242) and path (/usr/bin/python3)", err.Error())
+	}
+}
+
+// TestManager_Apply_PinnedPortOccupied_PreservesExistingPAC verifies that a
+// rejected bind during an import/config update preserves the active PAC. The
+// old listener must stay available when the newly requested pinned port cannot
+// be bound; otherwise macOS remains pointed at a dead PAC URL.
+func TestManager_Apply_PinnedPortOccupied_PreservesExistingPAC(t *testing.T) {
+	ns := newFakeNetworkSetup()
+	m := NewManager(ns)
+	defer m.Close()
+
+	if err := m.Apply(testIncludeConfig()); err != nil {
+		t.Fatalf("initial Apply: %v", err)
+	}
+	oldURL := m.Status().PACURL
+	if oldURL == "" || !m.Status().PACServerUp {
+		t.Fatalf("initial PAC server is not up: %+v", m.Status())
+	}
+	oldConfig := m.Config()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("occupy a port: %v", err)
+	}
+	defer ln.Close()
+	occupied := ln.Addr().(*net.TCPAddr).Port
+
+	updated := oldConfig
+	updated.PACPort = occupied
+	updated.Proxy = []string{"different.example"}
+	if err := m.Apply(updated); err == nil {
+		t.Fatal("Apply with an occupied pinned pac_port should error")
+	}
+
+	if got := m.Status().PACURL; got != oldURL {
+		t.Errorf("failed Apply changed PAC URL to %q, want previous %q", got, oldURL)
+	}
+	if !m.Status().PACServerUp {
+		t.Error("failed Apply took down the previously live PAC server")
+	}
+	if got := m.Config(); !reflect.DeepEqual(got, oldConfig) {
+		t.Errorf("failed Apply changed config to %+v, want %+v", got, oldConfig)
+	}
+	st, _ := ns.Status("Wi-Fi")
+	if st.AutoProxyURL != oldURL || !st.AutoProxyEnabled {
+		t.Errorf("failed Apply changed network proxy state: %+v, want URL %q enabled", st, oldURL)
+	}
+}
+
+// TestManager_Apply_LegacyPinnedPortFallsBack verifies compatibility with
+// imported pre-2.0 configs. A legacy 21080 pin is migrated to an ephemeral
+// listener when that port is occupied, without touching the occupying
+// process, and the effective config records pac_port = 0 for persistence.
+func TestManager_Apply_LegacyPinnedPortFallsBack(t *testing.T) {
+	oldListen := pacListen
+	pacListen = func(network, address string) (net.Listener, error) {
+		if address == fmt.Sprintf("127.0.0.1:%d", LegacyPACPort) {
+			return nil, syscall.EADDRINUSE
+		}
+		return net.Listen(network, address)
+	}
+	t.Cleanup(func() { pacListen = oldListen })
+
+	ns := newFakeNetworkSetup()
+	m := NewManager(ns)
+	defer m.Close()
+	cfg := testIncludeConfig()
+	cfg.PACPort = LegacyPACPort
+	if err := m.Apply(cfg); err != nil {
+		t.Fatalf("Apply should migrate an occupied legacy PAC pin: %v", err)
+	}
+	if got := m.Config().PACPort; got != 0 {
+		t.Errorf("effective PACPort = %d, want 0 after legacy migration", got)
+	}
+	if url := m.Status().PACURL; url == "" || strings.Contains(url, fmt.Sprintf(":%d/", LegacyPACPort)) {
+		t.Errorf("PACURL = %q, want a live ephemeral URL", url)
+	}
+	st, _ := ns.Status("Wi-Fi")
+	if st.AutoProxyURL != m.Status().PACURL || !st.AutoProxyEnabled {
+		t.Errorf("network proxy state = %+v, want enabled URL %q", st, m.Status().PACURL)
+	}
+}
+
+func TestManager_Apply_Off_StopsOwnedPACAndAllowsRestart(t *testing.T) {
+	ns := newFakeNetworkSetup()
+	m := NewManager(ns)
+	defer m.Close()
+
+	if err := m.Apply(testIncludeConfig()); err != nil {
+		t.Fatalf("Apply(include): %v", err)
+	}
+	oldURL := m.Status().PACURL
+	if err := m.Apply(Config{Mode: ModeOff, Service: "Wi-Fi"}); err != nil {
+		t.Fatalf("Apply(off): %v", err)
+	}
+	if got := m.Status(); got.PACURL != "" || got.PACServerUp {
+		t.Errorf("Apply(off) left PAC running: %+v", got)
+	}
+	st, _ := ns.Status("Wi-Fi")
+	if st.AutoProxyEnabled || st.AutoProxyURL != oldURL {
+		t.Errorf("Apply(off) network state = %+v, want disabled with prior URL retained", st)
+	}
+
+	if err := m.Apply(testIncludeConfig()); err != nil {
+		t.Fatalf("Apply(include) after off: %v", err)
+	}
+	if got := m.Status(); got.PACURL == "" || !got.PACServerUp {
+		t.Errorf("re-Apply(include) did not restart PAC: %+v", got)
+	}
+}
+
+func TestManager_Apply_Off_DisablesPreviouslyOwnedService(t *testing.T) {
+	ns := newFakeNetworkSetup()
+	m := NewManager(ns)
+	defer m.Close()
+
+	if err := m.Apply(testIncludeConfig()); err != nil {
+		t.Fatalf("Apply(Wi-Fi include): %v", err)
+	}
+	if err := m.Apply(Config{Mode: ModeOff, Service: "Ethernet"}); err != nil {
+		t.Fatalf("Apply(Ethernet off): %v", err)
+	}
+	for _, service := range []string{"Wi-Fi", "Ethernet"} {
+		st, _ := ns.Status(service)
+		if st.AutoProxyEnabled || st.WebProxyEnabled {
+			t.Errorf("%s remains enabled after off migration: %+v", service, st)
+		}
+	}
+	if got := m.Status(); got.PACURL != "" || got.PACServerUp {
+		t.Errorf("off migration left PAC running: %+v", got)
+	}
+}
+
+func TestManager_Apply_ActiveServiceMigrationDisablesPreviousService(t *testing.T) {
+	ns := newFakeNetworkSetup()
+	m := NewManager(ns)
+	defer m.Close()
+
+	if err := m.Apply(testIncludeConfig()); err != nil {
+		t.Fatalf("Apply(Wi-Fi include): %v", err)
+	}
+	updated := testIncludeConfig()
+	updated.Service = "Ethernet"
+	updated.Proxy = []string{"ethernet.example"}
+	if err := m.Apply(updated); err != nil {
+		t.Fatalf("Apply(Ethernet include): %v", err)
+	}
+	old, _ := ns.Status("Wi-Fi")
+	if old.AutoProxyEnabled || old.WebProxyEnabled {
+		t.Errorf("previous Wi-Fi service remains enabled: %+v", old)
+	}
+	current, _ := ns.Status("Ethernet")
+	if !current.AutoProxyEnabled || current.WebProxyEnabled {
+		t.Errorf("new Ethernet service state = %+v", current)
+	}
+	if got := m.Config().Service; got != "Ethernet" {
+		t.Errorf("Manager config service = %q, want Ethernet", got)
+	}
+}
+
+func TestManager_Apply_SetAutoFailurePreservesPACAndConfig(t *testing.T) {
+	ns := &failingNetworkSetup{fakeNetworkSetup: newFakeNetworkSetup(), failAuto: true}
+	m := NewManager(ns)
+	defer m.Close()
+
+	// Establish the old live state before injecting the failing operation.
+	ns.failAuto = false
+	if err := m.Apply(testIncludeConfig()); err != nil {
+		t.Fatalf("initial Apply: %v", err)
+	}
+	ns.failAuto = true
+	oldURL, oldConfig := m.Status().PACURL, m.Config()
+	portListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve candidate port: %v", err)
+	}
+	port := portListener.Addr().(*net.TCPAddr).Port
+	_ = portListener.Close()
+	updated := oldConfig
+	updated.PACPort = port
+	if err := m.Apply(updated); err == nil {
+		t.Fatal("Apply should report injected SetAutoProxyURL failure")
+	}
+	if got := m.Status(); got.PACURL != oldURL || !got.PACServerUp {
+		t.Errorf("failed Apply changed PAC state: %+v, want live URL %q", got, oldURL)
+	}
+	if got := m.Config(); got.PACPort != oldConfig.PACPort {
+		t.Errorf("failed Apply changed config PACPort to %d, want %d", got.PACPort, oldConfig.PACPort)
+	}
+}
+
+func TestManager_Apply_BypassFailureRestoresOldPACURL(t *testing.T) {
+	ns := &failingNetworkSetup{fakeNetworkSetup: newFakeNetworkSetup()}
+	m := NewManager(ns)
+	defer m.Close()
+	if err := m.Apply(testIncludeConfig()); err != nil {
+		t.Fatalf("initial Apply: %v", err)
+	}
+	oldURL := m.Status().PACURL
+	oldConfig := m.Config()
+	ns.failBypass = true
+	updated := oldConfig
+	updated.Proxy = []string{"new.example"}
+	if err := m.Apply(updated); err == nil {
+		t.Fatal("Apply should report injected SetBypassDomains failure")
+	}
+	if got := m.Status(); got.PACURL != oldURL || !got.PACServerUp {
+		t.Errorf("bypass failure changed PAC state: %+v, want live URL %q", got, oldURL)
+	}
+	resp, err := http.Get(oldURL)
+	if err != nil {
+		t.Fatalf("GET old PAC after rollback: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if !strings.Contains(string(body), "google.com") || strings.Contains(string(body), "new.example") {
+		t.Errorf("PAC body after rollback = %q, want old rules only", string(body))
 	}
 }
 

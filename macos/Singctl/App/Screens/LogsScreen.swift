@@ -307,6 +307,7 @@ final class LogsModel: ObservableObject {
     private var nextID = 0
     private var previousID = -1
     private var lastConsoleID = 0
+    private var lastConsoleGeneration = -1
     /// Hidden windows still drain the reader, but retain the incoming batch
     /// without publishing it. This keeps the actor's file cursors current and
     /// avoids losing the lines that arrive during an occlusion pause.
@@ -440,7 +441,14 @@ final class LogsModel: ObservableObject {
     #endif
 
     private func consoleBatch(from lines: [ConsoleLine]) -> [LogsIncomingLine] {
-        lines.compactMap { line in
+        if let store, lastConsoleGeneration != store.consoleGeneration {
+            // CONSOLE-POLL IDs are scoped to one daemon process. A fresh
+            // daemon after reinstall starts at zero, so carry the session
+            // boundary from LiveStore instead of filtering its lines forever.
+            lastConsoleGeneration = store.consoleGeneration
+            lastConsoleID = 0
+        }
+        return lines.compactMap { line in
             guard line.id > lastConsoleID else { return nil }
             lastConsoleID = line.id
             let app = line.app.isEmpty ? "?" : line.app

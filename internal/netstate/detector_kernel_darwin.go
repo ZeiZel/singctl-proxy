@@ -112,19 +112,33 @@ func parseKernelRoutes(msgs []route.Message, indexes ...map[int]string) []kernel
 	var out []kernelRoute
 	for _, msg := range msgs {
 		rm, ok := msg.(*route.RouteMessage)
-		if !ok || rm.Err != nil || rm.Flags&syscall.RTF_HOST != 0 || rm.Flags&syscall.RTF_UP == 0 || len(rm.Addrs) <= syscall.RTAX_IFP {
+		if !ok || rm.Err != nil || rm.Flags&syscall.RTF_HOST != 0 || rm.Flags&syscall.RTF_UP == 0 {
+			continue
+		}
+		if len(rm.Addrs) <= syscall.RTAX_DST {
 			continue
 		}
 		dst, ok := rm.Addrs[syscall.RTAX_DST].(*route.Inet4Addr)
 		if !ok || dst.IP != [4]byte{} {
 			continue
 		}
-		if mask, ok := rm.Addrs[syscall.RTAX_NETMASK].(*route.Inet4Addr); !ok || mask.IP != [4]byte{} {
-			continue
+		// Darwin commonly omits RTAX_NETMASK for an implicit /0 route.
+		// If present, it must still describe /0; a non-zero mask is a
+		// more-specific route whose destination happened to be zero.
+		if len(rm.Addrs) > syscall.RTAX_NETMASK && rm.Addrs[syscall.RTAX_NETMASK] != nil {
+			mask, ok := rm.Addrs[syscall.RTAX_NETMASK].(*route.Inet4Addr)
+			if !ok || mask.IP != [4]byte{} {
+				continue
+			}
 		}
 		name := ""
-		if link, ok := rm.Addrs[syscall.RTAX_IFP].(*route.LinkAddr); ok {
-			name = link.Name
+		if len(rm.Addrs) > syscall.RTAX_IFP {
+			if link, ok := rm.Addrs[syscall.RTAX_IFP].(*route.LinkAddr); ok {
+				name = link.Name
+				if name == "" && len(indexes) > 0 && link.Index != 0 {
+					name = indexes[0][link.Index]
+				}
+			}
 		}
 		if name == "" && len(indexes) > 0 {
 			name = indexes[0][rm.Index]
@@ -132,7 +146,10 @@ func parseKernelRoutes(msgs []route.Message, indexes ...map[int]string) []kernel
 		if name == "" {
 			continue
 		}
-		_, gatewayIP := rm.Addrs[syscall.RTAX_GATEWAY].(*route.Inet4Addr)
+		gatewayIP := false
+		if len(rm.Addrs) > syscall.RTAX_GATEWAY {
+			_, gatewayIP = rm.Addrs[syscall.RTAX_GATEWAY].(*route.Inet4Addr)
+		}
 		out = append(out, kernelRoute{iface: name, defaultRoute: true, gatewayIP: gatewayIP, scoped: rm.Flags&syscall.RTF_IFSCOPE != 0})
 	}
 	return out

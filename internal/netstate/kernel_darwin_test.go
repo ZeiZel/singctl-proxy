@@ -23,6 +23,21 @@ func fixtureDefault(name string, scoped bool) *route.RouteMessage {
 	addrs[syscall.RTAX_IFP] = &route.LinkAddr{Name: name}
 	return &route.RouteMessage{Type: syscall.RTM_GET, Flags: flags, Addrs: addrs}
 }
+
+func fixtureDefaultImplicitMask(name string, index int, scoped bool) *route.RouteMessage {
+	flags := syscall.RTF_UP
+	if scoped {
+		flags |= syscall.RTF_IFSCOPE
+	}
+	addrs := make([]route.Addr, syscall.RTAX_IFP)
+	addrs[syscall.RTAX_DST] = &route.Inet4Addr{}
+	addrs[syscall.RTAX_GATEWAY] = &route.Inet4Addr{IP: [4]byte{192, 168, 1, 1}}
+	if name != "" || index != 0 {
+		addrs = append(addrs, &route.LinkAddr{Name: name, Index: index})
+	}
+	return &route.RouteMessage{Type: syscall.RTM_GET, Flags: flags, Index: index, Addrs: addrs}
+}
+
 func TestKernelSnapshotFixtures(t *testing.T) {
 	for _, tc := range []struct {
 		name, global string
@@ -56,9 +71,15 @@ func TestKernelSnapshotFixtures(t *testing.T) {
 	if len(parseKernelRoutes([]route.Message{invalid})) != 0 {
 		t.Fatal("accepted non-default mask")
 	}
-	invalid.Addrs[syscall.RTAX_NETMASK] = nil
-	if len(parseKernelRoutes([]route.Message{invalid})) != 0 {
-		t.Fatal("accepted absent mask")
+	implicit := fixtureDefaultImplicitMask("en0", 7, false)
+	if got := parseKernelRoutes([]route.Message{implicit}, map[int]string{7: "en0"}); len(got) != 1 || got[0].iface != "en0" {
+		t.Fatalf("implicit /0 route=%+v", got)
+	}
+	short := fixtureDefaultImplicitMask("", 0, false)
+	short.Index = 7
+	short.Addrs = short.Addrs[:syscall.RTAX_DST+1]
+	if got := parseKernelRoutes([]route.Message{short}, map[int]string{7: "en0"}); len(got) != 1 || got[0].iface != "en0" {
+		t.Fatalf("short route index fallback=%+v", got)
 	}
 }
 func TestRouteMessageFilter(t *testing.T) {

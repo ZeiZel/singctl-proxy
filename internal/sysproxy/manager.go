@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"syscall"
 )
 
 // Status is the daemon-facing snapshot the SYSPROXY-STATUS control command
@@ -114,32 +115,74 @@ func (m *Manager) Apply(cfg Config) error {
 		// left in place, say, but manual proxy cleared) is exactly the
 		// confusing state this exists to prevent, so report whichever fails
 		// rather than silently skipping the rest.
-		if err := m.ns.DisableAutoProxy(cfg.Service); err != nil {
-			return fmt.Errorf("sysproxy: disable auto proxy: %w", err)
+		services := []string{cfg.Service}
+		if m.cfg.Mode != ModeOff && m.cfg.Service != cfg.Service {
+			// The request may carry a newly selected service. Also disable the
+			// service that this Manager previously owned before stopping the
+			// shared PAC server, otherwise it would retain a dead PAC URL.
+			services = append(services, m.cfg.Service)
 		}
-		if err := m.ns.DisableWebProxy(cfg.Service); err != nil {
-			return fmt.Errorf("sysproxy: disable web proxy: %w", err)
+		for _, service := range services {
+			if err := m.disableService(service); err != nil {
+				return err
+			}
 		}
-		if err := m.ns.SetBypassDomains(cfg.Service, nil); err != nil {
-			return fmt.Errorf("sysproxy: clear bypass domains: %w", err)
+		if err := m.server.close(); err != nil {
+			return fmt.Errorf("sysproxy: stop pac server: %w", err)
 		}
 	case ModeInclude, ModeExclude:
 		pac, err := GeneratePAC(cfg)
 		if err != nil {
 			return err
 		}
-		if err := m.server.ensure(cfg.PACPort); err != nil {
-			return m.diagnoseBindError(cfg.PACPort, err)
+		candidate, err := m.server.prepare(cfg.PACPort, []byte(pac))
+		if err != nil {
+			// 21080 is the port used by the pre-2.0 standalone LaunchAgent
+			// and is still present in older imported INI/YAML configs. Keep
+			// explicit non-legacy pins strict and actionable, but migrate this
+			// known legacy pin to an OS-assigned port without touching its
+			// holder. The effective config is persisted by the caller, and the
+			// actual URL is published through Status/NetworkSetup below.
+			if cfg.PACPort != LegacyPACPort || !errors.Is(err, syscall.EADDRINUSE) {
+				return m.diagnoseBindError(cfg.PACPort, err)
+			}
+			var fallbackErr error
+			candidate, fallbackErr = m.server.prepare(0, []byte(pac))
+			if fallbackErr != nil {
+				return m.diagnoseBindError(cfg.PACPort, err)
+			}
+			cfg.PACPort = 0
 		}
-		m.server.setBody([]byte(pac))
+		newURL := m.server.candidateURL(candidate)
+		rollback := func(cause error) error {
+			m.server.abort(candidate)
+			var restoreErr error
+			if m.cfg.Mode != ModeOff {
+				if cfg.Service != m.cfg.Service {
+					restoreErr = m.disableService(cfg.Service)
+				}
+				if restoreErr == nil {
+					restoreErr = m.ns.SetAutoProxyURL(m.cfg.Service, m.server.url())
+				}
+				if restoreErr == nil {
+					restoreErr = m.ns.SetBypassDomains(m.cfg.Service, bypassDomainsFor(m.cfg.Direct))
+				}
+			} else {
+				restoreErr = m.disableService(cfg.Service)
+			}
+			if restoreErr != nil {
+				return fmt.Errorf("%w (rollback failed: %v)", cause, restoreErr)
+			}
+			return cause
+		}
 		// PAC and the manual proxy fields must not overlap (mirrors
 		// `make proxy-on`/`proxy-pac`'s -setwebproxystate/-setsecurewebproxystate
 		// off before -setautoproxyurl).
 		if err := m.ns.DisableWebProxy(cfg.Service); err != nil {
-			return fmt.Errorf("sysproxy: disable manual web proxy: %w", err)
+			return rollback(fmt.Errorf("sysproxy: disable manual web proxy: %w", err))
 		}
-		if err := m.ns.SetAutoProxyURL(cfg.Service, m.server.url()); err != nil {
-			return fmt.Errorf("sysproxy: set auto proxy url: %w", err)
+		if err := m.ns.SetAutoProxyURL(cfg.Service, newURL); err != nil {
+			return rollback(fmt.Errorf("sysproxy: set auto proxy url: %w", err))
 		}
 		// Belt-and-suspenders on top of the PAC's own DIRECT rules (see
 		// NetworkSetup.SetBypassDomains) — mirrors `make proxy-on`/
@@ -147,11 +190,30 @@ func (m *Manager) Apply(cfg Config) error {
 		// Direct entries apply: macOS bypass lists take hosts/domains, not
 		// CIDRs.
 		if err := m.ns.SetBypassDomains(cfg.Service, bypassDomainsFor(cfg.Direct)); err != nil {
-			return fmt.Errorf("sysproxy: set bypass domains: %w", err)
+			return rollback(fmt.Errorf("sysproxy: set bypass domains: %w", err))
 		}
+		if m.cfg.Mode != ModeOff && m.cfg.Service != cfg.Service {
+			if err := m.disableService(m.cfg.Service); err != nil {
+				return rollback(err)
+			}
+		}
+		m.server.commit(candidate, []byte(pac))
 	}
 
 	m.cfg = cfg
+	return nil
+}
+
+func (m *Manager) disableService(service string) error {
+	if err := m.ns.DisableAutoProxy(service); err != nil {
+		return fmt.Errorf("sysproxy: disable auto proxy: %w", err)
+	}
+	if err := m.ns.DisableWebProxy(service); err != nil {
+		return fmt.Errorf("sysproxy: disable web proxy: %w", err)
+	}
+	if err := m.ns.SetBypassDomains(service, nil); err != nil {
+		return fmt.Errorf("sysproxy: clear bypass domains: %w", err)
+	}
 	return nil
 }
 

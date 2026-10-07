@@ -466,6 +466,9 @@ func TestExecutor_RouteApp_NotRunning(t *testing.T) {
 
 func TestExecutor_RouteApp_RoutesEveryPIDForTheBundle(t *testing.T) {
 	e, _ := newExecutor()
+	// RouteApp recomputes the extension target set after routing. Keep this
+	// test hermetic instead of resolving the production App Group path.
+	injectFakeController(e, true)
 	ctx := context.Background()
 	_ = e.LoadLink(ctx, validLink)
 	if err := e.EnableProxy(ctx); err != nil {
