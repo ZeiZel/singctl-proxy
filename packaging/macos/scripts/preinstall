@@ -41,6 +41,8 @@ fi
 
 echo "==> singctl preinstall: cleaning up previous installation (user: ${REAL_USER:-unknown})"
 
+echo "==> preserving user state; daemon startup performs lock-held stale-state recovery"
+
 # --- 1. Boot out the system LaunchDaemon -----------------------------------
 # Modern spelling first, legacy spelling as fallback; both tolerate "not loaded".
 launchctl bootout system "$DAEMON_PLIST" >/dev/null 2>&1 || true

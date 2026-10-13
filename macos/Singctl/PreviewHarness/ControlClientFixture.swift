@@ -52,6 +52,22 @@ struct ControlClientFixture {
         do { try await mutation.setMode("proxy"); preconditionFailure("mutation unexpectedly succeeded") }
         catch { }
         precondition(mutationCalls == 1 && mutationEndpointCalls == 1)
+        // A live reused PID or a successful reply from a different daemon
+        // must not complete the launcher's readiness poll.
+        for (reply, expected) in [
+            (#"{"pid":7,"mode":"off","started_at":"b"}"#, true),
+            (#"{"pid":7,"mode":"off","started_at":"old"}"#, false),
+            (#"{"pid":8,"mode":"off","started_at":"b"}"#, false)
+        ] {
+            let probe = ControlClient(endpointProvider: { b }, transportOverride: { _, _, _ in reply })
+            let ready = await DaemonLauncher.isReady(b, client: probe)
+            precondition(ready == expected)
+        }
+        let refused = ControlClient(endpointProvider: { b }, transportOverride: { _, _, _ in
+            throw ControlClientError.connectFailed("fixture refusal")
+        })
+        let ready = await DaemonLauncher.isReady(b, client: refused)
+        precondition(!ready)
         print("ControlClient fixture passed")
     }
 }

@@ -1,14 +1,127 @@
 package control
 
 import (
+	"bufio"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
+
+func TestLockHelper(t *testing.T) {
+	if os.Getenv("SINGCTL_LOCK_HELPER") != "1" {
+		return
+	}
+	dir := os.Getenv("SINGCTL_LOCK_DIR")
+	var lock *InstanceLock
+	var err error
+	if os.Getenv("SINGCTL_LOCK_ADOPT") == "1" {
+		lock, err = AdoptInstanceLock(dir, 3)
+	} else {
+		lock, err = AcquireInstanceLock(dir)
+	}
+	if err != nil {
+		os.Exit(2)
+	}
+	defer lock.Close()
+	if os.Getenv("SINGCTL_CHECK_EXEC") == "1" {
+		cmd := exec.Command(os.Args[0], "-test.run=TestNoInheritedLockHelper")
+		cmd.Env = append(os.Environ(), "SINGCTL_CHECK_FD=1")
+		if err := cmd.Run(); err != nil {
+			os.Exit(3)
+		}
+	}
+	if err := RecoverState(dir); err != nil {
+		os.Exit(6)
+	}
+	token := time.Now().Format(time.RFC3339Nano)
+	srv := NewServer(SocketPath(dir))
+	srv.Handle("STATUS", func(string) (string, error) {
+		return fmt.Sprintf(`{"pid":%d,"started_at":%q}`, os.Getpid(), token), nil
+	})
+	if err := srv.Start(); err != nil {
+		os.Exit(7)
+	}
+	defer srv.Close()
+	if err := WriteInstance(dir, Instance{PID: os.Getpid(), StartedAt: token, ControlSocket: SocketPath(dir)}); err != nil {
+		os.Exit(8)
+	}
+	defer RemoveInstance(dir)
+	fmt.Println("READY")
+	_, _ = io.Copy(io.Discard, os.Stdin)
+	os.Exit(0)
+}
+
+func TestNoInheritedLockHelper(t *testing.T) {
+	if os.Getenv("SINGCTL_CHECK_FD") != "1" {
+		return
+	}
+	expected, err := os.Stat(LockPath(os.Getenv("SINGCTL_LOCK_DIR")))
+	if err != nil {
+		os.Exit(4)
+	}
+	for fd := uintptr(3); fd < 64; fd++ {
+		var stat syscall.Stat_t
+		if syscall.Fstat(int(fd), &stat) == nil {
+			want := expected.Sys().(*syscall.Stat_t)
+			if stat.Dev == want.Dev && stat.Ino == want.Ino {
+				os.Exit(5)
+			}
+		}
+	}
+	os.Exit(0)
+}
+
+func lockChild(t *testing.T, dir string, inherited *os.File) (*exec.Cmd, io.WriteCloser, *bufio.Reader) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestLockHelper$")
+	cmd.Env = append(os.Environ(), "SINGCTL_LOCK_HELPER=1", "SINGCTL_LOCK_DIR="+dir)
+	if inherited != nil {
+		cmd.ExtraFiles = []*os.File{inherited}
+		cmd.Env = append(cmd.Env, "SINGCTL_LOCK_ADOPT=1", "SINGCTL_CHECK_EXEC=1")
+	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stdin.Close(); cmd.Process.Kill() })
+	return cmd, stdin, bufio.NewReader(stdout)
+}
+
+func awaitReady(t *testing.T, reader *bufio.Reader) {
+	t.Helper()
+	result := make(chan error, 1)
+	go func() {
+		line, err := reader.ReadString('\n')
+		if err == nil && line != "READY\n" {
+			err = fmt.Errorf("unexpected handshake %q", line)
+		}
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no lock readiness handshake")
+	}
+}
 
 func TestInstanceRoundTrip(t *testing.T) {
 	dir := t.TempDir()
@@ -36,6 +149,184 @@ func TestIsAlive(t *testing.T) {
 	}
 	if IsAlive(0) || IsAlive(1<<30) {
 		t.Error("nonexistent PIDs should not be alive")
+	}
+}
+
+func TestInstanceLockExclusiveAndReusableAfterClose(t *testing.T) {
+	dir := t.TempDir()
+	one, err := AcquireInstanceLock(dir)
+	if err != nil {
+		t.Fatalf("first lock: %v", err)
+	}
+	if _, err := AcquireInstanceLock(dir); err == nil {
+		t.Fatal("second holder acquired the lifetime lock")
+	}
+	if err := one.Close(); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	two, err := AcquireInstanceLock(dir)
+	if err != nil {
+		t.Fatalf("lock after release: %v", err)
+	}
+	defer two.Close()
+	if _, err := os.Stat(LockPath(dir)); err != nil {
+		t.Fatalf("lock file must persist: %v", err)
+	}
+}
+
+func TestInstanceLockReleasedAfterSIGKILL(t *testing.T) {
+	dir, err := os.MkdirTemp("", "sr-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	cmd, _, reader := lockChild(t, dir, nil)
+	awaitReady(t, reader)
+	if l, err := AcquireInstanceLock(dir); err == nil {
+		l.Close()
+		t.Fatal("helper did not hold lock")
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+	lock, err := AcquireInstanceLock(dir)
+	if err != nil {
+		t.Fatalf("lock not released after SIGKILL: %v", err)
+	}
+	defer lock.Close()
+	if _, err := ReadInstance(dir); err != nil {
+		t.Fatal("crash fixture did not leave advertisement")
+	}
+	if err := RecoverState(dir); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInheritedLifetimeLockAndExecIsolation(t *testing.T) {
+	dir, err := os.MkdirTemp("", "sr-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	parent, err := AcquireInstanceLock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd, stdin, reader := lockChild(t, dir, parent.File())
+	awaitReady(t, reader) // also confirms a subsequent exec did not inherit it
+	parent.Close()
+	if l, err := AcquireInstanceLock(dir); err == nil {
+		l.Close()
+		t.Fatal("parent close unlocked child")
+	}
+	stdin.Close()
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	next, err := AcquireInstanceLock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next.Close()
+}
+
+func TestParallelLaunchExactlyOneWinner(t *testing.T) {
+	dir, err := os.MkdirTemp("", "sr-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	one, in1, r1 := lockChild(t, dir, nil)
+	two, in2, r2 := lockChild(t, dir, nil)
+	ready := make(chan int, 2)
+	for i, r := range []*bufio.Reader{r1, r2} {
+		go func(i int, r *bufio.Reader) {
+			line, _ := r.ReadString('\n')
+			if line == "READY\n" {
+				ready <- i
+			} else {
+				ready <- -1
+			}
+		}(i, r)
+	}
+	winners := 0
+	for i := 0; i < 2; i++ {
+		select {
+		case winner := <-ready:
+			if winner >= 0 {
+				winners++
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("parallel startup hung")
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("got %d winners", winners)
+	}
+	in1.Close()
+	in2.Close()
+	_ = one.Wait()
+	_ = two.Wait()
+}
+
+func TestRecoveryPreservesConfigurationAndRejectsReusedPID(t *testing.T) {
+	for _, pid := range []int{1 << 30, os.Getpid()} {
+		t.Run(fmt.Sprint(pid), func(t *testing.T) {
+			dir, err := os.MkdirTemp("", "sr-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.RemoveAll(dir)
+			for name, value := range map[string]string{"profile.txt": "fixture-key", "sysproxy.ini": "fixture-settings", "autostart-mode.txt": "off"} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// A raw listener closed without unlinking models a socket left by reboot.
+			ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: SocketPath(dir), Net: "unix"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ln.SetUnlinkOnClose(false)
+			ln.Close()
+			stale := Instance{PID: pid, StartedAt: "old", ControlSocket: SocketPath(dir)}
+			if err := WriteInstance(dir, stale); err != nil {
+				t.Fatal(err)
+			}
+			if IsCurrent(stale) {
+				t.Fatal("stale/reused PID accepted")
+			}
+			lock, err := AcquireInstanceLock(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lock.Close()
+			if err := RecoverState(dir); err != nil {
+				t.Fatal(err)
+			}
+			for name, value := range map[string]string{"profile.txt": "fixture-key", "sysproxy.ini": "fixture-settings", "autostart-mode.txt": "off"} {
+				got, err := os.ReadFile(filepath.Join(dir, name))
+				if err != nil || string(got) != value {
+					t.Fatalf("changed %s", name)
+				}
+			}
+			srv := NewServer(SocketPath(dir))
+			srv.Handle("STATUS", func(string) (string, error) { return fmt.Sprintf(`{"pid":%d,"started_at":"new"}`, os.Getpid()), nil })
+			if err := srv.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer srv.Close()
+			if IsCurrent(stale) {
+				t.Fatal("mismatched start token accepted")
+			}
+			if err := RecoverState(dir); err == nil {
+				t.Fatal("live socket removed")
+			}
+			if _, err := QueryStatus(SocketPath(dir)); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -75,6 +366,28 @@ func TestServerClient_StatusAndStop(t *testing.T) {
 	mu.Unlock()
 	if !done {
 		t.Error("STOP handler was not invoked")
+	}
+}
+
+func TestServerStartDoesNotUnlinkLiveSocket(t *testing.T) {
+	dir, err := os.MkdirTemp("", "sr-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := SocketPath(dir)
+	first := NewServer(sock)
+	first.Handle("STATUS", func(string) (string, error) { return `{"pid":1,"started_at":"t"}`, nil })
+	if err := first.Start(); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	defer first.Close()
+	second := NewServer(sock)
+	if err := second.Start(); err == nil {
+		t.Fatal("second server stole a live socket")
+	}
+	if _, err := QueryStatus(sock); err != nil {
+		t.Fatalf("live socket was removed: %v", err)
 	}
 }
 
@@ -204,5 +517,55 @@ func TestKeysAddConfig_RoundTrip(t *testing.T) {
 func TestClient_NoServer(t *testing.T) {
 	if err := Stop(filepath.Join(t.TempDir(), "absent.sock")); err == nil {
 		t.Error("Stop against a missing socket should error")
+	}
+}
+
+func TestRecoveryPreservesAmbiguousControlPath(t *testing.T) {
+	dir := t.TempDir()
+	lock, err := AcquireInstanceLock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := os.WriteFile(SocketPath(dir), []byte("not a socket"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteInstance(dir, Instance{PID: 1, StartedAt: "stale"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecoverState(dir); err == nil {
+		t.Fatal("removed ambiguous control path")
+	}
+	if _, err := ReadInstance(dir); err != nil {
+		t.Fatal("advertisement removed before ownership resolved")
+	}
+	got, err := os.ReadFile(SocketPath(dir))
+	if err != nil || string(got) != "not a socket" {
+		t.Fatal("control path modified")
+	}
+}
+
+func TestAdoptRejectsUnrelatedDescriptor(t *testing.T) {
+	dir := t.TempDir()
+	lock, err := AcquireInstanceLock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	unrelated, err := os.CreateTemp(dir, "unrelated")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unrelated.Close()
+	fd, err := syscall.Dup(int(unrelated.Fd()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adopted, err := AdoptInstanceLock(dir, uintptr(fd)); err == nil {
+		adopted.Close()
+		t.Fatal("adopted unrelated file")
+	}
+	if _, err := AcquireInstanceLock(""); err == nil {
+		t.Fatal("empty configuration directory accepted")
 	}
 }

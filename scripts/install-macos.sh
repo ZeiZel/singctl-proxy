@@ -143,6 +143,30 @@ echo "==> загружаю ${LABEL}"
 $SUDO launchctl bootstrap system "${PLIST_DST}" 2>/dev/null ||
 	$SUDO launchctl load -w "${PLIST_DST}"
 
+# Apply the same identity/PAC readiness check as the .pkg installer. This is
+# diagnostic only: a delayed launchd start must not make an otherwise complete
+# installation fail, and no user state is modified here.
+if command -v python3 >/dev/null 2>&1; then
+	CONFIG_DIR="${REAL_HOME}/.config/singctl"
+	READY=""
+	READY_OK=0
+	for _ in 1 2 3 4 5 6; do
+		if [ -S "${CONFIG_DIR}/control.sock" ]; then
+			READY="$(python3 "${REPO_ROOT}/packaging/macos/scripts/check-readiness.py" \
+				"${CONFIG_DIR}/control.sock" "${CONFIG_DIR}/instance.json" 2>/dev/null || true)"
+			if [ "$READY" = "OFF" ] || [ -n "$READY" ]; then
+				echo "==> daemon readiness verified"
+				READY_OK=1
+				break
+			fi
+		fi
+		sleep 1
+	done
+	[ "$READY_OK" = "1" ] || echo "==> warning: daemon readiness was not observed yet"
+else
+	echo "==> warning: python3 unavailable; daemon readiness will be reported by the GUI"
+fi
+
 cat <<'EOF'
 
 singctl установлен как системная команда (/usr/local/bin/singctl).

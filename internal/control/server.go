@@ -130,8 +130,16 @@ func (s *Server) Handle(cmd string, fn HandlerFunc) {
 
 // Start removes any stale socket, begins listening, and serves in a goroutine.
 func (s *Server) Start() error {
-	_ = os.Remove(s.path) // clear a stale socket from a crashed run
 	ln, err := net.Listen("unix", s.path)
+	if err != nil {
+		// Never unlink a socket that answers. A crashed run leaves a pathname
+		// behind, but a live peer must retain ownership and be reported to the
+		// caller as a collision.
+		if SocketProbe(s.path) == nil {
+			_ = os.Remove(s.path)
+			ln, err = net.Listen("unix", s.path)
+		}
+	}
 	if err != nil {
 		return err
 	}

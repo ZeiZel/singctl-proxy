@@ -30,7 +30,8 @@ type Config struct {
 	URLTestURL       string
 	URLTestInterval  string
 	URLTestTolerance int
-	LogPath          string // child stdout/stderr destination ("" = /dev/null)
+	LogPath          string   // child stdout/stderr destination ("" = /dev/null)
+	LockFile         *os.File // parent-owned lifetime lock passed to the child
 }
 
 // BuildArgs renders the child's argv (without the program name). It mirrors the

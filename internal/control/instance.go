@@ -8,12 +8,16 @@ package control
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 )
 
 const instanceFile = "instance.json"
+const lockFile = "instance.lock"
 
 // Instance describes a running singctl process for discovery by attach/stop.
 type Instance struct {
@@ -28,6 +32,8 @@ type Instance struct {
 
 // InstancePath is the advertisement file path inside the config dir.
 func InstancePath(dir string) string { return filepath.Join(dir, instanceFile) }
+func LockPath(dir string) string     { return filepath.Join(dir, lockFile) }
+func SocketPath(dir string) string   { return filepath.Join(dir, "control.sock") }
 
 // WriteInstance writes the advertisement file (0600).
 func WriteInstance(dir string, inst Instance) error {
@@ -35,7 +41,28 @@ func WriteInstance(dir string, inst Instance) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(InstancePath(dir), data, 0o600)
+	tmp, err := os.CreateTemp(dir, ".instance.json-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, InstancePath(dir))
 }
 
 // ReadInstance reads the advertisement file.
@@ -72,4 +99,57 @@ func IsAlive(pid int) bool {
 		return true
 	}
 	return false
+}
+
+// IsCurrent verifies the advertised process through its control socket. PID
+// reuse alone is not sufficient: the socket reply must carry the same PID and
+// start token as the advertisement.
+func IsCurrent(inst Instance) bool {
+	if inst.PID <= 0 || inst.StartedAt == "" || !IsAlive(inst.PID) || inst.ControlSocket == "" {
+		return false
+	}
+	st, err := QueryStatus(inst.ControlSocket)
+	return err == nil && st.PID == inst.PID && st.StartedAt == inst.StartedAt
+}
+
+// RemoveStaleAdvertisement removes only the advertisement. Socket ownership is
+// decided by Server.Start, which probes it before unlinking a stale pathname.
+func RemoveStaleAdvertisement(dir string) { _ = os.Remove(InstancePath(dir)) }
+
+// SocketProbe returns nil only for a confirmed missing or refused socket.
+// All ambiguous errors preserve the pathname and fail startup safely.
+func SocketProbe(path string) error {
+	conn, err := net.DialTimeout("unix", path, 500*time.Millisecond)
+	if err == nil {
+		conn.Close()
+		return fmt.Errorf("control socket has a live peer")
+	}
+	if errors.Is(err, syscall.ENOENT) {
+		return nil
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		info, statErr := os.Lstat(path)
+		if errors.Is(statErr, os.ErrNotExist) {
+			return nil
+		}
+		if statErr == nil && info.Mode()&os.ModeSocket != 0 {
+			return nil
+		}
+		return fmt.Errorf("refusing to remove non-socket control pathname")
+	}
+	return fmt.Errorf("cannot establish socket ownership: %w", err)
+}
+
+// RecoverState must be called with the lifetime lock held, before any startup
+// writes. It only removes advertisements and sockets proven stale.
+func RecoverState(dir string) error {
+	if err := SocketProbe(SocketPath(dir)); err != nil {
+		return err
+	}
+	for _, path := range []string{SocketPath(dir), InstancePath(dir)} {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
