@@ -33,7 +33,7 @@ it injects endpoint discovery and transport and never opens a socket:
 ```sh
 /Library/Developer/CommandLineTools/usr/bin/swiftc -sdk /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk \
   -target arm64-apple-macos26 -D CONTROL_CLIENT_FIXTURE \
-  App/Core/Models.swift App/Core/InstanceDiscovery.swift App/Core/ControlClient.swift \
+  App/Core/Models.swift App/Core/InstanceDiscovery.swift App/Core/ControlClient.swift App/Core/DaemonLauncher.swift \
   PreviewHarness/ControlClientFixture.swift -o /tmp/control-client-fixture
 /tmp/control-client-fixture
 ```

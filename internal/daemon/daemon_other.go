@@ -25,20 +25,22 @@ func Spawn(c Config) error {
 	// propagate into every child THAT process spawns (F2 item 6).
 	cmd.Env = append(stripMallocStackLoggingEnv(os.Environ()), childEnv+"=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if c.LockFile != nil {
+		cmd.ExtraFiles = []*os.File{c.LockFile}
+		cmd.Env = append(cmd.Env, "SINGCTL_DAEMON_LOCK_FD=3")
+	}
 
 	out, err := daemonOutput(c.LogPath)
 	if err != nil {
 		return err
 	}
+	defer out.Close()
 	cmd.Stdin = nil
 	cmd.Stdout = out
 	cmd.Stderr = out
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start daemon: %w", err)
-	}
-	if out != nil {
-		_ = out.Close() // the child holds its own dup'd fd
 	}
 	return nil
 }
@@ -50,7 +52,7 @@ func stripMallocStackLoggingEnv(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
 		key, _, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(key, "MallocStackLogging") {
+		if strings.HasPrefix(key, "MallocStackLogging") || key == "SINGCTL_DAEMON_LOCK_FD" || key == childEnv {
 			continue
 		}
 		out = append(out, kv)

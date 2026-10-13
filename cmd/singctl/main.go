@@ -103,7 +103,7 @@ func resolveLaunchUser() *procproxy.LaunchUser {
 func waitForInstance(dir string, notPID int, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if inst, err := control.ReadInstance(dir); err == nil && inst.PID != notPID && control.IsAlive(inst.PID) {
+		if inst, err := control.ReadInstance(dir); err == nil && inst.PID != notPID && control.IsCurrent(inst) {
 			return true
 		}
 		time.Sleep(150 * time.Millisecond)
@@ -271,15 +271,14 @@ func runControlCommand(c *cli) int {
 		return 1
 	}
 	inst, err := control.ReadInstance(dir)
-	alive := err == nil && control.IsAlive(inst.PID)
+	alive := err == nil && control.IsCurrent(inst)
 	if !alive {
 		// The advertisement is missing or stale (points at a dead PID). Clean it
 		// up so it stops misleading discovery, then — for --stop — try to stop a
 		// system LaunchDaemon, which advertises elsewhere (it runs as root) and so
 		// can't be reached over this socket.
 		if err == nil {
-			fmt.Fprintf(os.Stderr, "note: removing stale advertisement (PID %d not running)\n", inst.PID)
-			control.RemoveInstance(dir)
+			fmt.Fprintf(os.Stderr, "note: stale advertisement found (PID %d is not verified); startup will clean it under the lifetime lock\n", inst.PID)
 		}
 		if c.ctl.stop {
 			freed := false
@@ -833,7 +832,7 @@ func main() {
 	var inst control.Instance
 	alive := false
 	if dir, _, _ := realConfigDir(); dir != "" {
-		if i, err := control.ReadInstance(dir); err == nil && control.IsAlive(i.PID) {
+		if i, err := control.ReadInstance(dir); err == nil && control.IsCurrent(i) {
 			inst, alive = i, true
 		}
 	}
@@ -854,6 +853,35 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+	// The daemon lifetime lock is acquired before executor construction, profile
+	// restore, subscription work, or any other stateful startup operation. The
+	// A --daemon parent hands this lifetime lock to its foreground child.
+	configDir, realUID, realGID := realConfigDir()
+	var instanceLock *control.InstanceLock
+	if configDir == "" {
+		fmt.Fprintln(os.Stderr, "error: config directory unavailable")
+		os.Exit(1)
+	}
+	var lockErr error
+	if daemon.IsChild() && os.Getenv("SINGCTL_DAEMON_LOCK_FD") != "" {
+		fd, err := strconv.ParseUint(os.Getenv("SINGCTL_DAEMON_LOCK_FD"), 10, 32)
+		if err != nil || fd != 3 {
+			fmt.Fprintln(os.Stderr, "error: invalid inherited lock")
+			os.Exit(1)
+		}
+		instanceLock, lockErr = control.AdoptInstanceLock(configDir, uintptr(fd))
+	} else {
+		instanceLock, lockErr = control.AcquireInstanceLock(configDir)
+	}
+	if lockErr != nil {
+		fmt.Fprintln(os.Stderr, "error: acquire lifetime lock:", lockErr)
+		os.Exit(1)
+	}
+	defer instanceLock.Close()
+	if err := control.RecoverState(configDir); err != nil {
+		fmt.Fprintln(os.Stderr, "error: recover state:", err)
+		os.Exit(1)
+	}
 
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -862,7 +890,7 @@ func main() {
 	ctx, cancelRun := context.WithCancel(sigCtx)
 	defer cancelRun()
 	go netext.RefreshLoop(ctx)
-	startedAt := time.Now().Format("2006-01-02 15:04:05")
+	startedAt := time.Now().Format(time.RFC3339Nano)
 
 	// Read-only passive detector + physical-interface prober + orphan cleanup.
 	detector := netstate.NewKernel()
@@ -892,8 +920,10 @@ func main() {
 	// extension's target set now the socks port above is configured (the store
 	// itself was already loaded in NewExecutor). Best-effort: an unapproved or
 	// missing extension just means capture doesn't take yet, not a fatal error.
-	if err := executor.RecomputeAppTargets(); err != nil {
-		fmt.Fprintln(os.Stderr, "warning: could not restore the proxied-apps list:", err)
+	if !c.proxy.daemon || daemon.IsChild() {
+		if err := executor.RecomputeAppTargets(); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: could not restore the proxied-apps list:", err)
+		}
 	}
 
 	// Persist the profile + log file under the real user's home (chowned back),
@@ -901,7 +931,6 @@ func main() {
 	// empty so sing-box writes to the console instead of the file.
 	var savedLink, logPath string
 	var store *profile.Store
-	configDir, realUID, realGID := realConfigDir()
 	if configDir != "" {
 		homeDir := filepath.Dir(filepath.Dir(configDir)) // <home>/.config/singctl → <home>
 		_ = os.MkdirAll(configDir, 0o755)
@@ -945,8 +974,12 @@ func main() {
 		executor.SetSysProxySaver(store.SaveSysproxyConfig)
 		if data, err := store.LoadSysproxyConfig(); err != nil {
 			fmt.Fprintln(os.Stderr, "warning: load persisted system-proxy config:", err)
-		} else if err := executor.RestoreSysProxyConfig(data); err != nil {
-			fmt.Fprintln(os.Stderr, "warning: restore system-proxy config:", err)
+		} else if !c.proxy.daemon || daemon.IsChild() {
+			// Only the foreground owner binds PAC and restores system proxy state.
+			// A --daemon parent must leave the port available for its child.
+			if err := executor.RestoreSysProxyConfig(data); err != nil {
+				fmt.Fprintln(os.Stderr, "warning: restore system-proxy config:", err)
+			}
 		}
 
 		// Persisted firewall rules (F6 item 5): rendered into the generated
@@ -1033,7 +1066,7 @@ func main() {
 			_ = store.Save(initialLink) // the child loads the key from the profile
 		}
 		if configDir != "" {
-			if inst, err := control.ReadInstance(configDir); err == nil && control.IsAlive(inst.PID) {
+			if inst, err := control.ReadInstance(configDir); err == nil && control.IsCurrent(inst) {
 				fmt.Fprintf(os.Stderr, "error: a singctl instance is already running (PID %d) — stop it first: singctl --stop\n", inst.PID)
 				os.Exit(1)
 			}
@@ -1043,6 +1076,7 @@ func main() {
 			ClashAddr: c.obs.clashAPI, ClashSecret: clashSecret,
 			URLTestURL: c.obs.urltestURL, URLTestInterval: c.obs.urltestInterval,
 			URLTestTolerance: c.obs.urltestTolerance, LogPath: logPath,
+			LockFile: instanceLock.File(),
 		}); err != nil {
 			fmt.Fprintln(os.Stderr, "error: start daemon:", err)
 			os.Exit(1)
@@ -1058,38 +1092,25 @@ func main() {
 		return
 	}
 
-	// Advertise this instance + serve control (attach/stop/status) so another
-	// tab can follow logs and stop it. Best-effort: failures don't block startup.
-	if configDir != "" {
-		// Guard against a second instance stomping a live one. control.Server.Start
-		// unconditionally unlinks the socket, so without this a second launch would
-		// silently steal it and both would fight over ports/routes. Refuse if a
-		// live instance already owns the advertisement; drop a stale one (dead PID)
-		// so a fresh start can proceed cleanly. Mirrors the --daemon parent guard.
-		if inst, err := control.ReadInstance(configDir); err == nil {
-			if inst.PID != os.Getpid() && control.IsAlive(inst.PID) {
-				fmt.Fprintf(os.Stderr, "error: singctl already running (PID %d) — stop it first: singctl --stop\n", inst.PID)
-				os.Exit(1)
-			}
-			control.RemoveInstance(configDir) // stale advertisement from a dead PID
-		}
-		sockPath := filepath.Join(configDir, "control.sock")
-		srv := control.NewServer(sockPath)
-		registerControl(srv, executor, cancelRun, startedAt)
-		if err := srv.Start(); err == nil {
-			chownTo(sockPath, realUID, realGID)
-			defer srv.Close()
-			inst := control.Instance{
-				PID: os.Getpid(), Mode: mode, LogPath: logPath, ControlSocket: sockPath,
-				ClashAPIAddr: clashAddr, ClashSecret: clashSecret, StartedAt: startedAt,
-			}
-			_ = control.WriteInstance(configDir, inst)
-			chownTo(control.InstancePath(configDir), realUID, realGID)
-			defer control.RemoveInstance(configDir)
-		} else {
-			fmt.Fprintln(os.Stderr, "warning: control socket unavailable:", err)
-		}
+	// Control readiness is mandatory before starting any managed cores.
+	sockPath := control.SocketPath(configDir)
+	srv := control.NewServer(sockPath)
+	registerControl(srv, executor, cancelRun, startedAt)
+	if err := srv.Start(); err != nil {
+		fmt.Fprintln(os.Stderr, "error: control socket:", err)
+		os.Exit(1)
 	}
+	chownTo(sockPath, realUID, realGID)
+	defer srv.Close()
+	inst = control.Instance{PID: os.Getpid(), Mode: mode, LogPath: logPath, ControlSocket: sockPath,
+		ClashAPIAddr: clashAddr, ClashSecret: clashSecret, StartedAt: startedAt}
+	if err := control.WriteInstance(configDir, inst); err != nil {
+		srv.Close()
+		fmt.Fprintln(os.Stderr, "error: advertise instance:", err)
+		os.Exit(1)
+	}
+	chownTo(control.InstancePath(configDir), realUID, realGID)
+	defer control.RemoveInstance(configDir)
 
 	// Monitor: event-driven (PF_ROUTE) + 2s polling fallback, debounce 2.
 	monOut := make(chan monitor.Event, 16)

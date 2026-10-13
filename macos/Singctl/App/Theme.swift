@@ -207,7 +207,7 @@ extension Bundle {
         #if SCREENSHOT_HARNESS
         // Keep the source-controlled fixture legible even though a command
         // line target has no shipping app bundle. This matches App/Info.plist.
-        return "2.0.0"
+        return "1.16.0"
         #else
         infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
         #endif

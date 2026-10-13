@@ -93,10 +93,19 @@ enum DaemonLauncher {
         }.value
         let deadline = ContinuousClock.now + startupTimeout
         while ContinuousClock.now < deadline {
-            if InstanceDiscovery.liveInstance() != nil { return }
+            if let endpoint = InstanceDiscovery.currentEndpoint(),
+               await isReady(endpoint, client: ControlClient(endpointProvider: { endpoint })) { return }
             try await Task.sleep(for: .milliseconds(250))
         }
         throw DaemonLauncherError.didNotStart(lastLogError())
+    }
+
+    // A PID may have been reused after reboot; only the same STATUS start
+    // token proves the advertised daemon is ready. Transport runs off-main.
+    static func isReady(_ endpoint: InstanceDiscovery.Endpoint, client: ControlClient) async -> Bool {
+        guard !endpoint.startedAt.isEmpty,
+              let status = try? await client.status() else { return false }
+        return status.pid == endpoint.pid && status.startedAt == endpoint.startedAt
     }
 
     /// The last `error:` line of the daemon log (or its last non-empty line),

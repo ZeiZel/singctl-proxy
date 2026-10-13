@@ -116,8 +116,8 @@ check() { # check <description> <actual> <expected>
 		fail=1
 	fi
 }
-
-check "bin/singctl --version" "$("$REPO_ROOT/bin/singctl" --version 2>/dev/null)" "singctl $VERSION"
+check "CLI Go build metadata" "$(go version -m "$REPO_ROOT/bin/singctl" 2>/dev/null | python3 -c 'import sys; print("yes" if ": go1" in sys.stdin.readline() else "no")')" "yes"
+check "CLI linker version" "$(go version -m "$REPO_ROOT/bin/singctl" 2>/dev/null | python3 "$REPO_ROOT/scripts/read-linker-version.py")" "$VERSION"
 check "Singctl.app version" \
 	"$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null)" \
 	"$VERSION"
@@ -139,7 +139,8 @@ trap 'rm -rf "$EXPAND_DIR"' EXIT
 if pkgutil --expand-full "$PKG" "$EXPAND_DIR/pkg" >/dev/null 2>&1; then
 	SHIPPED_CLI="$(find "$EXPAND_DIR/pkg" -path '*usr/local/bin/singctl' -type f 2>/dev/null | head -1)"
 	SHIPPED_APP_PLIST="$(find "$EXPAND_DIR/pkg" -path '*Singctl.app/Contents/Info.plist' -type f 2>/dev/null | head -1)"
-	check "CLI inside the .pkg" "$("$SHIPPED_CLI" --version 2>/dev/null)" "singctl $VERSION"
+	check "CLI inside the .pkg Go metadata" "$(go version -m "$SHIPPED_CLI" 2>/dev/null | python3 -c 'import sys; print("yes" if ": go1" in sys.stdin.readline() else "no")')" "yes"
+	check "CLI inside the .pkg linker version" "$(go version -m "$SHIPPED_CLI" 2>/dev/null | python3 "$REPO_ROOT/scripts/read-linker-version.py")" "$VERSION"
 	check "app inside the .pkg" \
 		"$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SHIPPED_APP_PLIST" 2>/dev/null)" \
 		"$VERSION"
