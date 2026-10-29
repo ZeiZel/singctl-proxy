@@ -228,6 +228,32 @@ func TestExecutor_ApplyAutostart(t *testing.T) {
 	}
 }
 
+func TestExecutor_ApplyAutostartVPNWithCiscoKeepsProxy(t *testing.T) {
+	e, _ := newExecutor()
+	ctx := context.Background()
+	if err := e.LoadLink(ctx, validLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.SetAutostartMode("vpn"); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the detector having observed Cisco before autostart. The
+	// persisted VPN preference must not strand PAC clients without a listener.
+	e.PushDisplay(ctx, types.NetState{CiscoActive: true})
+	if err := e.ApplyAutostart(ctx); err != nil {
+		t.Fatalf("ApplyAutostart with Cisco: %v", err)
+	}
+	if got := e.manager().State(); got != runtime.StateProxyOnly {
+		t.Fatalf("state = %v, want proxy-only", got)
+	}
+	// A subsequent Cisco disconnect leaves the proxy available; a later user
+	// action can explicitly re-enable the persisted VPN mode.
+	e.Apply(ctx, monitor.Event{NetState: types.NetState{}, Decision: policy.DecisionResult{Actions: []policy.Action{policy.ActRefreshProxy}}})
+	if got := e.manager().State(); got != runtime.StateProxyOnly {
+		t.Fatalf("after disconnect refresh state = %v, want proxy-only", got)
+	}
+}
+
 func TestExecutor_LoadLink_RelinkShutsDownOld(t *testing.T) {
 	e, _ := newExecutor()
 	ctx := context.Background()

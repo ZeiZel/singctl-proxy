@@ -406,7 +406,23 @@ func (m *Manager) RefreshProxy(ctx context.Context) error {
 		}
 		bound := m.bound
 		m.mu.Unlock()
-		return m.recreateProxy(ctx, bound, gen)
+		if err := m.recreateProxy(ctx, bound, gen); err != nil {
+			m.mu.Lock()
+			restored := m.proxy != nil
+			var fwd core.Core
+			if m.gen == gen && !restored {
+				fwd = m.fwd
+				m.fwd = nil
+				m.state = StateStopped
+				m.bound = ""
+			}
+			m.mu.Unlock()
+			if !restored && fwd != nil {
+				_ = fwd.Close()
+			}
+			return err
+		}
+		return nil
 	})
 }
 
@@ -490,8 +506,9 @@ func (m *Manager) dialProxy(ctx context.Context, physIface string, gen uint64) e
 	return nil
 }
 
-// recreateProxy closes the current proxy (if any) and dials a fresh one bound
-// to physIface. On failure m.proxy is left nil.
+// recreateProxy closes the old listener before dialing its replacement. If the
+// replacement fails, it retries the same configuration so a transient start
+// failure does not strand callers whose PAC still points at the listener.
 func (m *Manager) recreateProxy(ctx context.Context, physIface string, gen uint64) error {
 	m.mu.Lock()
 	old := m.proxy
@@ -500,7 +517,13 @@ func (m *Manager) recreateProxy(ctx context.Context, physIface string, gen uint6
 	if old != nil {
 		_ = old.Close()
 	}
-	return m.dialProxy(ctx, physIface, gen)
+	if err := m.dialProxy(ctx, physIface, gen); err != nil {
+		if restoreErr := m.dialProxy(ctx, physIface, gen); restoreErr != nil {
+			return fmt.Errorf("recreate proxy: %w (restore failed: %v)", err, restoreErr)
+		}
+		return err
+	}
+	return nil
 }
 
 // rollbackProxy best-effort restores a working proxy-only state after a

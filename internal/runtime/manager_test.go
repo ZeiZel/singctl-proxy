@@ -254,6 +254,56 @@ func TestManager_RefreshProxy_RecreatesSameBinding(t *testing.T) {
 	}
 }
 
+func TestManager_RefreshProxy_TransientFailureRestoresProxy(t *testing.T) {
+	m, ff, _, _, _ := newTestManager(t)
+	ctx := context.Background()
+	if err := m.StartProxy(ctx); err != nil {
+		t.Fatal(err)
+	}
+	old := ff.BuiltFor("proxy")[0]
+	// A permanent failure leaves the manager accurately stopped.
+	ff.NewErrOn["proxy"] = errors.New("temporary proxy start failure")
+	if err := m.RefreshProxy(ctx); err == nil {
+		t.Fatal("RefreshProxy should report replacement failure")
+	}
+	if m.State() != StateStopped || m.BoundInterface() != "" {
+		t.Fatalf("failed refresh changed state: state=%v bound=%q", m.State(), m.BoundInterface())
+	}
+	if old.Running() {
+		t.Fatal("old proxy must be closed after replacement and restore failure")
+	}
+}
+
+func TestManager_RefreshProxy_OneShotFailureRestoresListener(t *testing.T) {
+	_, _, b, p, r := newTestManager(t)
+	ff := core.NewFakeFactory()
+	calls := 0
+	factory := func(ctx context.Context, label string, cfg []byte) (core.Core, error) {
+		if label == "proxy" {
+			calls++
+			if calls == 2 {
+				return nil, errors.New("temporary proxy start failure")
+			}
+		}
+		return ff.Factory()(ctx, label, cfg)
+	}
+	m := NewManager(factory, b, p, r)
+	ctx := context.Background()
+	if err := m.StartProxy(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RefreshProxy(ctx); err == nil {
+		t.Fatal("RefreshProxy should report the failed replacement")
+	}
+	if m.State() != StateProxyOnly || m.BoundInterface() != "" {
+		t.Fatalf("state after restored refresh = %v bound=%q", m.State(), m.BoundInterface())
+	}
+	proxies := ff.BuiltFor("proxy")
+	if len(proxies) != 2 || !proxies[1].Running() {
+		t.Fatalf("recovery proxy is not running: built=%d running=%v", len(proxies), len(proxies) == 2 && proxies[1].Running())
+	}
+}
+
 func TestManager_Shutdown_ClosesBoth(t *testing.T) {
 	m, ff, _, _, _ := newTestManager(t)
 	ctx := context.Background()

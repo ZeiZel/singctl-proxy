@@ -374,7 +374,18 @@ func (e *Executor) ApplyAutostart(ctx context.Context) error {
 	case "proxy":
 		err = e.EnableProxy(ctx)
 	case "vpn":
-		err = e.EnableVPN(ctx)
+		// A persisted VPN preference must still leave the PAC proxy available
+		// when Cisco is already connected. The monitor may not have published
+		// its first observation yet, so retry the safe proxy mode if EnableVPN
+		// detects the competing tunnel during startup.
+		if e.ciscoActive() {
+			err = e.EnableProxy(ctx)
+		} else {
+			err = e.EnableVPN(ctx)
+			if err != nil && e.ciscoActive() {
+				err = e.EnableProxy(ctx)
+			}
+		}
 	default:
 		return nil
 	}
@@ -383,6 +394,12 @@ func (e *Executor) ApplyAutostart(ctx context.Context) error {
 		return fmt.Errorf("apply autostart mode %q: %w", mode, err)
 	}
 	return nil
+}
+
+func (e *Executor) ciscoActive() bool {
+	e.coexistMu.Lock()
+	defer e.coexistMu.Unlock()
+	return e.lastCisco
 }
 
 // --- Backend port (see internal/app.Executor's methods) ---
