@@ -48,14 +48,14 @@ func TestDecide_Table(t *testing.T) {
 			// Coexistence no longer binds: riding the default route is correct even
 			// under full-tunnel Cisco (its tunnel reaches the internet; en0 egress
 			// is blocked, so binding would break the proxy).
-			"full-tunnel cisco in proxy mode does NOT bind (rides the tunnel)",
+			"full-tunnel cisco refreshes unbound proxy",
 			DecideInput{Mode: ModeProxy, PrevCisco: CiscoInactive, NewCisco: CiscoActive, CiscoOwnsDefault: true},
-			DecisionResult{Actions: []Action{ActNone}, NextMode: ModeProxy},
+			DecisionResult{Actions: []Action{ActRefreshProxy}, NextMode: ModeProxy},
 		},
 		{
-			"split-tunnel cisco in proxy mode does NOT bind",
+			"split-tunnel cisco refreshes unbound proxy",
 			DecideInput{Mode: ModeProxy, PrevCisco: CiscoInactive, NewCisco: CiscoActive, CiscoOwnsDefault: false},
-			DecisionResult{Actions: []Action{ActNone}, NextMode: ModeProxy},
+			DecisionResult{Actions: []Action{ActRefreshProxy}, NextMode: ModeProxy},
 		},
 		// Rule (c): if we somehow hold a stale physical bind in proxy mode, release
 		// it so egress rides the default route.
@@ -83,9 +83,9 @@ func TestDecide_Table(t *testing.T) {
 		},
 		// Steady state, no edge.
 		{
-			"cisco steady active in VPN — should not happen but inert",
+			"cisco steady active in VPN reconciles even without an edge",
 			DecideInput{Mode: ModeVPN, PrevCisco: CiscoActive, NewCisco: CiscoActive},
-			DecisionResult{Actions: []Action{ActNone}, NextMode: ModeVPN},
+			DecisionResult{Actions: []Action{ActFailClosed, ActStopForwarder, ActNotify}, NextMode: ModeProxy},
 		},
 		// Switching mode is inert to observations.
 		{
@@ -169,5 +169,23 @@ func TestDecide_NeverStartsForwarderWhileCiscoActive(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestDecide_AlreadyConnectedCiscoYieldsVPN(t *testing.T) {
+	got := Decide(DecideInput{Mode: ModeVPN, PrevCisco: CiscoUnknown, NewCisco: CiscoActive})
+	if got.NextMode != ModeProxy || !reflect.DeepEqual(got.Actions, []Action{ActFailClosed, ActStopForwarder, ActNotify}) {
+		t.Fatalf("startup must release competing TUN: %+v", got)
+	}
+}
+
+func TestDecide_CiscoDisconnectRefreshesProxyOnce(t *testing.T) {
+	got := Decide(DecideInput{Mode: ModeProxy, PrevCisco: CiscoActive, NewCisco: CiscoInactive})
+	if !reflect.DeepEqual(got.Actions, []Action{ActRefreshProxy}) {
+		t.Fatalf("stale connections retained: %+v", got)
+	}
+	got = Decide(DecideInput{Mode: ModeProxy, PrevCisco: CiscoInactive, NewCisco: CiscoInactive})
+	if !reflect.DeepEqual(got.Actions, []Action{ActNone}) {
+		t.Fatalf("steady network should not restart: %+v", got)
 	}
 }

@@ -124,7 +124,7 @@ targets:
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: SCREENSHOT_HARNESS
         OTHER_SWIFT_FLAGS: -parse-as-library
         GENERATE_INFOPLIST_FILE: YES
-        MARKETING_VERSION: "1.16.0"
+        MARKETING_VERSION: "1.16.1"
         INFOPLIST_KEY_CFBundleShortVersionString: $(MARKETING_VERSION)
 
   # NEPacketTunnelProvider appex for the App Store SKU: runs sing-box (Libbox)

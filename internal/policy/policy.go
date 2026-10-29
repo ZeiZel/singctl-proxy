@@ -42,11 +42,8 @@ const (
 	ActRefreshProxy
 	ActFailClosed // immediately stop forwarding (drop) before tearing down TUN
 	ActNotify
-	// ActBindPhysical pins the proxy's egress to the physical NIC so its
-	// upstream dial escapes a third-party VPN (Cisco) that owns the default
-	// route — the primary coexistence strategy in proxy-only mode. Level-
-	// triggered: emitted whenever Cisco is active and the proxy is not yet
-	// bound, so it also fires when singctl starts with Cisco already up.
+	// ActBindPhysical is retained for explicit runtime callers. Automatic
+	// coexistence never emits it: proxy-only egress follows the system routes.
 	ActBindPhysical
 	// ActUnbindProxy releases the physical bind and re-dials the proxy over the
 	// restored default route once Cisco disconnects.
@@ -60,11 +57,8 @@ type DecideInput struct {
 	NewCisco         CiscoState
 	Intent           UserIntent
 	PhysIfaceChanged bool
-	// ProxyBoundPhys reports whether the proxy's egress is currently pinned to
-	// the physical NIC (the Cisco-coexistence bind). It makes the bind/unbind
-	// decisions level-triggered rather than edge-triggered, so a steady "Cisco
-	// active but proxy still unbound" state (e.g. singctl launched after Cisco
-	// was already connected) reconciles to a bound proxy.
+	// ProxyBoundPhys reports a stale physical bind in proxy-only mode, which
+	// must be released even if no Cisco transition was observed.
 	ProxyBoundPhys bool
 	// CiscoOwnsDefault is true only when Cisco holds the unscoped default route
 	// (full-tunnel). Informational now (surfaced in diagnostics): we no longer
@@ -88,9 +82,8 @@ func only(mode Mode, acts ...Action) DecisionResult {
 }
 
 // Decide computes the actions and next mode. User intent takes precedence over
-// observation-driven transitions. Cisco transitions are only acted on between
-// the concrete Inactive<->Active states; anything involving CiscoUnknown (the
-// first observation) is inert so there is no spurious action at startup.
+// observation-driven transitions. Proxy refreshes require a concrete Cisco
+// edge. Releasing a competing TUN is level-triggered, including at startup.
 func Decide(in DecideInput) DecisionResult {
 	// 1. Explicit user intent.
 	switch in.Intent {
@@ -115,10 +108,11 @@ func Decide(in DecideInput) DecisionResult {
 		return only(ModeSwitching, ActNone) // inert mid-transition
 	}
 
-	ciscoUp := in.PrevCisco == CiscoInactive && in.NewCisco == CiscoActive
+	ciscoChanged := (in.PrevCisco == CiscoInactive && in.NewCisco == CiscoActive) ||
+		(in.PrevCisco == CiscoActive && in.NewCisco == CiscoInactive)
 
 	switch {
-	case ciscoUp && in.Mode == ModeVPN:
+	case in.NewCisco == CiscoActive && in.Mode == ModeVPN:
 		// Rule (b): Cisco appeared while we hold the tunnel — fail closed and
 		// drop our VPN immediately so not a single packet rides our tunnel.
 		return only(ModeProxy, ActFailClosed, ActStopForwarder, ActNotify)
@@ -131,6 +125,11 @@ func Decide(in DecideInput) DecisionResult {
 		// en0. In every observed case riding the default route is correct, so we
 		// never bind; if we somehow hold a stale bind, release it here.
 		return only(ModeProxy, ActUnbindProxy)
+	case in.Mode == ModeProxy && ciscoChanged:
+		// Existing upstream connections (including multiplexed transports) may
+		// still belong to the old network. Recreate them after the debounced
+		// transition, without binding to a NIC or changing any VPN routes.
+		return only(ModeProxy, ActRefreshProxy)
 	case in.PhysIfaceChanged && in.Mode == ModeVPN:
 		// Physical interface changed under our TUN — rebind the proxy.
 		return only(ModeVPN, ActRefreshProxy)

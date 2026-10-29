@@ -254,3 +254,32 @@ func TestClassifyTunnels(t *testing.T) {
 		t.Error("expected a foreign active tunnel (utun4)")
 	}
 }
+
+func TestObserve_SplitDefaultsWithoutNOARP(t *testing.T) {
+	ifaces := `en0: flags=8863<UP,BROADCAST,RUNNING> mtu 1500
+    inet 192.168.100.75 netmask 0xffffff00
+utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1350
+    inet 100.64.100.6 --> 100.64.100.5 netmask 0xffffffff
+`
+	for _, rows := range []string{
+		"0/1 100.64.100.5 UGcg utun4\n128.0/1 100.64.100.5 UGc utun4\n",
+		"0.0.0.0/1 100.64.100.5 UGcg utun4\n128.0.0.0/1 100.64.100.5 UGc utun4\n",
+	} {
+		ns, err := New(runnerFor(scenario{ifaces, routeDefaultNoCisco, netstatNoCisco + rows})).Observe(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ns.CiscoActive || !ns.CiscoOwnsDefault || ns.DefaultRouteIface != "utun4" || ns.PhysicalIface != "en0" {
+			t.Fatalf("missed full tunnel: %+v", ns)
+		}
+	}
+	for _, rows := range []string{
+		"0/1 100.64.100.5 UGcg utun4\n",
+		"0/1 100.64.100.5 UGcg utun4\n128.0/1 100.64.100.5 UGc utun5\n",
+		"0/1 100.64.100.5 UGcgI utun4\n128.0/1 100.64.100.5 UGcI utun4\n",
+	} {
+		if got := netstatEffectiveDefault([]byte(rows), "en0"); got != "en0" {
+			t.Fatalf("false full tunnel: %s", got)
+		}
+	}
+}

@@ -335,7 +335,7 @@ func runControlCommand(c *cli) int {
 			if st.ProxyBypass {
 				fmt.Printf("  Cisco: active — proxy is bypassing Cisco (egress via %s)\n", st.PhysIface)
 			} else {
-				fmt.Println("  Cisco: active — proxy is riding Cisco (fallback: no physical interface bound)")
+				fmt.Println("  Cisco: active — proxy is using the system routes alongside the corporate VPN")
 			}
 		}
 		return 0

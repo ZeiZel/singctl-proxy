@@ -374,7 +374,18 @@ func (e *Executor) ApplyAutostart(ctx context.Context) error {
 	case "proxy":
 		err = e.EnableProxy(ctx)
 	case "vpn":
-		err = e.EnableVPN(ctx)
+		// A persisted VPN preference must still leave the PAC proxy available
+		// when Cisco is already connected. The monitor may not have published
+		// its first observation yet, so retry the safe proxy mode if EnableVPN
+		// detects the competing tunnel during startup.
+		if e.ciscoActive() {
+			err = e.EnableProxy(ctx)
+		} else {
+			err = e.EnableVPN(ctx)
+			if err != nil && e.ciscoActive() {
+				err = e.EnableProxy(ctx)
+			}
+		}
 	default:
 		return nil
 	}
@@ -383,6 +394,12 @@ func (e *Executor) ApplyAutostart(ctx context.Context) error {
 		return fmt.Errorf("apply autostart mode %q: %w", mode, err)
 	}
 	return nil
+}
+
+func (e *Executor) ciscoActive() bool {
+	e.coexistMu.Lock()
+	defer e.coexistMu.Unlock()
+	return e.lastCisco
 }
 
 // --- Backend port (see internal/app.Executor's methods) ---
@@ -765,6 +782,12 @@ func (e *Executor) EnableProxy(ctx context.Context) error {
 
 // EnableVPN starts VPN mode (proxy + forwarder), ensuring the proxy is up first.
 func (e *Executor) EnableVPN(ctx context.Context) error {
+	e.coexistMu.Lock()
+	ciscoActive := e.lastCisco
+	e.coexistMu.Unlock()
+	if ciscoActive {
+		return fmt.Errorf("Cisco is active — use Proxy mode while the corporate VPN is connected")
+	}
 	mgr := e.manager()
 	if mgr == nil {
 		return errNoProxy
@@ -1032,16 +1055,13 @@ func (e *Executor) Apply(ctx context.Context, ev monitor.Event) {
 	}
 	if mgr != nil {
 		if stop {
-			// Yield fully (forwarder + proxy down) and STAY down while Cisco is
-			// present: AnyConnect aborts ("can't verify IP forwarding table
-			// changes") if any process touches the routing table during its
-			// connect. This path is now reached only when Cisco appears while we
-			// hold our OWN VPN tunnel (rule b); proxy-only coexistence binds
-			// instead of suspending. We resume once Cisco disconnects.
-			if err := mgr.SuspendForCisco(ctx); err != nil {
-				e.diag("suspend-for-cisco FAILED: %v", err)
+			// Release our TUN and its physical bind, but keep the loopback proxy
+			// available: browsers still reference it through the system PAC.
+			// An unbound proxy uses the OS/Cisco routes and installs no routes.
+			if err := mgr.StopForwarder(ctx); err != nil {
+				e.diag("stop-forwarder-for-cisco FAILED: %v", err)
 			} else {
-				e.diag("suspended (fail-closed) while Cisco holds the tunnel")
+				e.diag("released our VPN; proxy is using the system routes alongside Cisco")
 			}
 		}
 		if bindPhys {
@@ -1103,7 +1123,7 @@ func (e *Executor) PushDisplay(ctx context.Context, ns types.NetState) {
 	if changed {
 		tunnel := "none"
 		if ns.CiscoActive && ns.CiscoOwnsDefault {
-			tunnel = "full-tunnel (Cisco owns default → bind physical)"
+			tunnel = "full-tunnel (proxy uses system routes)"
 		} else if ns.CiscoActive {
 			tunnel = "split-tunnel (physical owns default → no bind needed)"
 		}
@@ -2194,7 +2214,7 @@ func coexistNote(s coexistState, physIface string) (string, int) {
 		}
 		return "Cisco is active — proxy is bypassing Cisco (egress via " + iface + ")", notify.ActOk
 	case coexistFallback:
-		return "Cisco is active — could not bind the proxy to the physical interface, traffic is riding Cisco (fallback)", notify.ActWarn
+		return "Cisco is active — proxy is using the system routes alongside the corporate VPN", notify.ActInfo
 	case coexistSuspended:
 		return "Cisco is active — our VPN has stopped (fail-closed), we will resume once Cisco disconnects", notify.ActWarn
 	case coexistNone:
