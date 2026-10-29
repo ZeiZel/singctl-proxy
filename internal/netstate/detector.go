@@ -38,7 +38,7 @@ func (d *Detector) Observe(ctx context.Context) (types.NetState, error) {
 	rtOut, _ := d.run.Run(ctx, "route", "-n", "get", "default")
 
 	ifaces := ParseIfconfig(ifOut)
-	defIface := ParseRouteGetDefault(rtOut)
+	defIface := netstatEffectiveDefault(nsOut, ParseRouteGetDefault(rtOut))
 	defaults := ParseNetstatDefaults(nsOut)
 	tunnels := classifyTunnels(ifaces, defIface, d.ourAddrPrefix)
 

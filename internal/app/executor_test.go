@@ -242,35 +242,44 @@ func TestExecutor_LoadLink_RelinkShutsDownOld(t *testing.T) {
 	}
 }
 
-func TestExecutor_Apply_CiscoUp_Suspends_StaysDownUntilCiscoGone(t *testing.T) {
+func TestExecutor_Apply_CiscoUp_KeepsProxyAvailable(t *testing.T) {
 	e, _ := newExecutor()
 	ctx := context.Background()
-	_ = e.LoadLink(ctx, validLink)
-	_ = e.EnableVPN(ctx)
+	if err := e.LoadLink(ctx, validLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.EnableVPN(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, active := range []bool{true, true, false} {
+		ns := types.NetState{CiscoActive: active, PhysicalIface: "en0"}
+		state := policy.CiscoInactive
+		if active {
+			state = policy.CiscoActive
+		}
+		decision := policy.Decide(policy.DecideInput{Mode: e.Mode(), NewCisco: state})
+		e.Apply(ctx, monitor.Event{NetState: ns, Decision: decision})
+		if e.manager().State() != runtime.StateProxyOnly || e.manager().BoundInterface() != "" {
+			t.Fatalf("Cisco active=%v: state=%v bind=%q; PAC needs an unbound proxy", active, e.manager().State(), e.manager().BoundInterface())
+		}
+	}
+}
 
-	// Cisco appears -> fully suspend (no sing-box activity for AnyConnect).
-	e.Apply(ctx, monitor.Event{
-		NetState: types.NetState{CiscoActive: true},
-		Decision: policy.DecisionResult{Actions: []policy.Action{policy.ActFailClosed, policy.ActStopForwarder, policy.ActNotify}},
-	})
-	if e.manager().State() != runtime.StateSuspended {
-		t.Fatalf("after Cisco up state = %v, want suspended", e.manager().State())
+func TestExecutor_EnableVPN_RejectsActiveCisco(t *testing.T) {
+	e, _ := newExecutor()
+	ctx := context.Background()
+	if err := e.LoadLink(ctx, validLink); err != nil {
+		t.Fatal(err)
 	}
-	// Steady active -> stays suspended (no resume while Cisco present).
-	e.Apply(ctx, monitor.Event{
-		NetState: types.NetState{CiscoActive: true},
-		Decision: policy.DecisionResult{Actions: []policy.Action{policy.ActNone}},
-	})
-	if e.manager().State() != runtime.StateSuspended {
-		t.Errorf("must stay suspended while Cisco active, got %v", e.manager().State())
+	if err := e.EnableProxy(ctx); err != nil {
+		t.Fatal(err)
 	}
-	// Cisco gone -> resume proxy.
-	e.Apply(ctx, monitor.Event{
-		NetState: types.NetState{CiscoActive: false},
-		Decision: policy.DecisionResult{Actions: []policy.Action{policy.ActRefreshProxy}},
-	})
-	if e.manager().State() != runtime.StateProxyOnly {
-		t.Errorf("after Cisco gone state = %v, want proxy-only", e.manager().State())
+	e.PushDisplay(ctx, types.NetState{CiscoActive: true})
+	if err := e.EnableVPN(ctx); err == nil {
+		t.Fatal("must refuse a competing TUN")
+	}
+	if e.StateLabel() != "proxy" {
+		t.Fatalf("proxy was lost: %s", e.StateLabel())
 	}
 }
 
@@ -288,8 +297,8 @@ func TestExecutor_Apply_NotifiesUIWithRunMode(t *testing.T) {
 		switch mm := (<-notes).(type) {
 		case notify.StatusMsg:
 			sawStatus = true
-			if mm.Mode != notify.RunOff {
-				t.Errorf("status mode = %v, want OFF (suspended)", mm.Mode)
+			if mm.Mode != notify.RunProxy {
+				t.Errorf("status mode = %v, want Proxy alongside Cisco", mm.Mode)
 			}
 		case notify.NetStateMsg:
 			sawNet = true
@@ -683,7 +692,7 @@ func TestExecutor_LaunchProxiedApp_PersistsToStore(t *testing.T) {
 		return ""
 	})
 
-	pid, err := e.LaunchProxiedApp(ctx, "/Applications/Cursor.app")
+	pid, err := e.LaunchProxiedApp(ctx, filepath.Join(t.TempDir(), "Cursor.app"))
 	if err != nil {
 		t.Fatal(err)
 	}

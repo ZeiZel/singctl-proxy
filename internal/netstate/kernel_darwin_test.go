@@ -167,3 +167,41 @@ func TestKernelRouteIndexFallback(t *testing.T) {
 		t.Fatalf("index fallback=%+v", got)
 	}
 }
+
+func TestKernelSplitDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		upperIface  string
+		scoped, own bool
+		want        string
+	}{
+		{name: "foreign tunnel without NOARP", upperIface: "utun4", want: "utun4"},
+		{name: "only lower half", want: "en0"},
+		{name: "halves on different interfaces", upperIface: "utun6", want: "en0"},
+		{name: "scoped halves", upperIface: "utun4", scoped: true, want: "en0"},
+		{name: "our tunnel is excluded", upperIface: "utun4", own: true, want: "utun4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lower := fixtureDefault("utun4", tc.scoped)
+			lower.Addrs[syscall.RTAX_NETMASK] = &route.Inet4Addr{IP: [4]byte{128, 0, 0, 0}}
+			msgs := []route.Message{fixtureDefault("en0", false), lower}
+			if tc.upperIface != "" {
+				upper := fixtureDefault(tc.upperIface, tc.scoped)
+				upper.Addrs[syscall.RTAX_DST] = &route.Inet4Addr{IP: [4]byte{128, 0, 0, 0}}
+				upper.Addrs[syscall.RTAX_NETMASK] = &route.Inet4Addr{IP: [4]byte{128, 0, 0, 0}}
+				msgs = append(msgs, upper)
+			}
+			ip := "100.64.100.6"
+			if tc.own {
+				ip = "198.18.0.1"
+			}
+			ns := (&kernelDetector{ourAddrPrefix: OurTunAddrPrefix}).snapshot(map[string]IfaceInfo{
+				"utun4": {Name: "utun4", Up: true, PointToPoint: true, IPv4: []string{ip}},
+			}, parseKernelRoutes(msgs))
+			wantActive := tc.want == "utun4" && !tc.own
+			if ns.DefaultRouteIface != tc.want || ns.PhysicalIface != "en0" || ns.CiscoActive != wantActive || ns.CiscoOwnsDefault != wantActive {
+				t.Fatalf("snapshot=%+v; want default=%s active=%v physical=en0", ns, tc.want, wantActive)
+			}
+		})
+	}
+}

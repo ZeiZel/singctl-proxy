@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"net"
 	"regexp"
+	"sort"
 	"strings"
 
 	"singctl/internal/types"
@@ -79,6 +80,41 @@ func ParseNetstatDefaults(out []byte) []RouteRow {
 		})
 	}
 	return rows
+}
+
+// A pair of unscoped /1 routes takes precedence over /0 without replacing
+// the physical default. Require both halves on the same interface; a single
+// corporate subnet or a scoped route is not a full tunnel.
+func splitDefaultInterface(halves map[string]uint8, fallback string) string {
+	var names []string
+	for name, bits := range halves {
+		if bits == 3 {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	if len(names) > 0 {
+		return names[0]
+	}
+	return fallback
+}
+
+func netstatEffectiveDefault(out []byte, fallback string) string {
+	halves := make(map[string]uint8)
+	sc := bufio.NewScanner(bytes.NewReader(out))
+	for sc.Scan() {
+		fields := strings.Fields(sc.Text())
+		if len(fields) < 4 || strings.Contains(fields[2], "I") || !strings.Contains(fields[2], "U") {
+			continue
+		}
+		switch fields[0] {
+		case "0/1", "0.0.0.0/1":
+			halves[fields[3]] |= 1
+		case "128.0/1", "128.0.0.0/1":
+			halves[fields[3]] |= 2
+		}
+	}
+	return splitDefaultInterface(halves, fallback)
 }
 
 // isTunnelName reports whether an interface name is a tunnel device.

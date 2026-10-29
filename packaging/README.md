@@ -16,7 +16,7 @@ distribution, **app sandbox off** (like clash-verge-rev).
 ```sh
 make build                       # CLI (real sing-box core, CGO)
 make app-macos                   # Singctl.app, signed at build time
-make release-macos RELEASE_VERSION=1.16.0
+make release-macos RELEASE_VERSION=1.16.1
 ```
 
 `Singctl.app` is already Developer-ID signed by `make app-macos` (manual
@@ -31,8 +31,8 @@ submit either artifact for notarization. Signing is controlled by these vars:
 | `NOTARY_PROFILE` | optional `notarytool` keychain profile; omit for the local signed release |
 | `AC_APPLE_ID` / `AC_PASSWORD` / `AC_TEAM_ID` | optional notarization credentials; use only when notarization is explicitly required |
 
-The artifacts are `dist/singctl-1.16.0.pkg` and
-`dist/singctl-1.16.0.dmg`. The release script checks that the CLI, app,
+The artifacts are `dist/singctl-1.16.1.pkg` and
+`dist/singctl-1.16.1.dmg`. The release script checks that the CLI, app,
 embedded system extension, package contents, build tags, and installer outputs
 all carry the requested version before it returns success.
 

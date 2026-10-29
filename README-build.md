@@ -49,15 +49,15 @@ Mac (обе архитектуры — clang кросс-ассемблирует
 Полный релиз собирается одной командой:
 
 ```sh
-make release-macos RELEASE_VERSION=1.16.0
+make release-macos RELEASE_VERSION=1.16.1
 ```
 
 Это стамповка версии → `make build VERSION=` → `make app-macos` → `make
 pkg-macos PKG_VERSION=` → проверка результата. На выходе:
 
 ```
-dist/singctl-1.16.0.pkg
-dist/singctl-1.16.0.dmg
+dist/singctl-1.16.1.pkg
+dist/singctl-1.16.1.dmg
 ```
 
 ### Предпосылки
@@ -107,7 +107,7 @@ artifacts».
 
 ### Нотаризация (опционально)
 
-Локальный релиз 1.16.0 выпускается с подписью Developer ID без нотаризации.
+Для подписанного релиза требуется сертификат Developer ID. Нотаризация опциональна.
 Нотаризация запускается только если задан `NOTARY_PROFILE` (keychain-профиль
 `xcrun notarytool`) либо полный набор `AC_*`. Без этих переменных шаг
 пропускается. Создать профиль можно один раз:
@@ -123,7 +123,7 @@ xcrun notarytool store-credentials <имя-профиля> \
 есть установка сама по себе ЗАПУСКАЕТ демон. Поставить без автозапуска:
 
 ```sh
-sudo installer -pkg dist/singctl-1.16.0.pkg -target /
+sudo installer -pkg dist/singctl-1.16.1.pkg -target /
 sudo launchctl bootout system /Library/LaunchDaemons/com.singctl.proxy.plist
 ```
 
@@ -181,7 +181,7 @@ productsign: error: Failed to sign the product.
 чужих машинах, для локальной установки не мешает):
 
 ```sh
-make release-macos RELEASE_VERSION=1.16.0 RELEASE_ARGS=--unsigned-installer
+make release-macos RELEASE_VERSION=1.16.1 RELEASE_ARGS=--unsigned-installer
 ```
 
 Флаги комбинируются: `RELEASE_ARGS="--skip-app --unsigned-installer"`.
@@ -189,8 +189,8 @@ make release-macos RELEASE_VERSION=1.16.0 RELEASE_ARGS=--unsigned-installer
 ### Публикация на GitHub
 
 Публичный origin проекта — `https://github.com/ZeiZel/singctl-proxy`. После
-локальной проверки артефактов создай тег `v1.16.0`, отправь его в GitHub и
-прикрепи `dist/singctl-1.16.0.pkg`, `dist/singctl-1.16.0.dmg` и контрольные
+локальной проверки артефактов создай тег `v1.16.1`, отправь его в GitHub и
+прикрепи `dist/singctl-1.16.1.pkg`, `dist/singctl-1.16.1.dmg` и контрольные
 суммы к GitHub Release. GitLab pipeline остаётся дополнительной проверкой и
 зеркальным местом хранения; он не публикует GitHub Release.
 
@@ -200,7 +200,7 @@ make release-macos RELEASE_VERSION=1.16.0 RELEASE_ARGS=--unsigned-installer
 пропустить:
 
 ```sh
-make release-macos RELEASE_VERSION=1.16.0 RELEASE_ARGS=--skip-app
+make release-macos RELEASE_VERSION=1.16.1 RELEASE_ARGS=--skip-app
 ```
 
 ## CLI-флаги
@@ -240,6 +240,16 @@ echo 'SINGCTL_KEY=vless://...' > .env && sudo singctl --headless --vpn --logs
 - **Cisco не трогаем.** Состояние Cisco определяется только пассивным наблюдением за ОС;
   бинарники Cisco (`/opt/cisco/...`) не вызываются никогда — это проверяется тестом
   `internal/arch.TestNoCiscoBinaryReferences`.
+- **При подключённом Cisco используйте Proxy.** Если Cisco появляется во время
+  работы собственного VPN singctl, singctl освобождает свой TUN и сохраняет
+  локальный HTTP/SOCKS-прокси: Chrome продолжает использовать адрес из PAC.
+  Исходящие соединения следуют системным маршрутам без привязки к Wi-Fi;
+  после подключения/отключения Cisco соединения пересоздаются. Детектор
+  учитывает как обычный default, так и пару `0.0.0.0/1` + `128.0.0.0/1`.
+  Определение пассивное: сторонний полный туннель также считается активным VPN.
+  Корпоративный VPN должен разрешать соединение с выбранным прокси-сервером;
+  если запрещён его адрес или порт, потребуется доступный сервер либо правило
+  от администратора сети.
 - Версия sing-box — **v1.12.x или v1.13.x** (проверено на 1.13.12).
 - **Feature-теги sing-box:** боевая сборка использует
   `-tags "singbox with_utls with_clash_api with_quic with_wireguard with_gvisor"`.

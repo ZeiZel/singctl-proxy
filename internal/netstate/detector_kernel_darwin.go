@@ -42,7 +42,11 @@ func (d *kernelDetector) Observe(ctx context.Context) (types.NetState, error) {
 func (d *kernelDetector) snapshot(ifaces map[string]IfaceInfo, routes []kernelRoute) types.NetState {
 	defIface := ""
 	defaults := make([]RouteRow, 0, len(routes))
+	halves := make(map[string]uint8)
 	for _, r := range routes {
+		if !r.scoped {
+			halves[r.iface] |= r.defaultHalf
+		}
 		if r.defaultRoute && !r.scoped && defIface == "" {
 			defIface = r.iface
 		}
@@ -50,6 +54,7 @@ func (d *kernelDetector) snapshot(ifaces map[string]IfaceInfo, routes []kernelRo
 			defaults = append(defaults, RouteRow{Iface: r.iface, IsIPGateway: r.gatewayIP})
 		}
 	}
+	defIface = splitDefaultInterface(halves, defIface)
 	names := make([]string, 0, len(ifaces))
 	for name := range ifaces {
 		names = append(names, name)
@@ -86,6 +91,7 @@ type kernelRoute struct {
 	defaultRoute bool
 	gatewayIP    bool
 	scoped       bool
+	defaultHalf  uint8 // 1 = 0.0.0.0/1, 2 = 128.0.0.0/1
 }
 
 func kernelRoutes() ([]kernelRoute, error) {
@@ -119,17 +125,32 @@ func parseKernelRoutes(msgs []route.Message, indexes ...map[int]string) []kernel
 			continue
 		}
 		dst, ok := rm.Addrs[syscall.RTAX_DST].(*route.Inet4Addr)
-		if !ok || dst.IP != [4]byte{} {
+		if !ok {
 			continue
 		}
 		// Darwin commonly omits RTAX_NETMASK for an implicit /0 route.
-		// If present, it must still describe /0; a non-zero mask is a
-		// more-specific route whose destination happened to be zero.
+		// Retain /0 and the two /1 halves used by full tunnels; other
+		// more-specific networks do not determine the effective default.
+		maskIP := [4]byte{}
 		if len(rm.Addrs) > syscall.RTAX_NETMASK && rm.Addrs[syscall.RTAX_NETMASK] != nil {
 			mask, ok := rm.Addrs[syscall.RTAX_NETMASK].(*route.Inet4Addr)
-			if !ok || mask.IP != [4]byte{} {
+			if !ok {
 				continue
 			}
+			maskIP = mask.IP
+		}
+		isDefault := dst.IP == [4]byte{} && maskIP == [4]byte{}
+		var half uint8
+		if maskIP == [4]byte{128, 0, 0, 0} {
+			switch dst.IP {
+			case [4]byte{}:
+				half = 1
+			case [4]byte{128, 0, 0, 0}:
+				half = 2
+			}
+		}
+		if !isDefault && half == 0 {
+			continue
 		}
 		name := ""
 		if len(rm.Addrs) > syscall.RTAX_IFP {
@@ -150,7 +171,7 @@ func parseKernelRoutes(msgs []route.Message, indexes ...map[int]string) []kernel
 		if len(rm.Addrs) > syscall.RTAX_GATEWAY {
 			_, gatewayIP = rm.Addrs[syscall.RTAX_GATEWAY].(*route.Inet4Addr)
 		}
-		out = append(out, kernelRoute{iface: name, defaultRoute: true, gatewayIP: gatewayIP, scoped: rm.Flags&syscall.RTF_IFSCOPE != 0})
+		out = append(out, kernelRoute{iface: name, defaultRoute: isDefault, defaultHalf: half, gatewayIP: gatewayIP, scoped: rm.Flags&syscall.RTF_IFSCOPE != 0})
 	}
 	return out
 }
