@@ -11,6 +11,8 @@ import "context"
 type Core interface {
 	// Start brings the instance up (opens inbounds, dials nothing yet).
 	Start(ctx context.Context) error
+	// ResetNetwork drops stale connections and cached DNS while retaining inbounds.
+	ResetNetwork()
 	// Close tears it down and (for the real core) restores routes it added.
 	Close() error
 }

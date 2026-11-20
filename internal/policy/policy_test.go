@@ -125,7 +125,7 @@ func TestDecide_Table(t *testing.T) {
 // TestDecide_Deterministic guards against any hidden nondeterminism across the
 // full input cross-product.
 func TestDecide_Deterministic(t *testing.T) {
-	modes := []Mode{ModeProxy, ModeVPN, ModeSwitching}
+	modes := []Mode{ModeOff, ModeProxy, ModeVPN, ModeSwitching}
 	states := []CiscoState{CiscoUnknown, CiscoInactive, CiscoActive}
 	intents := []UserIntent{IntentNone, IntentEnableVPN, IntentDisableVPN}
 	for _, m := range modes {
@@ -156,7 +156,7 @@ func TestDecide_Deterministic(t *testing.T) {
 // TestDecide_NeverStartsForwarderWhileCiscoActive is the safety invariant that
 // underpins the whole coexistence guarantee.
 func TestDecide_NeverStartsForwarderWhileCiscoActive(t *testing.T) {
-	modes := []Mode{ModeProxy, ModeVPN, ModeSwitching}
+	modes := []Mode{ModeOff, ModeProxy, ModeVPN, ModeSwitching}
 	intents := []UserIntent{IntentNone, IntentEnableVPN, IntentDisableVPN}
 	for _, m := range modes {
 		for _, it := range intents {

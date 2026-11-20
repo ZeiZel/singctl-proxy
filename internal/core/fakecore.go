@@ -16,6 +16,7 @@ type FakeCore struct {
 	mu         sync.Mutex
 	StartCalls int
 	CloseCalls int
+	ResetCalls int
 	running    bool
 }
 
@@ -28,6 +29,12 @@ func (f *FakeCore) Start(ctx context.Context) error {
 	}
 	f.running = true
 	return nil
+}
+
+func (f *FakeCore) ResetNetwork() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ResetCalls++
 }
 
 func (f *FakeCore) Close() error {

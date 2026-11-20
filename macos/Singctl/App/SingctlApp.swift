@@ -198,6 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         Task { @MainActor in
             do {
                 try await backend.setMode(mode)
+                store.confirmOptimisticStatus(optimisticChange)
                 store.refreshAfterMutation()
             } catch {
                 store.restoreOptimisticStatus(optimisticChange)
@@ -462,7 +463,6 @@ private struct MenuBarContentView: View {
 
     @State private var isApplyingMode = false
     @State private var modeError: String?
-    @State private var modeResyncToken = 0
 
     #if !APPSTORE
     @State private var isStartingDaemon = false
@@ -501,7 +501,7 @@ private struct MenuBarContentView: View {
 
             VStack(alignment: .leading, spacing: Spacing.xs) {
                 Text("MODE").font(.appCaption).foregroundStyle(Color.sTextDim)
-                SegmentedControl(options: modeOptions, selection: modeBinding, disabled: isApplyingMode, resyncToken: modeResyncToken)
+                SegmentedControl(options: modeOptions, selection: modeBinding, disabled: isApplyingMode)
                 if let modeError {
                     Text(modeError).font(.appCaption).foregroundStyle(Color.sDanger)
                 }
@@ -523,8 +523,8 @@ private struct MenuBarContentView: View {
     }
 
     private func applyMode(_ mode: String) {
+        guard !isApplyingMode else { return }
         if mode == "vpn", !AppPreferences.shared.confirmVPNSwitch() {
-            modeResyncToken = SegmentedControl<String>.nextResyncToken(after: modeResyncToken)
             return
         }
         isApplyingMode = true
@@ -535,9 +535,9 @@ private struct MenuBarContentView: View {
             defer { isApplyingMode = false }
             do {
                 try await backend.setMode(mode)
+                store.confirmOptimisticStatus(optimisticChange)
                 store.refreshAfterMutation()
             } catch {
-                modeResyncToken = SegmentedControl<String>.nextResyncToken(after: modeResyncToken)
                 store.restoreOptimisticStatus(optimisticChange)
                 store.refreshAfterMutation()
                 os_log(

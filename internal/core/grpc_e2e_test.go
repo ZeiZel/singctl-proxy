@@ -62,8 +62,14 @@ func TestVLESSGRPCLoopback(t *testing.T) {
   ],"final":"direct"}
 }`, socksPort, vlessPort, uuid, serviceName, outboundJSON)
 
-	startInstanceAlive(t, config)
-	if body := getThroughSocks(t, socksPort, "http://"+target+"/grpc"); body != "singctl-xhttp-ok" {
-		t.Fatalf("unexpected body through VLESS gRPC loopback: %q", body)
+	instance := startInstanceAlive(t, config)
+	checkRequest := func() {
+		t.Helper()
+		if body := getThroughSocks(t, socksPort, "http://"+target+"/grpc"); body != "singctl-xhttp-ok" {
+			t.Fatalf("unexpected body through VLESS gRPC loopback: %q", body)
+		}
 	}
+	checkRequest()
+	instance.ResetNetwork()
+	checkRequest()
 }

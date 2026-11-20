@@ -24,6 +24,8 @@ func (b *blockingCore) Start(ctx context.Context) error {
 	return nil
 }
 
+func (b *blockingCore) ResetNetwork() {}
+
 func (b *blockingCore) Close() error { return b.closeErr }
 
 type fakeBuilder struct {

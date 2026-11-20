@@ -98,6 +98,11 @@ final class LiveStore: ObservableObject {
     private var pollInFlight = false
     private var pollRequested = false
     private var statusGeneration = 0
+    private var nextOptimisticModeToken = 0
+    private var pendingOptimisticModeToken: Int?
+    /// Keeps a newer user-selected mode visible until the daemon confirms it.
+    /// A status poll queued by an earlier mutation can otherwise return the
+    /// previous mode after the optimistic update has already been published.
     #if !APPSTORE
     private var daemonIdentity: String?
     #endif
@@ -128,11 +133,11 @@ final class LiveStore: ObservableObject {
     #endif
 
     /// Captures enough state to restore a failed optimistic mode change. The
-    /// generation ensures a slower, older action cannot roll back a newer
-    /// selection made in another UI surface (dashboard vs. menu bar).
+    /// token ensures a slower, older action cannot roll back a newer selection
+    /// made in another UI surface (dashboard vs. menu bar).
     struct OptimisticStatusChange {
-        fileprivate let previousStatus: DaemonStatus
-        fileprivate let generation: Int
+        fileprivate let previousMode: String
+        fileprivate let token: Int
     }
 
     /// `backend` defaults per build flag so call sites that don't care (e.g.
@@ -230,7 +235,9 @@ final class LiveStore: ObservableObject {
     @discardableResult
     func optimisticallySetMode(_ mode: String) -> OptimisticStatusChange {
         statusGeneration += 1 // discard an older in-flight STATUS response
-        let change = OptimisticStatusChange(previousStatus: status, generation: statusGeneration)
+        nextOptimisticModeToken += 1
+        let change = OptimisticStatusChange(previousMode: status.mode, token: nextOptimisticModeToken)
+        pendingOptimisticModeToken = change.token
         status.mode = mode
         objectWillChange.send()
         return change
@@ -238,10 +245,19 @@ final class LiveStore: ObservableObject {
 
     /// Restores a failed mode change if it is still the newest one.
     func restoreOptimisticStatus(_ change: OptimisticStatusChange) {
-        guard change.generation == statusGeneration else { return }
+        guard pendingOptimisticModeToken == change.token else { return }
+        pendingOptimisticModeToken = nil
         statusGeneration += 1
-        status = change.previousStatus
+        status.mode = change.previousMode
         objectWillChange.send()
+    }
+
+    /// Marks the matching mode request as accepted. The request owner calls
+    /// this before scheduling its authoritative refresh, so a status response
+    /// cannot decide that a pending mutation completed by itself.
+    func confirmOptimisticStatus(_ change: OptimisticStatusChange) {
+        guard pendingOptimisticModeToken == change.token else { return }
+        pendingOptimisticModeToken = nil
     }
 
     /// Schedules an authoritative STATUS read without waiting for the next
@@ -303,7 +319,7 @@ final class LiveStore: ObservableObject {
         }
         let statusRequestGeneration = statusGeneration
         do {
-            let fetchedStatus = try await backend.status()
+            var fetchedStatus = try await backend.status()
             // Do not allow a STATUS reply that began before an optimistic
             // mode action to make the segmented control jump backwards.
             guard statusRequestGeneration == statusGeneration else { return }
@@ -326,6 +342,12 @@ final class LiveStore: ObservableObject {
                 nextConsolePoll = .distantPast
             }
             #endif
+            if pendingOptimisticModeToken != nil {
+                // The request that produced this response can predate the
+                // still-pending mode mutation. Keep all fresh fields while
+                // retaining the user's optimistic mode selection.
+                fetchedStatus.mode = status.mode
+            }
             if status != fetchedStatus { status = fetchedStatus }
             if !daemonRunning {
                 daemonRunning = true

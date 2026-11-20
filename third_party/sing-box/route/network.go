@@ -455,7 +455,12 @@ func (r *NetworkManager) ResetNetwork() {
 	if r.connectionManager != nil {
 		r.connectionManager.CloseAll()
 	}
+	r.ResetNetworkInterfaces()
+}
 
+// ResetNetworkInterfaces refreshes endpoint, inbound, and outbound network
+// state after tracked connections have been detached.
+func (r *NetworkManager) ResetNetworkInterfaces() {
 	for _, endpoint := range r.endpoint.Endpoints() {
 		listener, isListener := endpoint.(adapter.InterfaceUpdateListener)
 		if isListener {

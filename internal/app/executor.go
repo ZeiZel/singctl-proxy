@@ -1153,11 +1153,15 @@ func (e *Executor) CoexistStatus() (ciscoActive, bypass bool, physIface string) 
 
 // Mode maps the manager state to the policy mode (the monitor's modeFn).
 func (e *Executor) Mode() policy.Mode {
-	m := e.manager()
-	if m != nil && m.State() == runtime.StateVPN {
-		return policy.ModeVPN
+	if m := e.manager(); m != nil {
+		switch m.State() {
+		case runtime.StateVPN:
+			return policy.ModeVPN
+		case runtime.StateProxyOnly, runtime.StateSuspended:
+			return policy.ModeProxy
+		}
 	}
-	return policy.ModeProxy
+	return policy.ModeOff
 }
 
 // StateLabel returns a short human label of the current runtime state, for the

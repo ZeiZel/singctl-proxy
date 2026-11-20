@@ -28,6 +28,7 @@ type Monitor struct {
 	observationFailed bool
 	det               Detector
 	deb               *Debouncer
+	defaultRoute      *debouncer[string]
 	modeFn            func() policy.Mode
 	boundFn           func() bool // proxy egress currently pinned to the physical NIC
 	out               chan<- Event
@@ -49,12 +50,13 @@ func (m *Monitor) SetOnPoll(fn func(types.NetState)) { m.onPoll = fn }
 // nil (treated as always-false); out receives actionable events.
 func New(det Detector, threshold int, modeFn func() policy.Mode, boundFn func() bool, out chan<- Event) *Monitor {
 	return &Monitor{
-		det:       det,
-		deb:       NewDebouncer(threshold),
-		modeFn:    modeFn,
-		boundFn:   boundFn,
-		out:       out,
-		prevCisco: policy.CiscoUnknown,
+		det:          det,
+		deb:          NewDebouncer(threshold),
+		defaultRoute: newDebouncer[string](threshold),
+		modeFn:       modeFn,
+		boundFn:      boundFn,
+		out:          out,
+		prevCisco:    policy.CiscoUnknown,
 	}
 }
 
@@ -95,7 +97,7 @@ func (m *Monitor) Run(ctx context.Context, tick <-chan time.Time, events <-chan 
 		} else {
 			retryInterval = minPollInterval
 		}
-		if pending || m.deb.Pending() {
+		if pending {
 			if confirm == nil {
 				confirm = time.NewTimer(retryInterval)
 			} else {
@@ -140,7 +142,7 @@ func (m *Monitor) poll(ctx context.Context) bool {
 	ns, err := m.det.Observe(ctx)
 	if err != nil {
 		m.observationFailed = true
-		return false
+		return m.deb.Pending() || m.defaultRoute.Pending()
 	}
 	if m.onPoll != nil {
 		m.onPoll(ns)
@@ -152,6 +154,10 @@ func (m *Monitor) poll(ctx context.Context) bool {
 	}
 	committed, _ := m.deb.Observe(raw)
 
+	// Cisco can acquire or release the effective default after its interface
+	// is already up. Debounce that route independently of the connection flag.
+	// An empty route is a valid transient observation during reconnection.
+	_, defaultChanged := m.defaultRoute.Observe(ns.DefaultRouteIface)
 	physChanged := false
 	if ns.PhysicalIface != "" {
 		if m.havePhys && ns.PhysicalIface != m.prevPhys {
@@ -166,13 +172,14 @@ func (m *Monitor) poll(ctx context.Context) bool {
 		boundPhys = m.boundFn()
 	}
 	res := policy.Decide(policy.DecideInput{
-		Mode:             m.modeFn(),
-		PrevCisco:        m.prevCisco,
-		NewCisco:         committed,
-		Intent:           policy.IntentNone,
-		PhysIfaceChanged: physChanged,
-		ProxyBoundPhys:   boundPhys,
-		CiscoOwnsDefault: ns.CiscoOwnsDefault,
+		Mode:                m.modeFn(),
+		PrevCisco:           m.prevCisco,
+		NewCisco:            committed,
+		Intent:              policy.IntentNone,
+		PhysIfaceChanged:    physChanged,
+		DefaultRouteChanged: defaultChanged && ns.DefaultRouteIface != "",
+		ProxyBoundPhys:      boundPhys,
+		CiscoOwnsDefault:    ns.CiscoOwnsDefault,
 	})
 	m.prevCisco = committed
 
@@ -182,7 +189,7 @@ func (m *Monitor) poll(ctx context.Context) bool {
 		case <-ctx.Done():
 		}
 	}
-	return m.deb.Pending()
+	return m.deb.Pending() || m.defaultRoute.Pending()
 }
 
 func actionable(r policy.DecisionResult) bool {

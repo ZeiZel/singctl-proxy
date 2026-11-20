@@ -9,17 +9,21 @@ package core
 
 import (
 	"context"
+	"sync"
 
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/json"
 
 	"singctl/internal/singboxext"
 )
 
 type boxCore struct {
-	instance *box.Box
+	instance  *box.Box
+	lifecycle sync.Mutex
+	closed    bool
 }
 
 // newBoxCore parses a sing-box JSON config and constructs a (not-yet-started)
@@ -49,7 +53,29 @@ func newBoxCore(ctx context.Context, label string, configJSON []byte) (Core, err
 
 func (c *boxCore) Start(ctx context.Context) error { return c.instance.Start() }
 
-func (c *boxCore) Close() error { return c.instance.Close() }
+// Close may run concurrently with a queued monitor event during MODE off.
+func (c *boxCore) ResetNetwork() {
+	c.lifecycle.Lock()
+	if c.closed {
+		c.lifecycle.Unlock()
+		return
+	}
+	closers := c.instance.ResetNetworkDetached()
+	c.lifecycle.Unlock()
+	for _, closer := range closers {
+		common.Close(closer)
+	}
+}
+
+func (c *boxCore) Close() error {
+	c.lifecycle.Lock()
+	defer c.lifecycle.Unlock()
+	if c.closed {
+		return nil
+	}
+	c.closed = true
+	return c.instance.Close()
+}
 
 // NewFactory returns the real sing-box-backed Factory.
 func NewFactory() Factory { return newBoxCore }

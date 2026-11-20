@@ -131,7 +131,7 @@ func startXray(t *testing.T, bin string, port int, useTLS bool) {
 
 // startInstanceAlive builds and starts a sing-box instance, leaving it running
 // for the duration of the subtest (startInstance closes it immediately).
-func startInstanceAlive(t *testing.T, data []byte) {
+func startInstanceAlive(t *testing.T, data []byte) Core {
 	t.Helper()
 	core, err := newBoxCore(context.Background(), "e2e", data)
 	if err != nil {
@@ -141,6 +141,7 @@ func startInstanceAlive(t *testing.T, data []byte) {
 		t.Fatalf("start core: %v\n%s", err, data)
 	}
 	t.Cleanup(func() { _ = core.Close() })
+	return core
 }
 
 // startTargetServer is the origin the tunnelled request finally reaches.

@@ -49,15 +49,15 @@ Mac (обе архитектуры — clang кросс-ассемблирует
 Полный релиз собирается одной командой:
 
 ```sh
-make release-macos RELEASE_VERSION=1.16.1
+make release-macos RELEASE_VERSION=1.16.2
 ```
 
 Это стамповка версии → `make build VERSION=` → `make app-macos` → `make
 pkg-macos PKG_VERSION=` → проверка результата. На выходе:
 
 ```
-dist/singctl-1.16.1.pkg
-dist/singctl-1.16.1.dmg
+dist/singctl-1.16.2.pkg
+dist/singctl-1.16.2.dmg
 ```
 
 ### Предпосылки
@@ -123,7 +123,7 @@ xcrun notarytool store-credentials <имя-профиля> \
 есть установка сама по себе ЗАПУСКАЕТ демон. Поставить без автозапуска:
 
 ```sh
-sudo installer -pkg dist/singctl-1.16.1.pkg -target /
+sudo installer -pkg dist/singctl-1.16.2.pkg -target /
 sudo launchctl bootout system /Library/LaunchDaemons/com.singctl.proxy.plist
 ```
 
@@ -181,7 +181,7 @@ productsign: error: Failed to sign the product.
 чужих машинах, для локальной установки не мешает):
 
 ```sh
-make release-macos RELEASE_VERSION=1.16.1 RELEASE_ARGS=--unsigned-installer
+make release-macos RELEASE_VERSION=1.16.2 RELEASE_ARGS=--unsigned-installer
 ```
 
 Флаги комбинируются: `RELEASE_ARGS="--skip-app --unsigned-installer"`.
@@ -189,8 +189,8 @@ make release-macos RELEASE_VERSION=1.16.1 RELEASE_ARGS=--unsigned-installer
 ### Публикация на GitHub
 
 Публичный origin проекта — `https://github.com/ZeiZel/singctl-proxy`. После
-локальной проверки артефактов создай тег `v1.16.1`, отправь его в GitHub и
-прикрепи `dist/singctl-1.16.1.pkg`, `dist/singctl-1.16.1.dmg` и контрольные
+локальной проверки артефактов создай тег `v1.16.2`, отправь его в GitHub и
+прикрепи `dist/singctl-1.16.2.pkg`, `dist/singctl-1.16.2.dmg` и контрольные
 суммы к GitHub Release. GitLab pipeline остаётся дополнительной проверкой и
 зеркальным местом хранения; он не публикует GitHub Release.
 
@@ -200,7 +200,7 @@ make release-macos RELEASE_VERSION=1.16.1 RELEASE_ARGS=--unsigned-installer
 пропустить:
 
 ```sh
-make release-macos RELEASE_VERSION=1.16.1 RELEASE_ARGS=--skip-app
+make release-macos RELEASE_VERSION=1.16.2 RELEASE_ARGS=--skip-app
 ```
 
 ## CLI-флаги

@@ -171,6 +171,55 @@ func TestMonitor_PhysChangeRefreshInVPN(t *testing.T) {
 	}
 }
 
+// A Cisco connection can install its tunnel first and finish changing the
+// default route later. Each confirmed path change must refresh a running
+// proxy even if Cisco stays connected on the same physical NIC throughout.
+func TestMonitor_CiscoDefaultRouteChanges(t *testing.T) {
+	for _, initialMode := range []policy.Mode{policy.ModeOff, policy.ModeProxy} {
+		ctx := context.Background()
+		det := &mockDetector{}
+		out := make(chan Event, 8)
+		mode := initialMode
+		m := New(det, 2, func() policy.Mode { return mode }, nil, out)
+		sample := func(active bool, route string) {
+			det.set(types.NetState{CiscoActive: active, CiscoOwnsDefault: active && route == "utun4", DefaultRouteIface: route, PhysicalIface: "en0"})
+			m.poll(ctx)
+		}
+		expect := func(n int) {
+			t.Helper()
+			if len(out) != n {
+				t.Fatalf("initial mode %v: got %d events, want %d", initialMode, len(out), n)
+			}
+			for len(out) > 0 {
+				if e := <-out; !hasAction(e, policy.ActRefreshProxy) {
+					t.Fatalf("unexpected actions: %v", e.Decision.Actions)
+				}
+			}
+		}
+
+		sample(false, "en0")
+		sample(true, "en0")
+		sample(true, "en0")
+		if initialMode == policy.ModeProxy {
+			expect(1)
+		} else {
+			expect(0)
+			mode = policy.ModeProxy // Cisco was already up when Proxy started
+		}
+		sample(true, "utun4")
+		sample(true, "en0") // transient route
+		expect(0)
+		for _, route := range []string{"utun4", "en0"} {
+			sample(true, route)
+			expect(0)
+			sample(true, route)
+			expect(1)
+			sample(true, route)
+			expect(0)
+		}
+	}
+}
+
 func TestMonitor_Run_StopsOnContextCancel(t *testing.T) {
 	out := make(chan Event, 8)
 	det := &mockDetector{}

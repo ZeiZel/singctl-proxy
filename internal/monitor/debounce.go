@@ -2,28 +2,31 @@ package monitor
 
 import "singctl/internal/policy"
 
-// Debouncer suppresses Cisco-state flapping: a flip is committed only after
-// `threshold` consecutive identical observations. The very first observation is
-// committed immediately (initial sync) but reported as not-changed, so startup
-// produces no spurious action.
-type Debouncer struct {
-	threshold int
-	committed policy.CiscoState
-	pending   policy.CiscoState
-	count     int
-}
+// Debouncer tracks the confirmed Cisco connection state.
+type Debouncer = debouncer[policy.CiscoState]
 
 func NewDebouncer(threshold int) *Debouncer {
-	if threshold < 1 {
-		threshold = 1
-	}
-	return &Debouncer{threshold: threshold, committed: policy.CiscoUnknown}
+	return newDebouncer[policy.CiscoState](threshold)
+}
+
+// Consecutive observations confirm a change. The first is a baseline.
+type debouncer[T comparable] struct {
+	threshold   int
+	initialized bool
+	committed   T
+	pending     T
+	count       int
+}
+
+func newDebouncer[T comparable](threshold int) *debouncer[T] {
+	return &debouncer[T]{threshold: max(1, threshold)}
 }
 
 // Observe feeds one raw observation and returns the committed state and whether
 // it just changed.
-func (d *Debouncer) Observe(raw policy.CiscoState) (committed policy.CiscoState, changed bool) {
-	if d.committed == policy.CiscoUnknown {
+func (d *debouncer[T]) Observe(raw T) (committed T, changed bool) {
+	if !d.initialized {
+		d.initialized = true
 		d.committed, d.pending, d.count = raw, raw, 0
 		return d.committed, false
 	}
@@ -45,9 +48,9 @@ func (d *Debouncer) Observe(raw policy.CiscoState) (committed policy.CiscoState,
 }
 
 // Committed returns the current committed state.
-func (d *Debouncer) Committed() policy.CiscoState { return d.committed }
+func (d *debouncer[T]) Committed() T { return d.committed }
 
 // Pending reports whether a second observation is required to commit a flip.
-func (d *Debouncer) Pending() bool {
-	return d.committed != policy.CiscoUnknown && d.pending != d.committed
+func (d *debouncer[T]) Pending() bool {
+	return d.initialized && d.pending != d.committed
 }
