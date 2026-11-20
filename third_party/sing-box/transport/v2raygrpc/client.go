@@ -26,6 +26,7 @@ var _ adapter.V2RayClientTransport = (*Client)(nil)
 
 type Client struct {
 	ctx         context.Context
+	networkCtx  context.Context // replaced under connAccess on network changes
 	cancel      context.CancelFunc
 	dialer      N.Dialer
 	serverAddr  string
@@ -69,7 +70,8 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	dialOptions = append(dialOptions, grpc.WithReturnConnectionError(), grpc.FailOnNonTempDialError(true), grpc.WithBlock())
 	clientCtx, cancel := context.WithCancel(ctx)
 	return &Client{
-		ctx:         clientCtx,
+		ctx:         ctx,
+		networkCtx:  clientCtx,
 		cancel:      cancel,
 		dialer:      dialer,
 		serverAddr:  serverAddr.String(),
@@ -88,8 +90,11 @@ func (c *Client) connect(ctx context.Context) (*grpc.ClientConn, error) {
 	}
 	// Do not hold connAccess while dialing: the caller's probe context must be
 	// able to cancel even when another connection attempt is in progress.
+	c.connAccess.Lock()
+	networkCtx := c.networkCtx
+	c.connAccess.Unlock()
 	dialCtx, stop := context.WithCancel(ctx)
-	lifetimeStop := context.AfterFunc(c.ctx, stop)
+	lifetimeStop := context.AfterFunc(networkCtx, stop)
 	defer func() { lifetimeStop(); stop() }()
 	conn, err := grpc.DialContext(dialCtx, c.serverAddr, c.dialOptions...)
 	if err != nil {
@@ -100,6 +105,10 @@ func (c *Client) connect(ctx context.Context) (*grpc.ClientConn, error) {
 	if c.closed.Load() {
 		_ = conn.Close()
 		return nil, errors.New("grpc client is closed")
+	}
+	if networkCtx != c.networkCtx {
+		_ = conn.Close()
+		return nil, context.Canceled
 	}
 	current := c.conn.Load()
 	if current != nil && current.GetState() != connectivity.Shutdown {
@@ -125,12 +134,28 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	return NewGRPCConn(stream, cancel), nil
 }
 
+func (c *Client) InterfaceUpdated() {
+	_ = c.closeConnections(false)
+}
+
 func (c *Client) Close() error {
+	return c.closeConnections(true)
+}
+
+func (c *Client) closeConnections(permanent bool) error {
 	c.connAccess.Lock()
-	defer c.connAccess.Unlock()
-	c.closed.Store(true)
+	if c.closed.Load() {
+		c.connAccess.Unlock()
+		return nil
+	}
 	c.cancel()
+	if permanent {
+		c.closed.Store(true)
+	} else {
+		c.networkCtx, c.cancel = context.WithCancel(c.ctx)
+	}
 	conn := c.conn.Swap(nil)
+	c.connAccess.Unlock()
 	if conn != nil {
 		return conn.Close()
 	}

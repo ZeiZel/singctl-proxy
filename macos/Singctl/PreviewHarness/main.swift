@@ -11,6 +11,10 @@ import SwiftUI
 @main
 struct SingctlPreviewMain {
     static func main() {
+        if CommandLine.arguments.contains("--mode-switch-checks") {
+            runModeSwitchChecks()
+            return
+        }
         if CommandLine.arguments.contains("--energy-checks") {
             runEnergyChecks()
             return
@@ -82,6 +86,89 @@ struct SingctlPreviewMain {
             fputs("SingctlPreview: \(error.localizedDescription)\n", stderr)
             exit(1)
         }
+    }
+
+    /// Exercise the first Dashboard action in a real hosting view on the
+    /// main run loop. All mode and console requests stay in this process.
+    @MainActor
+    private static func runModeSwitchChecks() {
+        // A re-entrant layout can trap the main thread inside AppKit, even
+        // preventing a test timeout on the main run loop from firing.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 10) {
+            fputs("Dashboard mode switch checks stalled\n", stderr)
+            exit(1)
+        }
+        let backend = DemoBackend()
+        backend.currentStatus.mode = "off"
+        var modeRequests: [String] = []
+        var pendingMode: CheckedContinuation<Void, Error>?
+        backend.onSetMode = { mode in
+            modeRequests.append(mode)
+            try await withCheckedThrowingContinuation { pendingMode = $0 }
+        }
+        let store = LiveStore(backend: backend, consoleProvider: { _ in [] })
+        let app = NSApplication.shared
+        app.setActivationPolicy(.prohibited)
+        let hosting = NSHostingView(rootView: RootView(initialSection: .dashboard)
+            .environmentObject(store)
+            .environment(\.backend, backend))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 800),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = hosting
+        window.layoutIfNeeded()
+
+        func modeControl(in view: NSView) -> NSSegmentedControl? {
+            if let picker = view as? NSSegmentedControl,
+               picker.segmentCount == 3, picker.label(forSegment: 1) == "Proxy" { return picker }
+            return view.subviews.lazy.compactMap { modeControl(in: $0) }.first
+        }
+        func waitUntil(_ condition: () -> Bool) {
+            let deadline = Date(timeIntervalSinceNow: 4)
+            while !condition() && Date() < deadline {
+                RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+                window.layoutIfNeeded()
+            }
+            precondition(condition(), "Timed out waiting for Dashboard")
+        }
+
+        Task { await store.pollOnceForHarness() }
+        waitUntil { store.daemonRunning && store.status.mode == "off" && modeControl(in: hosting) != nil }
+        let picker = modeControl(in: hosting)!
+        precondition(picker.selectedSegment == 0 && window.makeFirstResponder(picker))
+        func choose(_ index: Int) {
+            picker.selectedSegment = index
+            precondition(picker.sendAction(picker.action, to: picker.target))
+        }
+        choose(1)
+        waitUntil { pendingMode != nil && store.status.mode == "proxy" && !picker.isEnabled(forSegment: 0) }
+        precondition(picker.isEnabled, "Disabling the focused picker enters AppKit focus traversal")
+        precondition(picker.isEnabled(forSegment: 1) && !picker.isEnabled(forSegment: 2))
+        choose(0) // Simulate a second action while the mode request is suspended.
+        pendingMode!.resume()
+        pendingMode = nil
+        waitUntil { backend.currentStatus.mode == "proxy" && picker.selectedSegment == 1 && picker.isEnabled(forSegment: 0) }
+        precondition(modeRequests == ["proxy"])
+
+        choose(0)
+        waitUntil { pendingMode != nil && store.status.mode == "off" }
+        pendingMode!.resume(throwing: CocoaError(.userCancelled))
+        pendingMode = nil
+        waitUntil { store.status.mode == "proxy" && picker.selectedSegment == 1 }
+        precondition(modeRequests == ["proxy", "off"])
+        backend.currentStatus.mode = "off"
+        store.resetDueTimesForHarness()
+        Task { await store.pollOnceForHarness() }
+        waitUntil { store.status.mode == "off" && picker.selectedSegment == 0 }
+
+        // The confirmation dialog can decline a selection without changing
+        // the bound value. Exercise that path without opening a modal alert.
+        let unchanged = Binding(get: { "off" }, set: { _ in })
+        let rejected = SegmentedControl(options: [.init("off", "Off"), .init("vpn", "VPN")], selection: unchanged)
+        let native = NSSegmentedControl(labels: ["Off", "VPN"], trackingMode: .selectOne, target: nil, action: nil)
+        native.selectedSegment = 1
+        rejected.makeCoordinator().choose(native)
+        precondition(native.selectedSegment == 0)
+        print("Dashboard mode switch checks passed")
     }
 
     @MainActor
@@ -185,25 +272,6 @@ struct SingctlPreviewMain {
             precondition(restartLogs.lineCountForHarness == 2)
             precondition(restartSince == [0, 0])
 
-            let token = SegmentedControl<String>.nextResyncToken(after: 4)
-            precondition(token == 5)
-            let options = [SegmentedOption("off", "Off"), SegmentedOption("proxy", "Proxy")]
-            precondition(!SegmentedControl<String>.snapshotsEqual(
-                oldOptions: options, oldSelection: "off", oldDisabled: false, oldResyncToken: 0,
-                newOptions: options, newSelection: "proxy", newDisabled: false, newResyncToken: 0
-            ))
-            precondition(!SegmentedControl<String>.snapshotsEqual(
-                oldOptions: options, oldSelection: "off", oldDisabled: false, oldResyncToken: 0,
-                newOptions: options, newSelection: "off", newDisabled: false, newResyncToken: token
-            ))
-            var externalSelection = "off"
-            var setterValue: String?
-            let binding = Binding<String>(
-                get: { externalSelection },
-                set: { value in externalSelection = value; setterValue = value }
-            )
-            binding.wrappedValue = "proxy"
-            precondition(externalSelection == "proxy" && setterValue == "proxy")
             _ = cancellable
             print("Energy semantic checks passed")
             exit(0)
@@ -322,6 +390,7 @@ private enum WindowCapture {
 
 /// Fixed, in-memory data for every Backend requirement. Methods are async so
 /// the genuine screens exercise their normal read paths, but none performs IO.
+@MainActor
 private final class DemoBackend: Backend {
     private var didReadSettings = false
     private var didReadSystemProxy = false
@@ -364,7 +433,11 @@ private final class DemoBackend: Backend {
     private var latencyContinuation: CheckedContinuation<Latency, Never>?
 
     func status() async throws -> DaemonStatus { currentStatus }
-    func setMode(_ mode: String) async throws {}
+    var onSetMode: ((String) async throws -> Void)?
+    func setMode(_ mode: String) async throws {
+        try await onSetMode?(mode)
+        currentStatus.mode = mode
+    }
     func stop() async throws {}
     func traffic() async throws -> Traffic {
         trafficCalls += 1

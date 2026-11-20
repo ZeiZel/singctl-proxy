@@ -27,8 +27,7 @@ type Client struct {
 	ctx        context.Context
 	dialer     N.Dialer
 	serverAddr M.Socksaddr
-	transport  http.RoundTripper
-	http2      bool
+	transport  *http2.Transport // nil for HTTP/1, which dials a fresh stream directly
 	requestURL url.URL
 	host       []string
 	method     string
@@ -36,14 +35,8 @@ type Client struct {
 }
 
 func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayHTTPOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
-	var transport http.RoundTripper
-	if tlsConfig == nil {
-		transport = &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return dialer.DialContext(ctx, network, M.ParseSocksaddr(addr))
-			},
-		}
-	} else {
+	var transport *http2.Transport
+	if tlsConfig != nil {
 		if len(tlsConfig.NextProtos()) == 0 {
 			tlsConfig.SetNextProtos([]string{http2.NextProtoTLS})
 		}
@@ -83,12 +76,11 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		method:     options.Method,
 		headers:    options.Headers.Build(),
 		transport:  transport,
-		http2:      tlsConfig != nil,
 	}, nil
 }
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
-	if !c.http2 {
+	if c.transport == nil {
 		return c.dialHTTP(ctx)
 	} else {
 		return c.dialHTTP2(ctx)
@@ -152,6 +144,10 @@ func (c *Client) dialHTTP2(ctx context.Context) (net.Conn, error) {
 }
 
 func (c *Client) Close() error {
-	c.transport = ResetTransport(c.transport)
+	if c.transport != nil {
+		// ResetTransport closes the HTTP/2 pool in place. Keep the pointer
+		// immutable so dials can read it during a network change.
+		ResetTransport(c.transport)
+	}
 	return nil
 }

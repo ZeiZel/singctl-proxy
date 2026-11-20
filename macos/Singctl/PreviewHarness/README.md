@@ -20,12 +20,18 @@ Run the production-source energy harness from the same build product:
 /tmp/singctl-dark-preview-build/Build/Products/Debug/SingctlPreview --energy-checks
 ```
 
-The harness uses an in-memory `Backend` and the real `LiveStore`,
-`LogsModel`, and segmented-control implementation. It checks hidden-window
+The harness uses an in-memory `Backend` and the real `LiveStore` and
+`LogsModel`. It checks hidden-window
 backend gating, publication before a suspended latency request, zero-rate
 samples, retention and draining of more than 2,000 hidden console lines, and
-rejected picker resynchronisation. It does not access a daemon, control
+daemon restart handling. It does not access a daemon, control
 socket, network, or proxy settings.
+
+To exercise the first Dashboard mode switch on macOS, run
+`SingctlPreview --mode-switch-checks` from the build products directory.
+The fixture focuses the real mode selector in a hidden window and uses an
+in-memory backend to check the first switch, repeated input, rejection and
+rollback after failure.
 
 The control-client lifecycle fixture is a separate Foundation-only executable;
 it injects endpoint discovery and transport and never opens a socket:

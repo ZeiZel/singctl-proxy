@@ -394,33 +394,15 @@ func (m *Manager) UnbindProxy(ctx context.Context) error {
 	})
 }
 
-// RefreshProxy re-dials the proxy upstream by recreating it with the same
-// binding (rule c: reconnect after Cisco turns off). Accepts the sub-second
-// listener gap (D3/R2).
+// RefreshProxy discards connections and DNS cached on the old network.
+// Keep the loopback listeners (and selector state) live across route changes.
 func (m *Manager) RefreshProxy(ctx context.Context) error {
 	return m.transition("refresh proxy", func(gen uint64) error {
 		m.mu.Lock()
-		if m.proxy == nil {
-			m.mu.Unlock()
-			return fmt.Errorf("refresh: proxy not running")
-		}
-		bound := m.bound
+		proxy := m.proxy
 		m.mu.Unlock()
-		if err := m.recreateProxy(ctx, bound, gen); err != nil {
-			m.mu.Lock()
-			restored := m.proxy != nil
-			var fwd core.Core
-			if m.gen == gen && !restored {
-				fwd = m.fwd
-				m.fwd = nil
-				m.state = StateStopped
-				m.bound = ""
-			}
-			m.mu.Unlock()
-			if !restored && fwd != nil {
-				_ = fwd.Close()
-			}
-			return err
+		if proxy != nil {
+			proxy.ResetNetwork()
 		}
 		return nil
 	})

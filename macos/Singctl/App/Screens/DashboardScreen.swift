@@ -18,7 +18,6 @@ struct DashboardScreen: View {
 
     @State private var isApplyingMode = false
     @State private var modeError: String?
-    @State private var modeResyncToken = 0
 
     /// F6 item 3's fix: the traffic empty state used to say "Enable the
     /// Clash API in Settings" purely from `store.trafficSamples.isEmpty`,
@@ -91,7 +90,7 @@ struct DashboardScreen: View {
     private var modeSection: some View {
         Card(title: "Mode") {
             VStack(alignment: .leading, spacing: Spacing.md) {
-                SegmentedControl(options: modeOptions, selection: modeBinding, disabled: isApplyingMode, resyncToken: modeResyncToken)
+                SegmentedControl(options: modeOptions, selection: modeBinding, disabled: isApplyingMode)
 
                 if let modeError {
                     Text(modeError).font(.appBody).foregroundStyle(Color.sDanger)
@@ -120,11 +119,11 @@ struct DashboardScreen: View {
     }
 
     private func applyMode(_ mode: String) {
+        guard !isApplyingMode else { return }
         // VPN mode reroutes ALL system traffic, not just proxy-aware apps —
         // ask first, unless the user turned that confirmation off in
         // Settings → General (see AppPreferences.swift).
         if mode == "vpn", !AppPreferences.shared.confirmVPNSwitch() {
-            modeResyncToken = SegmentedControl<String>.nextResyncToken(after: modeResyncToken)
             return
         }
         isApplyingMode = true
@@ -136,7 +135,6 @@ struct DashboardScreen: View {
                 try await backend.setMode(mode)
                 store.refreshAfterMutation()
             } catch {
-                modeResyncToken = SegmentedControl<String>.nextResyncToken(after: modeResyncToken)
                 store.restoreOptimisticStatus(optimisticChange)
                 store.refreshAfterMutation()
                 modeError = error.localizedDescription

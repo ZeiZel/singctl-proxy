@@ -231,50 +231,27 @@ func TestManager_ForwarderCrash_FallsBackToProxyOnly(t *testing.T) {
 	}
 }
 
-func TestManager_RefreshProxy_RecreatesSameBinding(t *testing.T) {
+func TestManager_RefreshProxy_KeepsLoopbackListeners(t *testing.T) {
 	m, ff, _, _, _ := newTestManager(t)
 	ctx := context.Background()
-	_ = m.StartProxy(ctx)
+	if err := m.StartProxy(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ff.NewErrOn["proxy"] = errors.New("replacement listener unavailable")
 
 	if err := m.RefreshProxy(ctx); err != nil {
 		t.Fatalf("RefreshProxy: %v", err)
 	}
 	proxies := ff.BuiltFor("proxy")
-	if len(proxies) != 2 {
-		t.Fatalf("proxy cores = %d, want 2 (refresh recreates)", len(proxies))
-	}
-	if proxies[0].Running() {
-		t.Error("old proxy core should be closed after refresh")
-	}
-	if !proxies[1].Running() || string(proxies[1].Config) != `{"proxy":""}` {
-		t.Error("refreshed proxy should be running with same (unbound) config")
+	if len(proxies) != 1 || !proxies[0].Running() || proxies[0].CloseCalls != 0 || proxies[0].ResetCalls != 1 {
+		t.Fatalf("refresh must reset network state on the original, still-running proxy: %+v", proxies)
 	}
 	if m.State() != StateProxyOnly {
 		t.Errorf("state = %v, want proxy-only", m.State())
 	}
 }
 
-func TestManager_RefreshProxy_TransientFailureRestoresProxy(t *testing.T) {
-	m, ff, _, _, _ := newTestManager(t)
-	ctx := context.Background()
-	if err := m.StartProxy(ctx); err != nil {
-		t.Fatal(err)
-	}
-	old := ff.BuiltFor("proxy")[0]
-	// A permanent failure leaves the manager accurately stopped.
-	ff.NewErrOn["proxy"] = errors.New("temporary proxy start failure")
-	if err := m.RefreshProxy(ctx); err == nil {
-		t.Fatal("RefreshProxy should report replacement failure")
-	}
-	if m.State() != StateStopped || m.BoundInterface() != "" {
-		t.Fatalf("failed refresh changed state: state=%v bound=%q", m.State(), m.BoundInterface())
-	}
-	if old.Running() {
-		t.Fatal("old proxy must be closed after replacement and restore failure")
-	}
-}
-
-func TestManager_RefreshProxy_OneShotFailureRestoresListener(t *testing.T) {
+func TestManager_RecreateProxy_OneShotFailureRestoresListener(t *testing.T) {
 	_, _, b, p, r := newTestManager(t)
 	ff := core.NewFakeFactory()
 	calls := 0
@@ -292,11 +269,11 @@ func TestManager_RefreshProxy_OneShotFailureRestoresListener(t *testing.T) {
 	if err := m.StartProxy(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.RefreshProxy(ctx); err == nil {
-		t.Fatal("RefreshProxy should report the failed replacement")
+	if err := m.recreateProxy(ctx, "", m.gen); err == nil {
+		t.Fatal("recreateProxy should report the failed replacement")
 	}
 	if m.State() != StateProxyOnly || m.BoundInterface() != "" {
-		t.Fatalf("state after restored refresh = %v bound=%q", m.State(), m.BoundInterface())
+		t.Fatalf("state after restoring listener = %v bound=%q", m.State(), m.BoundInterface())
 	}
 	proxies := ff.BuiltFor("proxy")
 	if len(proxies) != 2 || !proxies[1].Running() {
@@ -488,4 +465,5 @@ func TestManager_StopForwarder_TimesOut(t *testing.T) {
 type closeBlockingCore struct{}
 
 func (c *closeBlockingCore) Start(ctx context.Context) error { return nil }
+func (c *closeBlockingCore) ResetNetwork()                   {}
 func (c *closeBlockingCore) Close() error                    { select {} }

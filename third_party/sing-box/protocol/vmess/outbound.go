@@ -106,9 +106,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 }
 
 func (h *Outbound) InterfaceUpdated() {
-	if h.transport != nil {
-		h.transport.Close()
-	}
+	adapter.ResetV2RayClientTransport(h.transport)
 	if h.multiplexDialer != nil {
 		h.multiplexDialer.Reset()
 	}

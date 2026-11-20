@@ -10,6 +10,7 @@ const (
 	ModeProxy     Mode = iota // proxy-only (default)
 	ModeVPN                   // forwarder up
 	ModeSwitching             // in transition (inert to observations)
+	ModeOff                   // no running core
 )
 
 // CiscoState is the debounced Cisco connection state. Unknown only before the
@@ -52,11 +53,12 @@ const (
 
 // DecideInput is the full input to a decision.
 type DecideInput struct {
-	Mode             Mode
-	PrevCisco        CiscoState
-	NewCisco         CiscoState
-	Intent           UserIntent
-	PhysIfaceChanged bool
+	Mode                Mode
+	PrevCisco           CiscoState
+	NewCisco            CiscoState
+	Intent              UserIntent
+	PhysIfaceChanged    bool
+	DefaultRouteChanged bool
 	// ProxyBoundPhys reports a stale physical bind in proxy-only mode, which
 	// must be released even if no Cisco transition was observed.
 	ProxyBoundPhys bool
@@ -82,8 +84,9 @@ func only(mode Mode, acts ...Action) DecisionResult {
 }
 
 // Decide computes the actions and next mode. User intent takes precedence over
-// observation-driven transitions. Proxy refreshes require a concrete Cisco
-// edge. Releasing a competing TUN is level-triggered, including at startup.
+// observation-driven transitions. Proxy refreshes follow either a confirmed Cisco
+// transition or a change of effective route. Releasing a competing TUN is
+// level-triggered, including at startup.
 func Decide(in DecideInput) DecisionResult {
 	// 1. Explicit user intent.
 	switch in.Intent {
@@ -125,7 +128,7 @@ func Decide(in DecideInput) DecisionResult {
 		// en0. In every observed case riding the default route is correct, so we
 		// never bind; if we somehow hold a stale bind, release it here.
 		return only(ModeProxy, ActUnbindProxy)
-	case in.Mode == ModeProxy && ciscoChanged:
+	case in.Mode == ModeProxy && (ciscoChanged || in.DefaultRouteChanged):
 		// Existing upstream connections (including multiplexed transports) may
 		// still belong to the old network. Recreate them after the debounced
 		// transition, without binding to a NIC or changing any VPN routes.
