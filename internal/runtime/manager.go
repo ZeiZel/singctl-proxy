@@ -399,6 +399,10 @@ func (m *Manager) UnbindProxy(ctx context.Context) error {
 func (m *Manager) RefreshProxy(ctx context.Context) error {
 	return m.transition("refresh proxy", func(gen uint64) error {
 		m.mu.Lock()
+		if m.gen != gen {
+			m.mu.Unlock()
+			return fmt.Errorf("refresh proxy: superseded")
+		}
 		proxy := m.proxy
 		m.mu.Unlock()
 		if proxy != nil {

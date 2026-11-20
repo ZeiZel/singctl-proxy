@@ -14,6 +14,7 @@ import (
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/json"
 
 	"singctl/internal/singboxext"
@@ -55,9 +56,14 @@ func (c *boxCore) Start(ctx context.Context) error { return c.instance.Start() }
 // Close may run concurrently with a queued monitor event during MODE off.
 func (c *boxCore) ResetNetwork() {
 	c.lifecycle.Lock()
-	defer c.lifecycle.Unlock()
-	if !c.closed {
-		c.instance.Router().ResetNetwork()
+	if c.closed {
+		c.lifecycle.Unlock()
+		return
+	}
+	closers := c.instance.ResetNetworkDetached()
+	c.lifecycle.Unlock()
+	for _, closer := range closers {
+		common.Close(closer)
 	}
 }
 

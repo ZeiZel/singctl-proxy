@@ -537,6 +537,15 @@ func (s *Box) Close() error {
 	return err
 }
 
+// ResetNetworkDetached resets route and DNS state while returning tracked
+// connections for the caller to close after releasing its lifecycle lock.
+func (s *Box) ResetNetworkDetached() []io.Closer {
+	closers := s.connection.DetachAll()
+	s.network.ResetNetworkInterfaces()
+	s.dnsRouter.ResetNetwork()
+	return closers
+}
+
 func (s *Box) Network() adapter.NetworkManager {
 	return s.network
 }

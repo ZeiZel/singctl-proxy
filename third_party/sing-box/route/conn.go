@@ -50,6 +50,16 @@ func (m *ConnectionManager) Count() int {
 }
 
 func (m *ConnectionManager) CloseAll() {
+	closers := m.DetachAll()
+	for _, closer := range closers {
+		common.Close(closer)
+	}
+}
+
+// DetachAll removes tracked connections and returns them for the caller to
+// close. Detaching is separate from closing so a network reset can release
+// its lifecycle lock before a slow connection Close runs.
+func (m *ConnectionManager) DetachAll() []io.Closer {
 	m.access.Lock()
 	var closers []io.Closer
 	for element := m.connections.Front(); element != nil; {
@@ -59,9 +69,7 @@ func (m *ConnectionManager) CloseAll() {
 		element = nextElement
 	}
 	m.access.Unlock()
-	for _, closer := range closers {
-		common.Close(closer)
-	}
+	return closers
 }
 
 func (m *ConnectionManager) Close() error {

@@ -78,6 +78,8 @@ func TestVLESSWebSocketNetworkReset(t *testing.T) {
 		}
 	}
 	check("before reset")
+	clientCore.ResetNetwork()
+	check("after reset")
 
 	// Hold one tracked connection inside CloseAll so both probes run while
 	// the real network reset is still in progress. No sampling or sleeps.
@@ -97,19 +99,51 @@ func TestVLESSWebSocketNetworkReset(t *testing.T) {
 	}()
 	select {
 	case <-started:
-	case <-done:
-		t.Fatal("network reset returned without closing the old connection")
 	case <-time.After(5 * time.Second):
 		t.Fatal("network reset never started closing connections")
 	}
 	check("during reset")
+
+	// MODE off must stop accepting new work even while the detached old
+	// connection remains blocked in Close.
+	closed := make(chan error, 1)
+	go func() { closed <- clientCore.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close remained blocked behind the detached connection")
+	}
+	for _, port := range []int{ports.HTTP, ports.Socks} {
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), time.Second)
+		if err == nil {
+			conn.Close()
+			t.Fatalf("listener on port %d accepted a connection after Close", port)
+		}
+	}
+	if err := clientCore.Close(); err != nil {
+		t.Fatalf("repeated Close: %v", err)
+	}
+
+	replacement, err := newBoxCore(ctx, "proxy-replacement", data)
+	if err != nil {
+		t.Fatalf("new proxy core: %v", err)
+	}
+	t.Cleanup(func() { _ = replacement.Close() })
+	if err := replacement.Start(ctx); err != nil {
+		t.Fatalf("start replacement: %v", err)
+	}
+	check("replacement before old reset release")
+
 	unblock()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("network reset did not finish")
 	}
-	check("after reset")
+	check("replacement after old reset release")
 }
 
 type resetBarrierConn struct {

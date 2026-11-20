@@ -198,6 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         Task { @MainActor in
             do {
                 try await backend.setMode(mode)
+                store.confirmOptimisticStatus(optimisticChange)
                 store.refreshAfterMutation()
             } catch {
                 store.restoreOptimisticStatus(optimisticChange)
@@ -534,6 +535,7 @@ private struct MenuBarContentView: View {
             defer { isApplyingMode = false }
             do {
                 try await backend.setMode(mode)
+                store.confirmOptimisticStatus(optimisticChange)
                 store.refreshAfterMutation()
             } catch {
                 store.restoreOptimisticStatus(optimisticChange)

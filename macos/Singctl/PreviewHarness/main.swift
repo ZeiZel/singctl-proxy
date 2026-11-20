@@ -151,9 +151,20 @@ struct SingctlPreviewMain {
 
         choose(0)
         waitUntil { pendingMode != nil && store.status.mode == "off" }
+        // A refresh queued by the completed Proxy request can now return the
+        // still-old backend mode while Off is pending. It must not overwrite
+        // the newer optimistic selection.
+        let statusCallsBeforeStaleRefresh = backend.statusCalls
+        backend.currentStatus.ciscoActive = true
+        store.refreshAfterMutation()
+        waitUntil {
+            backend.statusCalls > statusCallsBeforeStaleRefresh
+                && store.status.ciscoActive
+                && store.status.mode == "off"
+        }
         pendingMode!.resume(throwing: CocoaError(.userCancelled))
         pendingMode = nil
-        waitUntil { store.status.mode == "proxy" && picker.selectedSegment == 1 }
+        waitUntil { store.status.mode == "proxy" && store.status.ciscoActive && picker.selectedSegment == 1 }
         precondition(modeRequests == ["proxy", "off"])
         backend.currentStatus.mode = "off"
         store.resetDueTimesForHarness()
@@ -427,12 +438,16 @@ private final class DemoBackend: Backend {
     )
 
     private(set) var trafficCalls = 0
+    private(set) var statusCalls = 0
     private(set) var connectionsCalls = 0
     private(set) var latencyCalls = 0
     var suspendLatency = false
     private var latencyContinuation: CheckedContinuation<Latency, Never>?
 
-    func status() async throws -> DaemonStatus { currentStatus }
+    func status() async throws -> DaemonStatus {
+        statusCalls += 1
+        return currentStatus
+    }
     var onSetMode: ((String) async throws -> Void)?
     func setMode(_ mode: String) async throws {
         try await onSetMode?(mode)
